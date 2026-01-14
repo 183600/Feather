@@ -7,25 +7,15 @@ LOG_FILE="${LOG_FILE:-/tmp/iflow-cabal-autoloop.log}"
 exec >>"$LOG_FILE" 2>&1
 
 ###############################################################################
-# iflow-cabal-autoloop.sh (no-watchdog)
+# iflow-cabal-autoloop.sh (Gitee优先版)
 # - 单文件融合版：等价于 iflow-cabal-loop.yml + scripts/typus_cabal_loop.sh
 # - 非 GitHub Actions 环境运行
 # - iFlow CLI 走 NVIDIA Integrate OpenAI-compatible 接口
-# - 已移除 watchdog/heartbeat 机制
 #
-# 修复点（在原有修复点基础上新增/调整）：
-# A) derive_github_repo：修复 GitHub remote URL 正则，兼容 https/ssh/scp 风格
-# B) ps_children_of：移除不可靠的 `ps ... -ppid` 分支，改为失败即回退到通用枚举过滤
-#
-# 重要修复（本次新增）：
-# C) 在 set -e 模式下，push_if_ahead / ensure_branch / ensure_gitee_remote 等函数内部
-#    若 git push/checkout/remote add 失败，会导致脚本直接退出，破坏 retry/|| true 语义。
-#    现已将关键 git 操作改为“失败 return”，避免意外终止外层重试流程。
-#
-# 新增：每运行 RUN_HOURS（默认 5 小时）后
-# - 自动把未提交变更做一次 autosave commit（可通过 AUTO_COMMIT_ON_TIMEOUT=0 关闭）
-# - 同时 push 到 GitHub(origin) 与 Gitee(gitee)
-# - push 失败会自动重试（默认一直重试，确保“提交并推送成功后再进入下一轮”）
+# 本次变更点：
+# 1. 初始化：优先从 GITEE_REPO_URL 克隆代码，origin 指向 Gitee。
+# 2. 推送：默认同时强制推送到 Gitee (origin) 和 GitHub (github)。
+# 3. 容错：GitHub 推送失败不影响脚本运行（仅报错），Gitee 推送失败会重试。
 ###############################################################################
 
 ############################
@@ -33,34 +23,35 @@ exec >>"$LOG_FILE" 2>&1
 ############################
 RUN_HOURS="${RUN_HOURS:-5}"
 WORK_BRANCH="${WORK_BRANCH:-master}"
-GIT_REMOTE="${GIT_REMOTE:-origin}"
 
-# Gitee 推送支持：
-# - 默认认为远端名叫 gitee
-# - 若本地没有该 remote：
-#     - 优先使用 GITEE_REMOTE_URL 添加
-#     - 否则尝试从 GitHub 的 owner/repo 推断：https://gitee.com/owner/repo.git
-GITEE_REMOTE="${GITEE_REMOTE:-gitee}"
-GITEE_REMOTE_URL="${GITEE_REMOTE_URL:-}"
+# 远端命名与配置
+GIT_REMOTE="${GIT_REMOTE:-origin}"                 # 主远端（Gitee）
+GITHUB_REMOTE_NAME="${GITHUB_REMOTE_NAME:-github}" # 镜像远端（GitHub）
 
-# 推送的远端列表（空格分隔）。默认：GitHub + Gitee
-PUSH_REMOTES="${PUSH_REMOTES:-$GIT_REMOTE $GITEE_REMOTE}"
+# 必填配置：Gitee 用于克隆/拉取，GitHub 用于镜像推送
+# 示例：GITEE_REPO_URL="https://gitee.com/user/repo.git"
+GITEE_REPO_URL="${GITEE_REPO_URL:-}"
+# 示例：GITHUB_REMOTE_URL="git@github.com:user/repo.git"
+GITHUB_REMOTE_URL="${GITHUB_REMOTE_URL:-}"
 
-# 推送失败重试策略（确保“推送完成后再进入下一轮”）
+# 推送的远端列表（空格分隔）。默认：Gitee(origin) + GitHub(github)
+PUSH_REMOTES="${PUSH_REMOTES:-$GIT_REMOTE $GITHUB_REMOTE_NAME}"
+
+# 推送失败重试策略（针对主远端 Gitee）
 PUSH_RETRY_INTERVAL="${PUSH_RETRY_INTERVAL:-60}"  # 秒
-PUSH_RETRY_FOREVER="${PUSH_RETRY_FOREVER:-1}"     # 1=一直重试；0=失败就放过（不推荐）
+PUSH_RETRY_FOREVER="${PUSH_RETRY_FOREVER:-1}"     # 1=一直重试；0=失败就放过
 
 GIT_USER_NAME="${GIT_USER_NAME:-iflow-bot}"
 GIT_USER_EMAIL="${GIT_USER_EMAIL:-iflow-bot@users.noreply.github.com}"
 
 # 是否启用“自动 bump + GitHub Release”
-ENABLE_RELEASE="${ENABLE_RELEASE:-0}"   # 0/1
+ENABLE_RELEASE="${ENABLE_RELEASE:-0}"
 
-# timeout 结束时是否把未提交变更自动提交（WIP autosave）
-AUTO_COMMIT_ON_TIMEOUT="${AUTO_COMMIT_ON_TIMEOUT:-1}"  # 0/1
+# timeout 结束时是否把未提交变更自动提交
+AUTO_COMMIT_ON_TIMEOUT="${AUTO_COMMIT_ON_TIMEOUT:-1}"
 
 ############################
-# 1) iFlow -> NVIDIA Integrate 配置（OpenAI-compatible）
+# 1) iFlow -> NVIDIA Integrate 配置
 ############################
 export IFLOW_selectedAuthType="${IFLOW_selectedAuthType:-openai-compatible}"
 export IFLOW_BASE_URL="${IFLOW_BASE_URL:-https://integrate.api.nvidia.com/v1}"
@@ -69,7 +60,7 @@ export IFLOW_MODEL_NAME="${IFLOW_MODEL_NAME:-moonshotai/kimi-k2-thinking}"
 : "${IFLOW_API_KEY:?Missing IFLOW_API_KEY. Please export IFLOW_API_KEY before running.}"
 
 ############################
-# 2) 工具函数：日志/依赖/timeout 兼容
+# 2) 工具函数：日志/依赖/timeout
 ############################
 log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 
@@ -81,7 +72,7 @@ timeout_bin() {
   if command -v timeout >/dev/null 2>&1; then
     echo "timeout"
   elif command -v gtimeout >/dev/null 2>&1; then
-    echo "gtimeout"   # macOS coreutils
+    echo "gtimeout"
   else
     log "ERROR: need GNU timeout (timeout/gtimeout)."
     exit 1
@@ -89,7 +80,6 @@ timeout_bin() {
 }
 
 run_cmd() {
-  # 让输出尽量行缓冲，便于实时看到进度；同时不破坏 set -e 语义
   local had_errexit=0
   [[ $- == *e* ]] && had_errexit=1
   set +e
@@ -108,28 +98,19 @@ run_cmd() {
 }
 
 ############################
-# 2.5) 进程清理（避免误杀外层进程）
+# 2.5) 进程清理
 ############################
 ps_children_of() {
-  # 输出指定 PPID 的子 PID 列表（尽量兼容 macOS / Linux）
   local ppid="$1"
   local out=""
-
-  # Linux procps: --ppid
   out="$(ps -o pid= --ppid "$ppid" 2>/dev/null || true)"
-
-  # 通用回退：枚举全部进程过滤 PPID（兼容性更强，但稍慢）
   if [[ -z "${out//[[:space:]]/}" ]]; then
-    # `ps -axo pid=,ppid=` 在 Linux/macOS 通常可用
     out="$(ps -axo pid=,ppid= 2>/dev/null | awk -v P="$ppid" '$2==P{print $1}' || true)"
   fi
-
-  # 规范化：一行一个 PID，去掉空白
   echo "$out" | awk '{print $1}' | sed '/^$/d' || true
 }
 
 kill_descendants() {
-  # 尽力递归 kill 子孙进程；失败不报错
   local parent="$1"
   local kids
   kids="$(ps_children_of "$parent" || true)"
@@ -144,24 +125,19 @@ kill_descendants() {
 }
 
 try_kill_process_group_if_safe() {
-  # 仅当“自己是进程组组长”时，才 kill 整个进程组，避免误杀同组其它进程
   local pid pgid
   pid="$$"
-
-  # macOS/BSD 的 ps 通常需要 -p PID
-  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' || true)"
   if [[ -z "${pgid:-}" ]]; then
-    # 少数环境接受 `ps ... <pid>`，作为回退
-    pgid="$(ps -o pgid= "$pid" 2>/dev/null | tr -d ' ' || true)"
+    pgid="$(ps -o pgid= "$pid" 2>/dev/null | tr -d ' || true)"
   fi
-
   if [[ -n "${pgid:-}" && "$pgid" =~ ^[0-9]+$ && "$pgid" == "$pid" ]]; then
     kill -- "-$pgid" 2>/dev/null || true
   fi
 }
 
 ############################
-# 3) 依赖准备：git / node / iflow / moon
+# 3) 依赖准备
 ############################
 ensure_git() {
   need_cmd git
@@ -172,7 +148,6 @@ ensure_git() {
 
 ensure_node_and_iflow() {
   need_cmd npm
-
   if ! command -v iflow >/dev/null 2>&1; then
     log "Installing iFlow CLI..."
     npm i -g @iflow-ai/iflow-cli@latest
@@ -185,7 +160,6 @@ ensure_moon() {
     moon version || true
     return 0
   fi
-
   need_cmd curl
   log "Installing MoonBit toolchain..."
   curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
@@ -195,136 +169,149 @@ ensure_moon() {
 }
 
 ############################
-# 4) git 分支就位 & 同步（修复版）
+# 4) 仓库初始化与远端配置 (修改核心)
 ############################
+
+# 初始化仓库：从 Gitee 克隆，或确保 origin 指向 Gitee
+ensure_repo_initialized() {
+  # 检查是否为 git 仓库
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    # 不是仓库：从 Gitee 克隆
+    if [[ -z "${GITEE_REPO_URL:-}" ]]; then
+      log "ERROR: Current directory is not a git repo, and GITEE_REPO_URL is not set."
+      log "Please set GITEE_REPO_URL to clone the repository."
+      exit 1
+    fi
+    log "Cloning from Gitee: ${GITEE_REPO_URL}"
+    git clone "${GITEE_REPO_URL}" .
+    return 0
+  fi
+
+  # 已是仓库：检查是否需要更新 origin 指向 Gitee
+  if [[ -n "${GITEE_REPO_URL:-}" ]]; then
+    local current_url
+    current_url="$(git remote get-url "${GIT_REMOTE}" 2>/dev/null || true)"
+    # 简单判断：如果配置不一致则更新
+    if [[ "$current_url" != "${GITEE_REPO_URL}" ]]; then
+      log "Updating remote '${GIT_REMOTE}' (Gitee) URL to: ${GITEE_REPO_URL}"
+      git remote set-url "${GIT_REMOTE}" "${GITEE_REPO_URL}" || {
+        log "WARN: Failed to update ${GIT_REMOTE} URL."
+      }
+    fi
+  else
+    log "WARN: GITEE_REPO_URL not set. Assuming current origin is correctly configured."
+  fi
+}
+
+# 配置 GitHub 镜像远端
+ensure_github_mirror() {
+  if [[ -z "${GITHUB_REMOTE_URL:-}" ]]; then
+    log "INFO: GITHUB_REMOTE_URL not set. Skipping GitHub mirror setup."
+    # 移除可能存在的旧 github 远端以避免混淆？或者保留。这里选择静默跳过。
+    return 0
+  fi
+
+  if git remote get-url "${GITHUB_REMOTE_NAME}" >/dev/null 2>&1; then
+    local current_url
+    current_url="$(git remote get-url "${GITHUB_REMOTE_NAME}" 2>/dev/null || true)"
+    if [[ "$current_url" != "${GITHUB_REMOTE_URL}" ]]; then
+      log "Updating GitHub mirror remote '${GITHUB_REMOTE_NAME}' URL."
+      git remote set-url "${GITHUB_REMOTE_NAME}" "${GITHUB_REMOTE_URL}"
+    fi
+  else
+    log "Adding GitHub mirror remote '${GITHUB_REMOTE_NAME}'."
+    git remote add "${GITHUB_REMOTE_NAME}" "${GITHUB_REMOTE_URL}"
+  fi
+}
+
 ensure_branch() {
   log "Ensuring branch: $WORK_BRANCH"
-
-  git fetch "$GIT_REMOTE" --prune >/dev/null 2>&1 || true
+  # 从 origin (Gitee) 拉取
+  git fetch "${GIT_REMOTE}" --prune >/dev/null 2>&1 || true
 
   if git show-ref --verify --quiet "refs/remotes/${GIT_REMOTE}/${WORK_BRANCH}"; then
-    # 远端存在该分支
     if git show-ref --verify --quiet "refs/heads/${WORK_BRANCH}"; then
-      git checkout "$WORK_BRANCH" || { log "WARN: git checkout ${WORK_BRANCH} failed."; return 1; }
+      git checkout "$WORK_BRANCH" || { log "WARN: checkout ${WORK_BRANCH} failed."; return 1; }
+      # 注意：本地 checkout 后，若远端有更新且本地无分歧，ff-only 是安全的。
+      # 如果远端领先本地且本地也有新提交，ff-only 会失败，随后的 force push 将用本地覆盖远端。
       git merge --ff-only "${GIT_REMOTE}/${WORK_BRANCH}" || {
-        log "WARN: cannot fast-forward ${WORK_BRANCH} to ${GIT_REMOTE}/${WORK_BRANCH}. Manual intervention may be needed."
+        log "WARN: cannot fast-forward ${WORK_BRANCH} to ${GIT_REMOTE}/${WORK_BRANCH}. Local history differs, will force push later."
       }
     else
-      # 本地没有该分支：从远端分支创建，避免从错误 HEAD 分叉
       git checkout -b "$WORK_BRANCH" "${GIT_REMOTE}/${WORK_BRANCH}" || {
-        log "WARN: git checkout -b ${WORK_BRANCH} from ${GIT_REMOTE}/${WORK_BRANCH} failed."
-        return 1
-      }
+        log "WARN: checkout -b ${WORK_BRANCH} failed."; return 1; }
     fi
     git branch --set-upstream-to="${GIT_REMOTE}/${WORK_BRANCH}" "$WORK_BRANCH" >/dev/null 2>&1 || true
   else
-    # 远端不存在该分支：本地确保存在即可
     if git show-ref --verify --quiet "refs/heads/${WORK_BRANCH}"; then
-      git checkout "$WORK_BRANCH" || { log "WARN: git checkout ${WORK_BRANCH} failed."; return 1; }
+      git checkout "$WORK_BRANCH" || { log "WARN: checkout ${WORK_BRANCH} failed."; return 1; }
     else
-      git checkout -b "$WORK_BRANCH" || { log "WARN: git checkout -b ${WORK_BRANCH} failed."; return 1; }
+      git checkout -b "$WORK_BRANCH" || { log "WARN: checkout -b ${WORK_BRANCH} failed."; return 1; }
     fi
   fi
 }
 
-push_if_ahead() {  # push_if_ahead [remote]
-  # 注意：在 set -e 模式下，函数内部的 git push 失败可能导致脚本直接退出。
-  # 这里用 “|| return 1 / if ! ...; then ...” 确保失败只向上返回状态码，方便外层重试。
+push_if_ahead() {
   local remote="${1:-$GIT_REMOTE}"
-
   git fetch "$remote" --prune >/dev/null 2>&1 || true
 
-  # 远端分支不存在：直接推送
   if ! git show-ref --verify --quiet "refs/remotes/${remote}/${WORK_BRANCH}"; then
-    log "Remote branch ${remote}/${WORK_BRANCH} missing; pushing HEAD:${WORK_BRANCH}..."
-    git push "$remote" "HEAD:${WORK_BRANCH}" || return 1
+    log "Remote branch ${remote}/${WORK_BRANCH} missing; force pushing HEAD:${WORK_BRANCH}..."
+    # 修改：添加 --force 参数
+    git push --force "$remote" "HEAD:${WORK_BRANCH}" || return 1
     return 0
   fi
 
   local ahead
   ahead="$(git rev-list --count "${remote}/${WORK_BRANCH}..HEAD" 2>/dev/null || echo 0)"
-  # 防御：确保是整数
-  if [[ ! "$ahead" =~ ^[0-9]+$ ]]; then
-    ahead="0"
-  fi
+  if [[ ! "$ahead" =~ ^[0-9]+$ ]]; then ahead="0"; fi
 
   if [[ "$ahead" -gt 0 ]]; then
-    log "Pushing ${ahead} commit(s) to ${remote}/${WORK_BRANCH}..."
-    git push "$remote" "HEAD:${WORK_BRANCH}" || return 1
+    log "Force pushing ${ahead} commit(s) to ${remote}/${WORK_BRANCH}..."
+    # 修改：添加 --force 参数
+    git push --force "$remote" "HEAD:${WORK_BRANCH}" || return 1
   else
     log "No commits ahead of ${remote}/${WORK_BRANCH}. Skip push."
   fi
 }
 
-remote_exists() {
-  local r="$1"
-  git remote get-url "$r" >/dev/null 2>&1
-}
-
-infer_gitee_url_from_github() {
-  local gh_repo
-  gh_repo="$(derive_github_repo 2>/dev/null || true)"
-  [[ -n "${gh_repo:-}" ]] || return 1
-  printf 'https://gitee.com/%s.git\n' "$gh_repo"
-}
-
-ensure_gitee_remote() {
-  # 若已存在，直接返回
-  if remote_exists "$GITEE_REMOTE"; then
-    return 0
-  fi
-
-  local url="${GITEE_REMOTE_URL:-}"
-  if [[ -z "${url:-}" ]]; then
-    url="$(infer_gitee_url_from_github || true)"
-  fi
-
-  if [[ -z "${url:-}" ]]; then
-    log "WARN: ${GITEE_REMOTE} remote missing and cannot infer url. Skip Gitee push."
-    return 1
-  fi
-
-  log "Adding gitee remote: ${GITEE_REMOTE} -> ${url}"
-  git remote add "$GITEE_REMOTE" "$url" || {
-    log "WARN: failed to add remote ${GITEE_REMOTE}."
-    return 1
-  }
-}
-
 commit_worktree_if_dirty() {
-  # 自动把未提交内容保存成一次提交（用于 5 小时窗口结束时“确保提交”）
   local msg="$1"
-
-  if git diff --quiet && git diff --cached --quiet; then
-    return 0
-  fi
-
+  if git diff --quiet && git diff --cached --quiet; then return 0; fi
   git add -A
-
-  if git diff --cached --quiet; then
-    return 0
-  fi
-
+  if git diff --cached --quiet; then return 0; fi
   git commit -m "$msg" || true
 }
 
 push_all_remotes() {
-  # 返回值：仅当“主远端(GIT_REMOTE) push 失败”才返回非 0；Gitee 失败不影响返回值
+  # 返回值：仅当主远端（Gitee/origin）失败才返回非 0
+  # 镜像远端（GitHub/github）失败仅记录日志，不影响返回值
   local primary_status=0
 
-  # 尝试保证 gitee remote 存在（失败就跳过）
-  ensure_gitee_remote || true
+  # 确保 github 远端配置存在（如果配置了 URL）
+  ensure_github_mirror || true
 
   local r
   for r in $PUSH_REMOTES; do
-    remote_exists "$r" || { log "WARN: remote not found: $r, skip."; continue; }
+    # 检查远端是否存在
+    if ! git remote get-url "$r" >/dev/null 2>&1; then
+      log "WARN: remote not found: $r, skip."
+      continue
+    fi
 
     if [[ "$r" == "$GIT_REMOTE" ]]; then
+      # 主远端（Gitee）：失败会影响 primary_status，触发重试
       push_if_ahead "$r" || primary_status=1
-      git push "$r" --tags >/dev/null 2>&1 || true
+      # 修改：添加 --force 参数以强制覆盖远端标签
+      git push --force "$r" --tags >/dev/null 2>&1 || true
     else
-      push_if_ahead "$r" || true
-      git push "$r" --tags >/dev/null 2>&1 || true
+      # 镜像远端（GitHub）：失败不影响 primary_status，仅打印警告
+      if push_if_ahead "$r"; then
+        # 修改：添加 --force 参数以强制覆盖远端标签
+        git push --force "$r" --tags >/dev/null 2>&1 || true
+      else
+        log "WARN: Push to mirror remote $r failed (ignored)."
+      fi
     fi
   done
 
@@ -332,19 +319,15 @@ push_all_remotes() {
 }
 
 push_all_remotes_with_retry() {
-  # 确保“主远端(GIT_REMOTE)”推送成功才返回 0
-  # 默认一直重试（PUSH_RETRY_FOREVER=1），从而保证“提交并推送完成后再进入下一轮”
   local attempt=0
-
   while true; do
     attempt=$(( attempt + 1 ))
-
     if push_all_remotes; then
       log "Push ok."
       return 0
     fi
 
-    log "WARN: push to primary remote failed (attempt=${attempt})."
+    log "WARN: push to primary remote (Gitee) failed (attempt=${attempt})."
 
     if [[ "$PUSH_RETRY_FOREVER" != "1" ]]; then
       log "WARN: PUSH_RETRY_FOREVER!=1, giving up retry."
@@ -364,13 +347,10 @@ extract_moon_version() {
     f="$(find . -name 'moon.mod.json' -print 2>/dev/null | head -n1 || true)"
   fi
   [[ -n "${f:-}" && -f "$f" ]] || return 1
-
   if command -v jq >/dev/null 2>&1; then
     jq -r '.version // empty' "$f"
     return 0
   fi
-
-  # 更通用（避免 awk match 第三参数在不同 awk 实现不兼容）
   sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -n1
 }
 
@@ -381,17 +361,17 @@ has_error_in_log() {
 }
 
 derive_github_repo() {
-  local url owner repo
-  url="$(git config --get "remote.${GIT_REMOTE}.url" || true)"
+  # 尝试从 GITHUB_REMOTE_URL 推断，或者从名为 github 的远端推断
+  local url
+  url="${GITHUB_REMOTE_URL:-}"
+  if [[ -z "$url" ]]; then
+    url="$(git remote get-url "${GITHUB_REMOTE_NAME}" 2>/dev/null || true)"
+  fi
   [[ -n "$url" ]] || return 1
 
-  # 修复：兼容
-  # - https://github.com/owner/repo.git
-  # - ssh://git@github.com/owner/repo.git
-  # - git@github.com:owner/repo.git
   if [[ "$url" =~ github\.com[/:]+([^/]+)/([^/]+)$ ]]; then
-    owner="${BASH_REMATCH[1]}"
-    repo="${BASH_REMATCH[2]}"
+    local owner="${BASH_REMATCH[1]}"
+    local repo="${BASH_REMATCH[2]}"
     repo="${repo%.git}"
     echo "${owner}/${repo}"
     return 0
@@ -401,7 +381,6 @@ derive_github_repo() {
 
 iso_to_epoch() {
   local iso="$1"
-
   if command -v python3 >/dev/null 2>&1; then
     python3 - "$iso" <<'PY'
 import sys, datetime, re
@@ -423,7 +402,6 @@ print(int(dt.timestamp()))
 PY
     return $?
   fi
-
   if date -d "$iso" +%s >/dev/null 2>&1; then
     date -d "$iso" +%s
     return 0
@@ -436,14 +414,11 @@ PY
     date -j -f '%Y-%m-%dT%H:%M:%SZ' "$iso" '+%s'
     return 0
   fi
-
   return 1
 }
 
 latest_release_age_ok() {
-  # 0=允许发布；1=不允许或无法判断（保守跳过）
   command -v gh >/dev/null 2>&1 || return 1
-
   local repo="${GITHUB_REPOSITORY:-}"
   if [[ -z "$repo" ]]; then
     repo="$(derive_github_repo || true)"
@@ -483,7 +458,7 @@ attempt_bump_and_release() {
     return 0
   fi
 
-  local old_ver new_ver tag repo
+  local old_ver new_ver tag
   old_ver="$(extract_moon_version || true)"
   log "INFO: current version: ${old_ver:-<unknown>}"
 
@@ -506,10 +481,9 @@ attempt_bump_and_release() {
   fi
 
   git commit -m "chore(release): v${new_ver}" || { log "WARN: commit failed, skip."; return 0; }
-  push_if_ahead "$GIT_REMOTE" || { log "WARN: push failed, skip release creation."; return 0; }
-
-  # 同步推送到其它远端（如 gitee），失败不影响 release 流程
-  push_all_remotes || true
+  
+  # Release 时先推送到 Gitee，并尝试推送到 GitHub (均为 force push)
+  push_all_remotes_with_retry || { log "WARN: push failed, skip release creation."; return 0; }
 
   tag="v${new_ver}"
   command -v gh >/dev/null 2>&1 || { log "WARN: gh missing, cannot create release."; return 0; }
@@ -533,13 +507,12 @@ attempt_bump_and_release() {
 }
 
 ############################
-# 7) 内层循环（无 watchdog）
+# 7) 内层循环
 ############################
 run_inner_loop_forever() {
   terminate_inner() {
     echo
     log "terminated."
-    # 尽量清理自己派生的进程，避免误杀 outer/同组进程
     kill_descendants "$$" || true
     try_kill_process_group_if_safe || true
     exit 0
@@ -614,10 +587,18 @@ inner_main() {
 outer_main() {
   need_cmd curl
 
-  # RUN_HOURS 必须是整数，避免 $((...)) 直接退出
   [[ "$RUN_HOURS" =~ ^[0-9]+$ ]] || { log "ERROR: RUN_HOURS must be an integer (got: $RUN_HOURS)"; exit 1; }
 
+  # 1. 初始化/克隆仓库 (优先 Gitee)
+  ensure_repo_initialized
+  
+  # 2. 确保 Git 配置正确
   ensure_git
+  
+  # 3. 确保 GitHub 镜像配置 (如果提供了 URL)
+  ensure_github_mirror
+  
+  # 4. 检出并拉取分支 (从 origin/Gitee)
   ensure_branch
 
   ensure_node_and_iflow
@@ -627,11 +608,14 @@ outer_main() {
   log "IFLOW_MODEL_NAME=$IFLOW_MODEL_NAME"
   log "IFLOW_selectedAuthType=$IFLOW_selectedAuthType"
   log "LOG_FILE=$LOG_FILE"
+  log "Primary Remote (Gitee): $GIT_REMOTE -> $(git remote get-url $GIT_REMOTE)"
+  if git remote get-url "$GITHUB_REMOTE_NAME" >/dev/null 2>&1; then
+      log "Mirror Remote (GitHub): $GITHUB_REMOTE_NAME -> $(git remote get-url $GITHUB_REMOTE_NAME)"
+  fi
 
   local tbin
   tbin="$(timeout_bin)"
 
-  # 获取脚本绝对路径，避免 $0 不可靠（例如通过 bash script.sh 启动）
   local script
   script="${BASH_SOURCE[0]}"
   script="$(cd -- "$(dirname -- "$script")" && pwd)/$(basename -- "$script")"
@@ -639,33 +623,26 @@ outer_main() {
   while true; do
     log "Run loop for ${RUN_HOURS} hour(s)..."
 
-    # 用 setsid 把 inner 放到独立 session/进程组，便于 timeout/TERM 时一并回收子进程
-    # 加 --kill-after 防止 TERM 后仍残留（例如子进程忽略 TERM）
     if command -v setsid >/dev/null 2>&1; then
       "$tbin" --signal=TERM --kill-after=60s $(( RUN_HOURS * 3600 )) setsid bash "$script" __inner__ || true
     else
-      # 没有 setsid 也能跑，但 inner 已避免 kill 0 误伤；清理力度会弱一点
       "$tbin" --signal=TERM --kill-after=60s $(( RUN_HOURS * 3600 )) bash "$script" __inner__ || true
     fi
 
-    # timeout 结束后：确保把当前进度“提交+推送”到 GitHub/Gitee，然后再进入下一轮
-    # 这里的 ensure_branch 允许失败（网络/冲突等），不要让脚本直接崩掉
     ensure_branch || true
 
     if [[ "$AUTO_COMMIT_ON_TIMEOUT" == "1" ]]; then
       commit_worktree_if_dirty "chore: autosave after ${RUN_HOURS}h ($(date '+%F %T'))"
     fi
 
-    # 默认：一直重试直到主远端(GIT_REMOTE)推送成功
+    # 推送到 Gitee 和 GitHub (Gitee 失败会重试，GitHub 失败跳过)
+    # 注意：当前脚本已配置为 Force Push
     push_all_remotes_with_retry
 
     ensure_branch || true
   done
 }
 
-############################
-# 9) 入口分发
-############################
 if [[ "${1:-}" == "__inner__" ]]; then
   shift
   inner_main "$@"
