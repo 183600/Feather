@@ -1,0 +1,8 @@
+{
+  "import": [
+    "miniweb/http",
+    "miniweb/router",
+    "miniweb/middleware",
+    "miniweb/server"
+  ]
+}

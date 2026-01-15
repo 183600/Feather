@@ -127,9 +127,9 @@ kill_descendants() {
 try_kill_process_group_if_safe() {
   local pid pgid
   pid="$$"
-  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' || true)"
+  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
   if [[ -z "${pgid:-}" ]]; then
-    pgid="$(ps -o pgid= "$pid" 2>/dev/null | tr -d ' || true)"
+    pgid="$(ps -o pgid= "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
   fi
   if [[ -n "${pgid:-}" && "$pgid" =~ ^[0-9]+$ && "$pgid" == "$pid" ]]; then
     kill -- "-$pgid" 2>/dev/null || true
@@ -161,9 +161,19 @@ ensure_moon() {
     return 0
   fi
   need_cmd curl
-  log "Installing MoonBit toolchain..."
-  curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
-  export PATH="$HOME/.moon/bin:$PATH"
+  
+  # 使用可写的HOME目录
+  local MOON_HOME="${HOME:-/workspace}"
+  if [[ ! -w "$MOON_HOME" ]]; then
+    MOON_HOME="/workspace"
+    export HOME="/workspace"
+  fi
+  
+  log "Installing MoonBit toolchain to ${MOON_HOME}..."
+  # 使用-k参数处理SSL证书问题，并设置环境变量
+  export SSL_CERT_DIR=/etc/ssl/certs
+  curl -kfsSL https://cli.moonbitlang.com/install/unix.sh | bash
+  export PATH="$MOON_HOME/.moon/bin:$PATH"
   need_cmd moon
   moon version
 }
