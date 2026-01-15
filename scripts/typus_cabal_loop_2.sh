@@ -638,8 +638,14 @@ run_inner_loop_forever() {
         log "INFO: warnings detected."
       fi
     else
-      log "Fixing via iflow..."
-      run_cmd iflow "如果PLAN.md里的特性都实现了(如果没有没有都实现就实现这些特性，给项目命名为Feather)就解决moon test显示的所有问题（除了warning），除非测试用例本身有编译错误，否则只修改测试用例以外的代码，debug时可通过加日志和打断点，尽量不要消耗大量CPU/内存资源 think:high" --yolo || true
+      # 检测特定错误：error: not in a Moon project
+      if grep -q "no moon.mod.json found" "$MOON_TEST_LOG"; then
+        log "Detected error: not in a Moon project (no moon.mod.json found). Running recovery command..."
+        run_cmd iflow "如果PLAN.md里的特性都实现了(如果没有没有都实现就实现这些特性，给项目命名为Feather)就解决moon test显示的所有问题（除了warning），除非测试用例本身有编译错误，否则只修改测试用例以外的代码，debug时可通过加日志和打断点，尽量不要消耗大量CPU/内存资源 think:high" --yolo || true
+      else
+        log "Fixing via iflow..."
+        run_cmd iflow "如果PLAN.md里的特性都实现了(如果没有没有都实现就实现这些特性，给项目命名为Feather)就解决moon test显示的所有问题（除了warning），除非测试用例本身有编译错误，否则只修改测试用例以外的代码，debug时可通过加日志和打断点，尽量不要消耗大量CPU/内存资源 think:high" --yolo || true
+      fi
     fi
 
     log "Looping..."
@@ -719,5 +725,5 @@ if [[ "${1:-}" == "__inner__" ]]; then
   shift
   inner_main "$@"
 else
-  outer_main "$@"
+  outer_main
 fi
