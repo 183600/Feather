@@ -1,0 +1,84 @@
+         --  -- 
+       /  //  / __--------_
+      /  //  /_/            \
+   ---      -                \ __
+  / X        /        ____   /   )
+  *_________/__/_____/______/ `--
+Oops, the compiler has encountered an unexpected situation.
+This is a bug in the compiler.
+A bug report containing the error description and relevant code would be
+greatly appreciated. You can submit the bug report here:
+  https://github.com/moonbitlang/moonbit-docs/issues/new?template=ice.md
+Error: Sys_error("/workspace/.moon/lib/core/_build/wasm-gc/release/bundle: No such file or directory")
+Compiler args: /workspace/.moon/bin/moonc build-package -error-format json -o /workspace/Feather/_build/wasm-gc/debug/test/miniweb.core -pkg miniweb -std-path /workspace/.moon/lib/core/_build/wasm-gc/release/bundle -pkg-sources miniweb:/workspace/Feather/src -target wasm-gc -g -O0 -source-map -workspace-path /workspace/Feather
+moonc version: v0.7.1+adb125543
+         --  -- 
+       /  //  / __--------_
+      /  //  /_/            \
+   ---      -                \ __
+  / X        /        ____   /   )
+  *_________/__/_____/______/ `--
+Oops, the compiler has encountered an unexpected situation.
+This is a bug in the compiler.
+A bug report containing the error description and relevant code would be
+greatly appreciated. You can submit the bug report here:
+  https://github.com/moonbitlang/moonbit-docs/issues/new?template=ice.md
+Error: Sys_error("/workspace/.moon/lib/core/_build/wasm-gc/release/bundle: No such file or directory")
+Compiler args: /workspace/.moon/bin/moonc build-package -error-format json /workspace/Feather/src/http/types.mbt -o /workspace/Feather/_build/wasm-gc/debug/test/http/http.core -pkg miniweb/http -std-path /workspace/.moon/lib/core/_build/wasm-gc/release/bundle -pkg-sources miniweb/http:/workspace/Feather/src/http -target wasm-gc -g -O0 -source-map -workspace-path /workspace/Feather
+moonc version: v0.7.1+adb125543
+         --  -- 
+       /  //  / __--------_
+      /  //  /_/            \
+   ---      -                \ __
+  / X        /        ____   /   )
+  *_________/__/_____/______/ `--
+Oops, the compiler has encountered an unexpected situation.
+This is a bug in the compiler.
+A bug report containing the error description and relevant code would be
+greatly appreciated. You can submit the bug report here:
+  https://github.com/moonbitlang/moonbit-docs/issues/new?template=ice.md
+Error: Sys_error("/workspace/.moon/lib/core/_build/wasm-gc/release/bundle: No such file or directory")
+Compiler args: /workspace/.moon/bin/moonc build-package -error-format json /workspace/Feather/src/router/trie.mbt -o /workspace/Feather/_build/wasm-gc/debug/test/router/router.core -pkg miniweb/router -std-path /workspace/.moon/lib/core/_build/wasm-gc/release/bundle -pkg-sources miniweb/router:/workspace/Feather/src/router -target wasm-gc -g -O0 -source-map -workspace-path /workspace/Feather
+moonc version: v0.7.1+adb125543
+         --  -- 
+       /  //  / __--------_
+      /  //  /_/            \
+   ---      -                \ __
+  / X        /        ____   /   )
+  *_________/__/_____/______/ `--
+Oops, the compiler has encountered an unexpected situation.
+This is a bug in the compiler.
+A bug report containing the error description and relevant code would be
+greatly appreciated. You can submit the bug report here:
+  https://github.com/moonbitlang/moonbit-docs/issues/new?template=ice.md
+Error: Sys_error("/workspace/.moon/lib/core/_build/wasm-gc/release/bundle: No such file or directory")
+Compiler args: /workspace/.moon/bin/moonc build-package -error-format json /workspace/Feather/_build/wasm-gc/debug/test/__generated_driver_for_internal_test.mbt -o /workspace/Feather/_build/wasm-gc/debug/test/miniweb.internal_test.core -pkg miniweb -is-main -std-path /workspace/.moon/lib/core/_build/wasm-gc/release/bundle -pkg-sources miniweb:/workspace/Feather/src -target wasm-gc -g -O0 -source-map -no-mi -test-mode -workspace-path /workspace/Feather
+moonc version: v0.7.1+adb125543
+         --  -- 
+       /  //  / __--------_
+      /  //  /_/            \
+   ---      -                \ __
+  / X        /        ____   /   )
+  *_________/__/_____/______/ `--
+Oops, the compiler has encountered an unexpected situation.
+This is a bug in the compiler.
+A bug report containing the error description and relevant code would be
+greatly appreciated. You can submit the bug report here:
+  https://github.com/moonbitlang/moonbit-docs/issues/new?template=ice.md
+Error: Sys_error("/workspace/.moon/lib/core/_build/wasm-gc/release/bundle: No such file or directory")
+Compiler args: /workspace/.moon/bin/moonc build-package -error-format json /workspace/Feather/src/http/types.mbt /workspace/Feather/_build/wasm-gc/debug/test/http/__generated_driver_for_internal_test.mbt -o /workspace/Feather/_build/wasm-gc/debug/test/http/http.internal_test.core -pkg miniweb/http -is-main -std-path /workspace/.moon/lib/core/_build/wasm-gc/release/bundle -pkg-sources miniweb/http:/workspace/Feather/src/http -target wasm-gc -g -O0 -source-map -no-mi -test-mode -workspace-path /workspace/Feather
+moonc version: v0.7.1+adb125543
+         --  -- 
+       /  //  / __--------_
+      /  //  /_/            \
+   ---      -                \ __
+  / X        /        ____   /   )
+  *_________/__/_____/______/ `--
+Oops, the compiler has encountered an unexpected situation.
+This is a bug in the compiler.
+A bug report containing the error description and relevant code would be
+greatly appreciated. You can submit the bug report here:
+  https://github.com/moonbitlang/moonbit-docs/issues/new?template=ice.md
+Error: Sys_error("/workspace/.moon/lib/core/_build/wasm-gc/release/bundle: No such file or directory")
+Compiler args: /workspace/.moon/bin/moonc build-package -error-format json /workspace/Feather/src/router/trie.mbt /workspace/Feather/_build/wasm-gc/debug/test/router/__generated_driver_for_internal_test.mbt -o /workspace/Feather/_build/wasm-gc/debug/test/router/router.internal_test.core -pkg miniweb/router -is-main -std-path /workspace/.moon/lib/core/_build/wasm-gc/release/bundle -pkg-sources miniweb/router:/workspace/Feather/src/router -target wasm-gc -g -O0 -source-map -no-mi -test-mode -workspace-path /workspace/Feather
+moonc version: v0.7.1+adb125543

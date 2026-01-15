@@ -124,7 +124,12 @@ main() {
     # 检查moon是否可用
     if command -v moon >/dev/null 2>&1; then
       log "Running moon test..."
-      if moon test 2>&1 | tee /tmp/moon_test.log; then
+      
+      # 尝试安装依赖
+      moon install --directory=/workspace/Feather >/dev/null 2>&1 || true
+      
+      # 运行测试
+      if moon test --directory=/workspace/Feather 2>&1 | tee /tmp/moon_test.log; then
         log "Moon test passed"
         
         # 使用iflow增加测试
