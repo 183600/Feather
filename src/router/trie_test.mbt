@@ -201,3 +201,110 @@ test "Router handles complex nested routes" {
   assert_ne!(matched3, None)
   assert_eq!(params3["path"], "some/nested/path")
 }
+
+// 新增测试：Router 处理路由冲突和优先级
+test "Router handles route conflicts and prioritization" {
+  let router = Router::new()
+  
+  let static_handler : Handler = fn(ctx) { }
+  let param_handler : Handler = fn(ctx) { }
+  
+  // 添加冲突路由：静态路由和参数路由
+  router.add_route("GET", "/users/me", static_handler)
+  router.add_route("GET", "/users/:id", param_handler)
+  
+  // 测试静态路由优先
+  let (matched1, params1) = router.match("GET", "/users/me")
+  assert_ne!(matched1, None)
+  // 静态路由应该匹配，没有参数
+  assert_eq!(params1.is_empty(), true)
+  
+  // 测试参数路由匹配其他 ID
+  let (matched2, params2) = router.match("GET", "/users/123")
+  assert_ne!(matched2, None)
+  assert_eq!(params2["id"], "123")
+  
+  // 添加更多冲突路由
+  router.add_route("GET", "/posts/latest", static_handler)
+  router.add_route("GET", "/posts/:postId", param_handler)
+  
+  let (matched3, params3) = router.match("GET", "/posts/latest")
+  assert_ne!(matched3, None)
+  assert_eq!(params3.is_empty(), true)
+  
+  let (matched4, params4) = router.match("GET", "/posts/456")
+  assert_ne!(matched4, None)
+  assert_eq!(params4["postId"], "456")
+}
+
+// 新增测试：Router 处理特殊字符和编码
+test "Router handles special characters and encoding in paths" {
+  let router = Router::new()
+  let handler : Handler = fn(ctx) { }
+  
+  // 测试包含连字符的路由
+  router.add_route("GET", "/api/v1/users", handler)
+  let (matched1, _) = router.match("GET", "/api/v1/users")
+  assert_ne!(matched1, None)
+  
+  // 测试包含下划线的路由
+  router.add_route("GET", "/api/v2/user_profiles", handler)
+  let (matched2, _) = router.match("GET", "/api/v2/user_profiles")
+  assert_ne!(matched2, None)
+  
+  // 测试包含点的路由（文件扩展名）
+  router.add_route("GET", "/static/*path", handler)
+  let (matched3, params3) = router.match("GET", "/static/file.min.js")
+  assert_ne!(matched3, None)
+  assert_eq!(params3["path"], "file.min.js")
+  
+  // 测试包含数字的路由
+  router.add_route("GET", "/api/v2/users/:userId", handler)
+  let (matched4, params4) = router.match("GET", "/api/v2/users/user123")
+  assert_ne!(matched4, None)
+  assert_eq!(params4["userId"], "user123")
+}
+
+// 新增测试：Router 处理大量路由的性能
+test "Router handles large number of routes efficiently" {
+  let router = Router::new()
+  let handler : Handler = fn(ctx) { }
+  
+  // 添加大量路由（100+）
+  for i in 0..100 {
+    router.add_route("GET", "/route/{i}", handler)
+  }
+  
+  // 添加一些参数路由
+  for i in 0..50 {
+    router.add_route("GET", "/users/{i}/posts/:postId", handler)
+  }
+  
+  // 添加通配符路由
+  router.add_route("GET", "/static/*path", handler)
+  
+  // 测试静态路由匹配性能
+  let start = @time.now()
+  for i in 0..100 {
+    let (matched, _) = router.match("GET", "/route/{i}")
+    assert_ne!(matched, None)
+  }
+  let duration = @time.now() - start
+  
+  // 验证所有路由都能正确匹配
+  assert_eq!(duration < 1000, true) // 应该在 1 秒内完成
+  
+  // 测试参数路由匹配
+  let (matched1, params1) = router.match("GET", "/users/50/posts/123")
+  assert_ne!(matched1, None)
+  assert_eq!(params1["postId"], "123")
+  
+  // 测试通配符路由匹配
+  let (matched2, params2) = router.match("GET", "/static/css/main.css")
+  assert_ne!(matched2, None)
+  assert_eq!(params2["path"], "css/main.css")
+  
+  // 测试不存在的路由
+  let (matched3, _) = router.match("GET", "/nonexistent/route")
+  assert_eq!(matched3, None)
+}

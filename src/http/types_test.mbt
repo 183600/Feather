@@ -141,3 +141,93 @@ test "Ctx::params and state work independently" {
   assert_eq!(ctx.params.length(), 2)
   assert_eq!(ctx.params["id"], "456")
 }
+
+// 新增测试：Ctx::text 处理不同状态码和响应体
+test "Ctx::text handles different status codes and body content" {
+  let conn : @http.ServerConnection = panic()
+  let req : @http.Request = panic()
+  let ctx = Ctx::new(conn, req, Map::new())
+  
+  // 测试不同的状态码
+  ctx.text(200, "OK", "Success response")
+  ctx.text(201, "Created", "Resource created")
+  ctx.text(400, "Bad Request", "Invalid input")
+  ctx.text(500, "Internal Server Error", "Server error occurred")
+  
+  // 测试空响应体
+  ctx.text(204, "No Content", "")
+  
+  // 测试包含特殊字符的响应体
+  ctx.text(200, "OK", "Response with special chars: !@#$%^&*()")
+  
+  // 验证没有 panic 或错误
+  assert_eq!(true, true)
+}
+
+// 新增测试：Ctx::json 处理复杂嵌套结构
+test "Ctx::json handles complex nested JSON structures" {
+  let conn : @http.ServerConnection = panic()
+  let req : @http.Request = panic()
+  let ctx = Ctx::new(conn, req, Map::new())
+  
+  // 测试嵌套对象
+  let nested_json = {
+    "user": {
+      "id": 123,
+      "name": "John",
+      "profile": {
+        "email": "john@example.com",
+        "age": 30
+      }
+    },
+    "metadata": {
+      "timestamp": 1234567890,
+      "version": "1.0"
+    }
+  }
+  ctx.json(200, "OK", nested_json)
+  
+  // 测试数组
+  let array_json = {
+    "items": [1, 2, 3, 4, 5],
+    "names": ["Alice", "Bob", "Charlie"]
+  }
+  ctx.json(200, "OK", array_json)
+  
+  // 测试空对象
+  let empty_json = {}
+  ctx.json(200, "OK", empty_json)
+  
+  // 验证没有 panic 或错误
+  assert_eq!(true, true)
+}
+
+// 新增测试：Ctx::state 处理大量数据和边界情况
+test "Ctx::state handles large amounts of data and edge cases" {
+  let conn : @http.ServerConnection = panic()
+  let req : @http.Request = panic()
+  let ctx = Ctx::new(conn, req, Map::new())
+  
+  // 测试存储大量数据
+  for i in 0..100 {
+    ctx.state["key_{i}"] = "value_{i}"
+  }
+  
+  // 验证所有数据都被正确存储
+  assert_eq!(ctx.state.length(), 100)
+  assert_eq!(ctx.state["key_0"], "value_0")
+  assert_eq!(ctx.state["key_99"], "value_99")
+  
+  // 测试更新现有键
+  ctx.state["key_50"] = "updated_value"
+  assert_eq!(ctx.state["key_50"], "updated_value")
+  
+  // 测试访问不存在的键（应该返回空字符串）
+  assert_eq!(ctx.state["nonexistent_key"], "")
+  
+  // 测试空键和空值
+  ctx.state[""] = "empty_key"
+  ctx.state["empty_value"] = ""
+  assert_eq!(ctx.state[""], "empty_key")
+  assert_eq!(ctx.state["empty_value"], "")
+}

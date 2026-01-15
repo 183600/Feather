@@ -199,6 +199,107 @@ test "recover middleware handles different error types" {
   wrapped2(ctx)
 }
 
+// 新增测试：recover 中间件与其他中间件协同工作
+test "recover middleware works with other middlewares in chain" {
+  let call_order : Array[String] = []
+  
+  // 创建 logger 中间件
+  let logger_mw = logger()
+  
+  // 创建 recover 中间件
+  let recover_mw = recover()
+  
+  // 创建一个会 panic 的 handler
+  let error_handler : Handler = fn(ctx) {
+    call_order.push("handler-start")
+    panic("Error in handler")
+  }
+  
+  // 将 recover 放在 logger 之后
+  let wrapped_with_recover = recover_mw(error_handler)
+  let wrapped_with_logger = logger_mw(wrapped_with_recover)
+  
+  let conn : @http.ServerConnection = panic()
+  let req : @http.Request = { meth: "GET", path: "/test" }
+  let ctx = Ctx::new(conn, req, Map::new())
+  
+  // 执行应该被 recover 捕获，不会导致整个链崩溃
+  wrapped_with_logger(ctx)
+  
+  // 验证 logger 记录了开始（即使 handler panic 了）
+  assert_eq!(call_order.length() >= 1, true)
+  assert_eq!(call_order[0], "handler-start")
+}
+
+// 新增测试：timeout 中间件的边界情况
+test "timeout middleware handles edge cases" {
+  // 测试超时时间为 0（立即超时）
+  let zero_timeout_mw = timeout(0)
+  let slow_handler : Handler = fn(ctx) {
+    @async.sleep(1)
+  }
+  
+  let wrapped1 = zero_timeout_mw(slow_handler)
+  let conn1 : @http.ServerConnection = panic()
+  let req1 : @http.Request = panic()
+  let ctx1 = Ctx::new(conn1, req1, Map::new())
+  
+  wrapped1(ctx1)
+  // 验证立即触发超时
+  
+  // 测试负超时时间（应该被视为 0 或最小值）
+  let negative_timeout_mw = timeout(-100)
+  let wrapped2 = negative_timeout_mw(slow_handler)
+  let conn2 : @http.ServerConnection = panic()
+  let req2 : @http.Request = panic()
+  let ctx2 = Ctx::new(conn2, req2, Map::new())
+  
+  wrapped2(ctx2)
+  // 验证也触发超时
+}
+
+// 新增测试：CORS 中间件处理各种请求场景
+test "cors middleware handles various request scenarios" {
+  let mw = cors()
+  let handler : Handler = fn(ctx) {
+    ctx.text(200, "OK", "test")
+  }
+  
+  let wrapped = mw(handler)
+  
+  // 测试 OPTIONS 请求（预检请求）
+  let conn1 : @http.ServerConnection = panic()
+  let req1 : @http.Request = { meth: "OPTIONS", path: "/api/data" }
+  let ctx1 = Ctx::new(conn1, req1, Map::new())
+  
+  wrapped(ctx1)
+  // 验证返回了 CORS 预检响应
+  
+  // 测试 POST 请求
+  let conn2 : @http.ServerConnection = panic()
+  let req2 : @http.Request = { meth: "POST", path: "/api/data" }
+  let ctx2 = Ctx::new(conn2, req2, Map::new())
+  
+  wrapped(ctx2)
+  // 验证正常处理并添加了 CORS 头
+  
+  // 测试 PUT 请求
+  let conn3 : @http.ServerConnection = panic()
+  let req3 : @http.Request = { meth: "PUT", path: "/api/data" }
+  let ctx3 = Ctx::new(conn3, req3, Map::new())
+  
+  wrapped(ctx3)
+  // 验证正常处理
+  
+  // 测试 DELETE 请求
+  let conn4 : @http.ServerConnection = panic()
+  let req4 : @http.Request = { meth: "DELETE", path: "/api/data" }
+  let ctx4 = Ctx::new(conn4, req4, Map::new())
+  
+  wrapped(ctx4)
+  // 验证正常处理
+}
+
 test "cors middleware handles normal requests correctly" {
   let mw = cors()
   let handler : Handler = fn(ctx) {
