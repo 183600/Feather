@@ -1,0 +1,129 @@
+name: Auto-merge cto-new[bot] pull requests
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    # 仅当作者是 cto-new[bot] 且不是草稿 PR 时运行
+    if: ${{ github.event.pull_request.user.login == 'cto-new[bot]' && !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ensure latest commit is approved
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const headSha = context.payload.pull_request.head.sha;
+
+            // 获取该 PR 的所有审查记录
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
+            });
+
+            // 检查 github-actions[bot] 是否已经批准了当前的 HEAD commit
+            const alreadyApproved = reviews.find((review) =>
+              review.user?.login === 'github-actions[bot]' &&
+              review.state === 'APPROVED' &&
+              review.commit_id === headSha
+            );
+
+            if (alreadyApproved) {
+              core.info(`Latest commit ${headSha} already has an approval from github-actions[bot]. Skipping approval.`);
+            } else {
+              await github.rest.pulls.createReview({
+                owner,
+                repo,
+                pull_number,
+                event: 'APPROVE',
+                body: 'Automatically approving PR from cto-new[bot].',
+              });
+              core.info(`Submitted approval for PR #${pull_number} on commit ${headSha}.`);
+            }
+
+      - name: Enable auto-merge
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+
+            // 如果已经开启了自动合并，直接跳过
+            if (pr.auto_merge) {
+              core.info(`Auto-merge already enabled for PR #${pr.number}.`);
+              return;
+            }
+
+            // 按优先级尝试合并方法：Squash -> Merge -> Rebase
+            const methods = ['SQUASH', 'MERGE', 'REBASE'];
+            let enabled = false;
+
+            for (const method of methods) {
+              try {
+                await github.graphql(
+                  `mutation ($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+                    enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: $mergeMethod}) {
+                      pullRequest {
+                        number
+                        autoMergeRequest {
+                          enabledAt
+                          mergeMethod
+                        }
+                      }
+                    }
+                  }`,
+                  {
+                    pullRequestId: pr.node_id,
+                    mergeMethod: method,
+                  }
+                );
+                core.info(`✅ Successfully enabled auto-merge for PR #${pr.number} using ${method.toLowerCase()} method.`);
+                enabled = true;
+                break;
+              } catch (error) {
+                const errorInfo = error?.errors?.[0];
+                const message = errorInfo?.message ?? error.message ?? String(error);
+                const type = errorInfo?.type;
+
+                // 如果是已经开启的错误，视为成功
+                if (type === 'AUTO_MERGE_ALREADY_ENABLED') {
+                  core.info(`Auto-merge was already enabled for PR #${pr.number}.`);
+                  enabled = true;
+                  break;
+                }
+
+                // 如果是方法不支持（例如仓库只允许 Squash 但尝试了 Merge），尝试下一个
+                if (type === 'MERGE_METHOD_NOT_ALLOWED' || message.includes('not allowed')) {
+                  core.info(`⚠️ Merge method ${method.toLowerCase()} not allowed. Trying next option...`);
+                  continue;
+                }
+
+                // 如果是仓库未开启 Auto-merge 功能，直接终止并警告
+                if (message.includes('Auto-merge is not enabled for this repository')) {
+                  core.error(`❌ Error: Repository setting 'Allow auto-merge' is disabled.`);
+                  core.warning(`Please go to Repository Settings -> General -> Pull Requests and check 'Allow auto-merge'.`);
+                  break;
+                }
+
+                // 其他未知错误，抛出并停止
+                core.error(`Failed to enable auto-merge: ${message}`);
+                throw error;
+              }
+            }
+
+            if (!enabled) {
+              core.warning(`⚠️ Unable to enable auto-merge for PR #${pr.number}. Please check settings.`);
+            }
