@@ -14,8 +14,8 @@ permissions:
 
 jobs:
   auto-merge:
-    # 仅当作者是 cto-new[bot] 且不是草稿 PR 时运行
-    if: ${{ github.event.pull_request.user.login == 'cto-new[bot]' && !github.event.pull_request.draft }}
+    # 仅当作者是 cto-new[bot] 时运行 (已移除草稿检查)
+    if: ${{ github.event.pull_request.user.login == 'cto-new[bot]' }}
     runs-on: ubuntu-latest
 
     steps:
