@@ -1,0 +1,9 @@
+{
+  "name": "cto-new/feather",
+  "version": "0.1.0",
+  "readme": "README.md",
+  "repository": "",
+  "license": "MIT",
+  "keywords": ["moonbit", "web", "framework"],
+  "description": "Feather: a planned Gin/Express-style web framework for MoonBit (see PLAN.md)."
+}
