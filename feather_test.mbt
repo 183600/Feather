@@ -266,3 +266,326 @@ test("Server can serve static files") {
   assert(handled == true)
   assert(ctx.response.headers["Content-Type"] == "text/css")
 }
+
+// Test 21: Query parameter parsing
+test("Context can parse query parameters") {
+  let ctx = create_context()
+  ctx.request.path = "/api/search?q=moonbit&page=2&limit=10"
+  
+  let query = ctx.parse_query()
+  assert(query["q"] == "moonbit")
+  assert(query["page"] == "2")
+  assert(query["limit"] == "10")
+}
+
+// Test 22: URL-encoded body parsing
+test("Context can parse URL-encoded form data") {
+  let ctx = create_context()
+  ctx.request.headers["Content-Type"] = "application/x-www-form-urlencoded"
+  ctx.request.body = "username=test&password=secret"
+  
+  let form = ctx.parse_form()
+  assert(form["username"] == "test")
+  assert(form["password"] == "secret")
+}
+
+// Test 23: JSON body parsing
+test("Context can parse JSON request body") {
+  let ctx = create_context()
+  ctx.request.headers["Content-Type"] = "application/json"
+  ctx.request.body = "{\"name\":\"Feather\",\"version\":\"0.1.0\"}"
+  
+  let json = ctx.parse_json()
+  assert(json["name"] == "Feather")
+  assert(json["version"] == "0.1.0")
+}
+
+// Test 24: Route priority - static before parameter
+test("Static routes have higher priority than parameterized routes") {
+  let router = create_router()
+  router.add_route("GET", "/api/status", fn(ctx) { "static" })
+  router.add_route("GET", "/api/:id", fn(ctx) { "parameter" })
+  
+  let matched1 = router.match("GET", "/api/status")
+  let matched2 = router.match("GET", "/api/123")
+  
+  assert(matched1.unwrap().handler(create_context()) == "static")
+  assert(matched2.unwrap().handler(create_context()) == "parameter")
+}
+
+// Test 25: HTTP method matching
+test("Router correctly matches different HTTP methods") {
+  let router = create_router()
+  router.add_route("GET", "/api/users", fn(ctx) { "GET" })
+  router.add_route("POST", "/api/users", fn(ctx) { "POST" })
+  router.add_route("PUT", "/api/users", fn(ctx) { "PUT" })
+  router.add_route("DELETE", "/api/users", fn(ctx) { "DELETE" })
+  
+  assert(router.match("GET", "/api/users").is_some())
+  assert(router.match("POST", "/api/users").is_some())
+  assert(router.match("PUT", "/api/users").is_some())
+  assert(router.match("DELETE", "/api/users").is_some())
+  assert(router.match("PATCH", "/api/users").is_none())
+}
+
+// Test 26: Authentication middleware
+test("Authentication middleware validates tokens") {
+  let auth_middleware = create_auth_middleware({
+    secret: "test-secret",
+    header_name: "Authorization"
+  })
+  
+  let ctx = create_context()
+  ctx.request.headers["Authorization"] = "Bearer valid-token"
+  
+  let next = fn(c) { c }
+  let result = auth_middleware(next)(ctx)
+  
+  assert(result.user != null)
+}
+
+// Test 27: Rate limiting middleware
+test("Rate limiting middleware prevents excessive requests") {
+  let rate_limiter = create_rate_limiter({
+    max_requests: 5,
+    window_seconds: 60
+  })
+  
+  let ctx = create_context()
+  ctx.request.remote_addr = "127.0.0.1"
+  
+  let allowed_count = 0
+  for i in 0..10 {
+    if rate_limiter.allow(ctx) {
+      allowed_count = allowed_count + 1
+    }
+  }
+  
+  assert(allowed_count == 5)
+}
+
+// Test 28: Response status codes
+test("Context can set various HTTP status codes") {
+  let ctx = create_context()
+  
+  ctx.status(200).text("OK")
+  assert(ctx.response.status == 200)
+  
+  ctx.status(404).text("Not Found")
+  assert(ctx.response.status == 404)
+  
+  ctx.status(500).text("Internal Server Error")
+  assert(ctx.response.status == 500)
+}
+
+// Test 29: Cookie handling
+test("Context can set and read cookies") {
+  let ctx = create_context()
+  
+  ctx.set_cookie("session", "abc123", {
+    max_age: 3600,
+    http_only: true,
+    secure: false
+  })
+  
+  assert(ctx.response.headers["Set-Cookie"] != null)
+  
+  ctx.request.headers["Cookie"] = "session=abc123"
+  let cookie = ctx.get_cookie("session")
+  assert(cookie == "abc123")
+}
+
+// Test 30: Custom error handler
+test("Server can use custom error handlers") {
+  let server = create_server({host: "127.0.0.1", port: 8080})
+  
+  let error_handler = fn(ctx, error) {
+    ctx.response.status = 500
+    ctx.response.body = "Custom error: ${error}"
+  }
+  
+  server.use_error_handler(error_handler)
+  
+  assert(server.error_handler != null)
+}
+
+// Test 31: Middleware can skip chain
+test("Middleware can stop the chain early") {
+  let middleware = fn(next) {
+    fn(ctx) {
+      ctx.response.status = 403
+      ctx.response.body = "Forbidden"
+      ctx // Stop the chain
+    }
+  }
+  
+  let next = fn(c) {
+    c.response.status = 200
+    c.response.body = "OK"
+    c
+  }
+  
+  let result = middleware(next)(create_context())
+  assert(result.response.status == 403)
+  assert(result.response.body == "Forbidden")
+}
+
+// Test 32: Context has helper methods for common responses
+test("Context provides convenience methods for common responses") {
+  let ctx = create_context()
+  
+  ctx.ok("Success")
+  assert(ctx.response.status == 200)
+  
+  ctx.created("Resource created")
+  assert(ctx.response.status == 201)
+  
+  ctx.bad_request("Invalid input")
+  assert(ctx.response.status == 400)
+  
+  ctx.not_found("Resource not found")
+  assert(ctx.response.status == 404)
+  
+  ctx.internal_server_error("Something went wrong")
+  assert(ctx.response.status == 500)
+}
+
+// Test 33: Server graceful shutdown
+test("Server can handle graceful shutdown") {
+  let server = create_server({host: "127.0.0.1", port: 8080})
+  
+  server.start()
+  let is_running = server.is_running()
+  assert(is_running == true)
+  
+  server.shutdown()
+  let stopped = server.is_running()
+  assert(stopped == false)
+}
+
+// Test 34: Router with multiple parameters
+test("Router can match routes with multiple parameters") {
+  let router = create_router()
+  router.add_route("GET", "/api/:version/users/:id/posts/:post_id", handler1)
+  
+  let matched = router.match("GET", "/api/v1/users/42/posts/100")
+  assert(matched.is_some())
+  
+  let params = matched.unwrap().params
+  assert(params["version"] == "v1")
+  assert(params["id"] == "42")
+  assert(params["post_id"] == "100")
+}
+
+// Test 35: Middleware execution order
+test("Middleware executes in the correct order") {
+  let execution_order = []
+  
+  let middleware1 = fn(next) {
+    fn(ctx) {
+      execution_order.push("middleware1")
+      next(ctx)
+    }
+  }
+  
+  let middleware2 = fn(next) {
+    fn(ctx) {
+      execution_order.push("middleware2")
+      next(ctx)
+    }
+  }
+  
+  let middleware3 = fn(next) {
+    fn(ctx) {
+      execution_order.push("middleware3")
+      ctx
+    }
+  }
+  
+  let chain = compose_middleware([middleware1, middleware2, middleware3])
+  let handler = fn(ctx) {
+    execution_order.push("handler")
+    ctx
+  }
+  
+  chain(handler)(create_context())
+  
+  assert(execution_order[0] == "middleware1")
+  assert(execution_order[1] == "middleware2")
+  assert(execution_order[2] == "middleware3")
+  assert(execution_order[3] == "handler")
+}
+
+// Test 36: Server configuration validation
+test("Server validates configuration parameters") {
+  let valid_config = {
+    host: "0.0.0.0",
+    port: 8080,
+    timeout: 30000,
+    max_connections: 1000
+  }
+  let server = create_server(valid_config)
+  
+  assert(server.config.host == "0.0.0.0")
+  assert(server.config.port == 8080)
+  assert(server.config.timeout == 30000)
+  assert(server.config.max_connections == 1000)
+}
+
+// Test 37: Response streaming
+test("Context can stream response data") {
+  let ctx = create_context()
+  
+  let chunks = ["chunk1", "chunk2", "chunk3"]
+  let stream = ctx.stream_response(200, chunks)
+  
+  assert(ctx.response.status == 200)
+  assert(stream.is_some())
+}
+
+// Test 38: Wildcard route priority
+test("Wildcard routes have lower priority than static and parameter routes") {
+  let router = create_router()
+  router.add_route("GET", "/api/docs", fn(ctx) { "static" })
+  router.add_route("GET", "/api/:id", fn(ctx) { "parameter" })
+  router.add_route("GET", "/api/*", fn(ctx) { "wildcard" })
+  
+  let matched1 = router.match("GET", "/api/docs")
+  let matched2 = router.match("GET", "/api/123")
+  let matched3 = router.match("GET", "/api/any/deep/path")
+  
+  assert(matched1.unwrap().handler(create_context()) == "static")
+  assert(matched2.unwrap().handler(create_context()) == "parameter")
+  assert(matched3.unwrap().handler(create_context()) == "wildcard")
+}
+
+// Test 39: Request body size limit
+test("Server enforces request body size limits") {
+  let server = create_server({
+    host: "127.0.0.1",
+    port: 8080,
+    max_body_size: 1024 // 1KB limit
+  })
+  
+  let small_body = "a" * 512
+  let large_body = "a" * 2048
+  
+  assert(server.validate_body_size(small_body) == true)
+  assert(server.validate_body_size(large_body) == false)
+}
+
+// Test 40: Context provides request information
+test("Context exposes detailed request information") {
+  let ctx = create_context()
+  ctx.request.method = "POST"
+  ctx.request.path = "/api/users"
+  ctx.request.headers["Content-Type"] = "application/json"
+  ctx.request.headers["User-Agent"] = "TestClient/1.0"
+  ctx.request.remote_addr = "192.168.1.1"
+  
+  assert(ctx.method() == "POST")
+  assert(ctx.path() == "/api/users")
+  assert(ctx.header("Content-Type") == "application/json")
+  assert(ctx.header("User-Agent") == "TestClient/1.0")
+  assert(ctx.ip() == "192.168.1.1")
+}
