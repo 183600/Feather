@@ -10,7 +10,9 @@ permissions:
 
 jobs:
   autopush:
-    if: github.event.pull_request.user.login == 'cto-new[bot]' && !github.event.pull_request.draft
+    # 修改点：移除了 && !github.event.pull_request.draft
+    # 现在只要是 cto-new[bot] 的 PR，不管是不是 draft，都会进入此任务
+    if: github.event.pull_request.user.login == 'cto-new[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
