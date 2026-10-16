@@ -477,7 +477,12 @@ pub fn Router::url_for(
     let segment = path[i:end]
     if segment.has_prefix(":") {
       match values.get_from_string(segment[1:]) {
-        Some(value) => builder.write_string(url_encode(value))
+        Some(value) =>
+          if value.is_empty() {
+            return None
+          } else {
+            builder.write_string(url_encode(value))
+          }
         None => return None
       }
     } else if segment.has_prefix("*") {
@@ -1733,25 +1738,20 @@ pub fn status_text(code : Int32) -> String {
 ///|
 fn normalize_prefix(prefix : String) -> String {
   let view = prefix.view()
-  let length = view.length()
-  let mut end = length
-  while end > 1 && view[end - 1:].has_prefix("/") {
-    end = end - 1
-  }
-  if end == 1 && view.has_prefix("/") {
-    return ""
-  }
-  let trimmed = if end == length { view } else { view[:end] }
-  if trimmed.has_prefix("/") {
-    if end == length {
-      return prefix
+  let builder = StringBuilder(size_hint=view.length() + 1)
+  let mut has_segment = false
+  for segment in view.split("/") {
+    if segment.is_empty() {
+      continue
     }
-    return trimmed.to_owned()
+    builder.write_char('/')
+    builder.write_stringview(segment)
+    has_segment = true
   }
-  if end == 0 {
+  if !has_segment {
     return ""
   }
-  "/" + trimmed.to_owned()
+  builder.to_string()
 }
 
 ///|

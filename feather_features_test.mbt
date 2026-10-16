@@ -73,6 +73,20 @@ test "Router url_for handles wildcard and static names" {
 }
 
 ///|
+test "Router url_for rejects empty parameter values" {
+  let router = @feather.create_router()
+  router.add_named_route("user", "GET", "/users/:id", fn(ctx) {
+    ctx.text(200, "u")
+  })
+  router.add_named_route("file", "GET", "/files/*path", fn(ctx) {
+    ctx.text(200, "f")
+  })
+  assert_eq(router.url_for("user", params={ "id": "" }), None)
+  assert_eq(router.url_for("user", params={ "id": "42" }), Some("/users/42"))
+  assert_eq(router.url_for("file", params={ "path": "" }), Some("/files/"))
+}
+
+///|
 test "App groups prefix routes and apply group middleware" {
   let order : Array[String] = []
   let app = @feather.App::new()
@@ -343,6 +357,30 @@ test "custom static index name is honored" {
     index="home.html",
   )
   assert_eq(app.static_file_for("/docs/"), Some("/srv/docs/home.html"))
+}
+
+///|
+test "mount prefixes ignore redundant slashes" {
+  let app = @feather.App::new().static_files("//assets", "/srv/public")
+  assert_eq(app.static_file_for("/assets/app.css"), Some("/srv/public/app.css"))
+  assert_eq(app.static_file_for("/assets/"), Some("/srv/public/index.html"))
+  let nested = @feather.App::new().static_files("/assets//img/", "/srv/images")
+  assert_eq(
+    nested.static_file_for("/assets/img/logo.png"),
+    Some("/srv/images/logo.png"),
+  )
+  let group_app = @feather.App::new()
+  let api = group_app.group("//api")
+  ignore(api.route_named("api_x", "GET", "/x", fn(ctx) { ctx.text(200, "ok") }))
+  assert_eq(group_app.url_for("api_x"), Some("/api/x"))
+  let response = group_app.respond({
+    method: "GET",
+    path: "/api/x",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "ok")
 }
 
 ///|
