@@ -133,6 +133,55 @@ async fn request_from_http(
 }
 
 ///|
+async fn send_file_response(
+  conn : @http.ServerConnection,
+  response : Response,
+  file : FileResponse,
+  head : Bool,
+) -> Unit {
+  let handle = @fs.open(file.path, mode=@fs.ReadOnly) catch {
+    _ => {
+      send_simple(conn, 404, "404 Not Found", head)
+      return
+    }
+  }
+  defer handle.close()
+  if handle.kind() is @fs.Directory {
+    send_simple(conn, 404, "404 Not Found", head)
+    return
+  }
+  let size = handle.size() catch {
+    _ => {
+      send_simple(conn, 500, "500 Internal Server Error", head)
+      return
+    }
+  }
+  let headers : @http.Headers = Map([], capacity=response.headers.length() + 2)
+  for name, value in response.headers {
+    headers.set(@http.CaseInsensitiveString(name), value)
+  }
+  if !headers.contains(header_content_type) {
+    headers.set(header_content_type, file.content_type)
+  }
+  if !headers.contains(header_content_length) {
+    headers.set(header_content_length, size.to_string())
+  }
+  if response.cookies.length() > 0 {
+    headers.remove(header_set_cookie)
+  }
+  conn.send_response(
+    response.status,
+    status_text(response.status),
+    extra_headers=headers,
+    cookies=response.cookies,
+  )
+  if !head && size > 0L {
+    conn.write_reader(handle)
+  }
+  conn.end_response()
+}
+
+///|
 async fn send_response(
   conn : @http.ServerConnection,
   response : Response,
@@ -384,7 +433,7 @@ async fn build_response(
   request : @http.Request,
   body : &@io.Reader,
   conn : @http.ServerConnection,
-) -> Response {
+) -> (Response, FileResponse?) {
   let req = request_from_http(request, body, app.max_body_size)
   let ctx = Context::new(req)
   ctx.state.set("remote_addr", conn.client_addr().to_string())
@@ -394,7 +443,7 @@ async fn build_response(
       error_response_with_payload(ctx, status, message, payload)
     err => internal_error(ctx, "\{err}")
   }
-  ctx.response
+  (ctx.response, ctx.file_response())
 }
 
 ///|
@@ -464,7 +513,7 @@ async fn handle_request(
       None => ()
     }
   }
-  let response = if app.timeout > 0 {
+  let (response, file) = if app.timeout > 0 {
     @async.with_timeout(app.timeout, () => {
       build_response(app, request, body, conn)
     }) catch {
@@ -495,7 +544,10 @@ async fn handle_request(
       }
     }
   }
-  send_response(conn, response, head)
+  match file {
+    Some(file) => send_file_response(conn, response, file, head)
+    None => send_response(conn, response, head)
+  }
 }
 
 ///|
@@ -520,8 +572,17 @@ pub async fn App::serve(self : App, addr : @socket.Addr) -> Unit {
 }
 
 ///|
+pub fn Feather::listen_address(self : Feather) -> String {
+  let host = self.config.host
+  let needs_brackets = host.contains(":") &&
+    !(host.has_prefix("[") && host.has_suffix("]"))
+  let display_host = if needs_brackets { "[" + host + "]" } else { host }
+  "\{display_host}:\{self.config.port}"
+}
+
+///|
 pub async fn Feather::serve(self : Feather) -> Unit {
-  let addr = @socket.Addr::parse("\{self.config.host}:\{self.config.port}")
+  let addr = @socket.Addr::parse(self.listen_address())
   self.app.serve(addr)
 }
 

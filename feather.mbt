@@ -30,6 +30,12 @@ pub(all) struct Request {
 }
 
 ///|
+pub(all) struct FileResponse {
+  path : String
+  content_type : String
+}
+
+///|
 pub(all) struct Response {
   mut status : Int32
   headers : Map[String, String]
@@ -43,6 +49,9 @@ pub(all) struct Context {
   request : Request
   response : Response
   state : Map[String, String]
+  json_state : Map[String, Json]
+  cleanups : Array[() -> Unit]
+  mut file : FileResponse?
 }
 
 ///|
@@ -134,6 +143,9 @@ pub fn Context::new(request : Request) -> Context {
       cookies: [],
     },
     state: Map([], capacity=4),
+    json_state: Map([], capacity=4),
+    cleanups: [],
+    file: None,
   }
 }
 
@@ -712,6 +724,7 @@ pub fn Router::dispatch_with(
 
 ///|
 pub fn not_found(ctx : Context) -> Unit {
+  ctx.file = None
   ctx.response.status = 404
   ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
   ctx.response.data = None
@@ -720,6 +733,7 @@ pub fn not_found(ctx : Context) -> Unit {
 
 ///|
 pub fn method_not_allowed(ctx : Context, allowed : Array[String]) -> Unit {
+  ctx.file = None
   ctx.response.status = 405
   ctx.response.headers.set("Allow", allowed.join(", "))
   ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
@@ -729,6 +743,7 @@ pub fn method_not_allowed(ctx : Context, allowed : Array[String]) -> Unit {
 
 ///|
 pub fn internal_error(ctx : Context, detail : String) -> Unit {
+  ctx.file = None
   ctx.state.set("error", detail)
   ctx.response.status = 500
   ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
@@ -738,6 +753,7 @@ pub fn internal_error(ctx : Context, detail : String) -> Unit {
 
 ///|
 pub fn error_response(ctx : Context, status : Int32, message : String) -> Unit {
+  ctx.file = None
   let payload : Map[String, Json] = Map([], capacity=2)
   payload.set("status", Json::number(status.to_double()))
   payload.set("error", Json::string(message))
@@ -754,6 +770,7 @@ pub fn error_response_with_payload(
   message : String,
   payload : Json,
 ) -> Unit {
+  ctx.file = None
   let body : Map[String, Json] = Map([], capacity=4)
   body.set("status", Json::number(status.to_double()))
   body.set("error", Json::string(message))
@@ -831,6 +848,18 @@ pub fn Context::param(self : Context, name : String) -> String {
 }
 
 ///|
+pub fn Context::params(self : Context) -> Map[String, String] {
+  let result : Map[String, String] = Map([], capacity=4)
+  let prefix_length = PARAM_PREFIX.length()
+  for key, value in self.state {
+    if key.has_prefix(PARAM_PREFIX) {
+      result.set(key[prefix_length:].to_owned(), value)
+    }
+  }
+  result
+}
+
+///|
 pub fn Context::status(self : Context, code : Int32) -> Unit {
   self.response.status = code
 }
@@ -846,6 +875,7 @@ pub fn Context::set_header(
 
 ///|
 pub fn Context::text(self : Context, status : Int32, body : String) -> Unit {
+  self.file = None
   self.response.status = status
   self.response.headers.set("Content-Type", "text/plain; charset=utf-8")
   self.response.data = None
@@ -859,6 +889,7 @@ pub fn Context::bytes(
   data : Bytes,
   content_type~ : String = "application/octet-stream",
 ) -> Unit {
+  self.file = None
   self.response.status = status
   self.response.headers.set("Content-Type", content_type)
   self.response.body = ""
@@ -867,6 +898,7 @@ pub fn Context::bytes(
 
 ///|
 pub fn Context::html(self : Context, status : Int32, body : String) -> Unit {
+  self.file = None
   self.response.status = status
   self.response.headers.set("Content-Type", "text/html; charset=utf-8")
   self.response.data = None
@@ -884,6 +916,7 @@ pub fn json_object(data : Map[String, String]) -> Json {
 
 ///|
 pub fn Context::json_value(self : Context, status : Int32, data : Json) -> Unit {
+  self.file = None
   self.response.status = status
   self.response.headers.set("Content-Type", "application/json; charset=utf-8")
   self.response.data = None
@@ -914,6 +947,7 @@ pub fn Context::redirect(
   status : Int32,
   location : String,
 ) -> Unit {
+  self.file = None
   self.response.status = status
   self.response.headers.set("Location", location)
   self.response.data = None
@@ -922,6 +956,7 @@ pub fn Context::redirect(
 
 ///|
 pub fn Context::no_content(self : Context) -> Unit {
+  self.file = None
   self.response.status = 204
   self.response.body = ""
   self.response.data = None
@@ -1015,6 +1050,35 @@ pub fn Context::cookie(self : Context, name : String) -> String? {
 }
 
 ///|
+fn strip_control_characters(value : String) -> String {
+  let view = value.view()
+  let length = view.length()
+  let mut i = 0
+  let mut needs_clean = false
+  while i < length {
+    let code = view.unsafe_get(i).to_int()
+    if code < 0x20 || code == 0x7F {
+      needs_clean = true
+      break
+    }
+    i = i + 1
+  }
+  if !needs_clean {
+    return value
+  }
+  let builder = StringBuilder(size_hint=length)
+  let mut index = 0
+  while index < length {
+    let code = view.unsafe_get(index).to_int()
+    if code >= 0x20 && code != 0x7F {
+      builder.write_char(code.unsafe_to_char())
+    }
+    index = index + 1
+  }
+  builder.to_string()
+}
+
+///|
 pub fn Context::add_cookie(
   self : Context,
   name : String,
@@ -1026,17 +1090,25 @@ pub fn Context::add_cookie(
   http_only~ : Bool = false,
   secure~ : Bool = false,
 ) -> Unit {
+  let clean_path = match path {
+    Some(value) => Some(strip_control_characters(value))
+    None => None
+  }
+  let clean_domain = match domain {
+    Some(value) => Some(strip_control_characters(value))
+    None => None
+  }
   self.response.cookies.push(
     @http.Cookie(
-      name,
-      value,
-      path?,
-      max_age?,
-      domain?,
-      http_only~,
-      secure~,
+      strip_control_characters(name),
+      strip_control_characters(value),
+      path?=clean_path,
+      max_age?=max_age,
+      domain?=clean_domain,
+      http_only=http_only,
+      secure=secure,
       extensions=match same_site {
-        Some(value) => ["SameSite=" + value]
+        Some(value) => ["SameSite=" + strip_control_characters(value)]
         None => []
       },
     ),
@@ -1095,16 +1167,24 @@ pub fn Context::set_cookie(
   http_only~ : Bool = false,
   secure~ : Bool = false,
 ) -> Unit {
+  let clean_path = match path {
+    Some(value) => Some(strip_control_characters(value))
+    None => None
+  }
+  let clean_domain = match domain {
+    Some(value) => Some(strip_control_characters(value))
+    None => None
+  }
   let cookie = @http.Cookie(
-    name,
-    value,
-    path?,
-    max_age?,
-    domain?,
-    http_only~,
-    secure~,
+    strip_control_characters(name),
+    strip_control_characters(value),
+    path?=clean_path,
+    max_age?=max_age,
+    domain?=clean_domain,
+    http_only=http_only,
+    secure=secure,
     extensions=match same_site {
-      Some(value) => ["SameSite=" + value]
+      Some(value) => ["SameSite=" + strip_control_characters(value)]
       None => []
     },
   )
@@ -1138,6 +1218,165 @@ pub fn Context::request_id(self : Context) -> String {
     Some(value) => value
     None => ""
   }
+}
+
+///|
+fn parse_int_value(value : StringView) -> Int? {
+  let length = value.length()
+  if length == 0 {
+    return None
+  }
+  let mut index = 0
+  let mut negative = false
+  let first = value.unsafe_get(0)
+  if first == ('-' : UInt16) {
+    negative = true
+    index = 1
+  } else if first == ('+' : UInt16) {
+    index = 1
+  }
+  if index >= length {
+    return None
+  }
+  let mut result = 0L
+  while index < length {
+    let digit = value.unsafe_get(index).to_int() - 48
+    if digit < 0 || digit > 9 {
+      return None
+    }
+    result = result * 10L + digit.to_int64()
+    if result > 2147483648L {
+      return None
+    }
+    index = index + 1
+  }
+  let signed = if negative { -result } else { result }
+  if signed > 2147483647L || signed < -2147483648L {
+    return None
+  }
+  Some(signed.to_int())
+}
+
+///|
+fn parse_bool_value(value : StringView) -> Bool? {
+  if value == "true" || value == "1" {
+    Some(true)
+  } else if value == "false" || value == "0" {
+    Some(false)
+  } else {
+    None
+  }
+}
+
+///|
+pub fn Context::param_int(self : Context, name : String) -> Int? {
+  parse_int_value(self.param(name).view())
+}
+
+///|
+pub fn Context::param_bool(self : Context, name : String) -> Bool? {
+  parse_bool_value(self.param(name).view())
+}
+
+///|
+pub fn Context::query_int(self : Context, name : String) -> Int? {
+  parse_int_value(self.query(name).view())
+}
+
+///|
+pub fn Context::query_bool(self : Context, name : String) -> Bool? {
+  parse_bool_value(self.query(name).view())
+}
+
+///|
+pub fn Context::set_json(self : Context, key : String, value : Json) -> Unit {
+  self.json_state.set(key, value)
+}
+
+///|
+pub fn Context::get_json(self : Context, key : String) -> Json? {
+  self.json_state.get(key)
+}
+
+///|
+pub fn Context::defer_cleanup(self : Context, cleanup : () -> Unit) -> Unit {
+  self.cleanups.push(cleanup)
+}
+
+///|
+fn content_disposition_attachment(name : String) -> String {
+  let clean = strip_control_characters(name)
+  let view = clean.view()
+  let length = view.length()
+  let escaped = StringBuilder(size_hint=length + 8)
+  let mut has_non_ascii = false
+  let mut i = 0
+  while i < length {
+    let code = view.unsafe_get(i).to_int()
+    if code < 0x80 {
+      if code == 34 {
+        escaped.write_string("\\\"")
+      } else if code == 92 {
+        escaped.write_string("\\\\")
+      } else {
+        escaped.write_char(code.unsafe_to_char())
+      }
+    } else {
+      has_non_ascii = true
+      escaped.write_char('_')
+    }
+    i = i + 1
+  }
+  if has_non_ascii {
+    "attachment; filename=\"" +
+    escaped.to_string() +
+    "\"; filename*=UTF-8''" +
+    url_encode(clean)
+  } else {
+    "attachment; filename=\"" + escaped.to_string() + "\""
+  }
+}
+
+///|
+fn Context::run_cleanups(self : Context) -> Unit {
+  while self.cleanups.length() > 0 {
+    match self.cleanups.pop() {
+      Some(cleanup) => cleanup()
+      None => ()
+    }
+  }
+}
+
+///|
+pub fn Context::file(
+  self : Context,
+  status : Int32,
+  path : String,
+  content_type? : String,
+  download_name? : String,
+) -> Unit {
+  let resolved_type = match content_type {
+    Some(content_type) => content_type
+    None => mime_type_for(path)
+  }
+  self.response.status = status
+  self.response.body = ""
+  self.response.data = None
+  self.response.headers.set("Content-Type", resolved_type)
+  match download_name {
+    Some(name) =>
+      self.response.headers.set(
+        "Content-Disposition",
+        content_disposition_attachment(name),
+      )
+    None => ()
+  }
+  self.file = Some({ path, content_type: resolved_type, })
+}
+
+///|
+pub fn Context::file_response(self : Context) -> FileResponse? {
+  self.file
 }
 
 ///|
@@ -1361,9 +1600,13 @@ pub fn url_encode(source : String) -> String {
           continue
         }
       }
-      abort("invalid surrogate pair")
+      write_percent_byte(builder, hex, 0xEF)
+      write_percent_byte(builder, hex, 0xBF)
+      write_percent_byte(builder, hex, 0xBD)
     } else if code >= 0xDC00 && code <= 0xDFFF {
-      abort("invalid surrogate pair")
+      write_percent_byte(builder, hex, 0xEF)
+      write_percent_byte(builder, hex, 0xBF)
+      write_percent_byte(builder, hex, 0xBD)
     } else {
       write_percent_byte(builder, hex, 0xE0 | (code >> 12))
       write_percent_byte(builder, hex, 0x80 | ((code >> 6) & 0x3F))
@@ -2085,38 +2328,66 @@ pub fn status_text(code : Int32) -> String {
   match code {
     100 => "Continue"
     101 => "Switching Protocols"
+    102 => "Processing"
+    103 => "Early Hints"
     200 => "OK"
     201 => "Created"
     202 => "Accepted"
+    203 => "Non-Authoritative Information"
     204 => "No Content"
+    205 => "Reset Content"
     206 => "Partial Content"
+    207 => "Multi-Status"
+    208 => "Already Reported"
+    226 => "IM Used"
+    300 => "Multiple Choices"
     301 => "Moved Permanently"
     302 => "Found"
     303 => "See Other"
     304 => "Not Modified"
+    305 => "Use Proxy"
     307 => "Temporary Redirect"
     308 => "Permanent Redirect"
     400 => "Bad Request"
     401 => "Unauthorized"
+    402 => "Payment Required"
     403 => "Forbidden"
     404 => "Not Found"
     405 => "Method Not Allowed"
     406 => "Not Acceptable"
+    407 => "Proxy Authentication Required"
     408 => "Request Timeout"
     409 => "Conflict"
     410 => "Gone"
     411 => "Length Required"
     412 => "Precondition Failed"
     413 => "Payload Too Large"
+    414 => "URI Too Long"
     415 => "Unsupported Media Type"
     416 => "Range Not Satisfiable"
+    417 => "Expectation Failed"
+    418 => "I'm a Teapot"
+    421 => "Misdirected Request"
     422 => "Unprocessable Entity"
+    423 => "Locked"
+    424 => "Failed Dependency"
+    425 => "Too Early"
+    426 => "Upgrade Required"
+    428 => "Precondition Required"
     429 => "Too Many Requests"
+    431 => "Request Header Fields Too Large"
+    451 => "Unavailable For Legal Reasons"
     500 => "Internal Server Error"
     501 => "Not Implemented"
     502 => "Bad Gateway"
     503 => "Service Unavailable"
     504 => "Gateway Timeout"
+    505 => "HTTP Version Not Supported"
+    506 => "Variant Also Negotiates"
+    507 => "Insufficient Storage"
+    508 => "Loop Detected"
+    510 => "Not Extended"
+    511 => "Network Authentication Required"
     _ => "Unknown"
   }
 }
@@ -2242,29 +2513,7 @@ fn month_from_name(name : StringView) -> Int? {
 }
 
 ///|
-pub fn parse_http_date(value : String) -> Int64? {
-  let parts : Array[StringView] = []
-  for part in value.view().split(" ") {
-    if !part.is_empty() {
-      parts.push(part)
-    }
-  }
-  if parts.length() < 5 {
-    return None
-  }
-  let day = match parse_decimal(parts[1]) {
-    Some(day) => day
-    None => return None
-  }
-  let month = match month_from_name(parts[2]) {
-    Some(month) => month
-    None => return None
-  }
-  let year = match parse_decimal(parts[3]) {
-    Some(year) => year.to_int64()
-    None => return None
-  }
-  let time = parts[4]
+fn parse_time_of_day(time : StringView) -> Int64? {
   let first_colon = match time.find(":") {
     Some(index) => index
     None => return None
@@ -2285,17 +2534,104 @@ pub fn parse_http_date(value : String) -> Int64? {
     Some(second) => second
     None => return None
   }
-  if day < 1 ||
-    day > 31 ||
-    year < 1970 ||
-    hour > 23 ||
-    minute > 59 ||
-    second > 60 {
+  if hour > 23 || minute > 59 || second > 60 {
     return None
   }
-  let seconds = days_from_civil(year, month, day) * 86400L +
-    (hour * 3600 + minute * 60 + second).to_int64()
-  Some(seconds)
+  Some((hour * 3600 + minute * 60 + second).to_int64())
+}
+
+///|
+pub fn parse_http_date(value : String) -> Int64? {
+  let parts : Array[StringView] = []
+  for part in value.view().split(" ") {
+    if !part.is_empty() {
+      parts.push(part)
+    }
+  }
+  if parts.length() < 4 {
+    return None
+  }
+  let mut day = 0
+  let mut month = 0
+  let mut year = 0L
+  let mut time = parts[0]
+  if parts[1].contains("-") {
+    if parts.length() < 4 {
+      return None
+    }
+    let date = parts[1]
+    let first_dash = match date.find("-") {
+      Some(index) => index
+      None => return None
+    }
+    let second_dash = match date[first_dash + 1:].find("-") {
+      Some(index) => first_dash + 1 + index
+      None => return None
+    }
+    day = match parse_decimal(date[:first_dash]) {
+      Some(day) => day
+      None => return None
+    }
+    month = match month_from_name(date[first_dash + 1:second_dash]) {
+      Some(month) => month
+      None => return None
+    }
+    let year_text = date[second_dash + 1:]
+    let parsed_year = match parse_decimal(year_text) {
+      Some(year) => year
+      None => return None
+    }
+    if year_text.length() == 2 {
+      year = (if parsed_year < 70 { 2000 + parsed_year } else { 1900 + parsed_year }).to_int64()
+    } else if year_text.length() == 4 {
+      year = parsed_year.to_int64()
+    } else {
+      return None
+    }
+    time = parts[2]
+  } else if parts[0].contains(",") {
+    if parts.length() < 5 {
+      return None
+    }
+    day = match parse_decimal(parts[1]) {
+      Some(day) => day
+      None => return None
+    }
+    month = match month_from_name(parts[2]) {
+      Some(month) => month
+      None => return None
+    }
+    year = match parse_decimal(parts[3]) {
+      Some(year) => year.to_int64()
+      None => return None
+    }
+    time = parts[4]
+  } else {
+    if parts.length() < 5 {
+      return None
+    }
+    month = match month_from_name(parts[1]) {
+      Some(month) => month
+      None => return None
+    }
+    day = match parse_decimal(parts[2]) {
+      Some(day) => day
+      None => return None
+    }
+    time = parts[3]
+    year = match parse_decimal(parts[4]) {
+      Some(year) => year.to_int64()
+      None => return None
+    }
+  }
+  if day < 1 || day > 31 || year < 1970 {
+    return None
+  }
+  let seconds_of_day = match parse_time_of_day(time) {
+    Some(seconds) => seconds
+    None => return None
+  }
+  Some(days_from_civil(year, month, day) * 86400L + seconds_of_day)
 }
 
 ///|
@@ -2337,6 +2673,7 @@ pub fn Context::not_modified(
   etag? : String,
   last_modified? : String,
 ) -> Unit {
+  self.file = None
   self.response.status = 304
   self.response.body = ""
   self.response.data = None
@@ -2934,8 +3271,8 @@ pub fn App::request_timeout(self : App, millis : Int32) -> App {
 
 ///|
 pub fn App::handle(self : App, ctx : Context) -> Unit raise {
-  match self.chain {
-    Some(chain) => chain(ctx)
+  let chain = match self.chain {
+    Some(chain) => chain
     None => {
       let router = self.router
       let terminal : Handler = fn(ctx) raise {
@@ -2943,9 +3280,16 @@ pub fn App::handle(self : App, ctx : Context) -> Unit raise {
       }
       let chain = apply_middleware(self.middlewares, terminal)
       self.chain = Some(chain)
-      chain(ctx)
+      chain
     }
   }
+  chain(ctx) catch {
+    err => {
+      ctx.run_cleanups()
+      raise err
+    }
+  }
+  ctx.run_cleanups()
 }
 
 ///|
@@ -3079,12 +3423,22 @@ pub fn middleware_cors(
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
-      ctx.response.headers.set("Access-Control-Allow-Origin", allow_origin)
+      let request_origin = ctx.header("Origin")
+      let echo_origin = allow_origin != "*" ||
+        (allow_credentials && request_origin != "")
+      if echo_origin {
+        let origin = if allow_origin != "*" { allow_origin } else { request_origin }
+        ctx.response.headers.set("Access-Control-Allow-Origin", origin)
+        let vary = match ctx.response.headers.get("Vary") {
+          Some(existing) if existing != "" => existing + ", Origin"
+          _ => "Origin"
+        }
+        ctx.response.headers.set("Vary", vary)
+      } else {
+        ctx.response.headers.set("Access-Control-Allow-Origin", allow_origin)
+      }
       if allow_credentials {
         ctx.response.headers.set("Access-Control-Allow-Credentials", "true")
-      }
-      if allow_origin != "*" {
-        ctx.response.headers.set("Vary", "Origin")
       }
       if ctx.request.method == "OPTIONS" {
         ctx.response.status = 204
