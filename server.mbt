@@ -3,7 +3,7 @@ pub suberror PayloadTooLarge
 
 ///|
 async fn read_body(reader : &@io.Reader, limit : Int32) -> String {
-  let buffer = @buffer.Buffer::Buffer(size_hint=limit.min(4096).max(0))
+  let mut buffer : @buffer.Buffer? = None
   let mut total = 0
   let mut done = false
   while !done {
@@ -14,11 +14,21 @@ async fn read_body(reader : &@io.Reader, limit : Int32) -> String {
         if total > limit {
           raise PayloadTooLarge
         }
-        buffer.write_bytes(chunk)
+        match buffer {
+          Some(buffer) => buffer.write_bytes(chunk)
+          None => {
+            let created = @buffer.Buffer::Buffer(size_hint=total)
+            created.write_bytes(chunk)
+            buffer = Some(created)
+          }
+        }
       }
     }
   }
-  @utf8.decode_lossy(buffer.to_bytes())
+  match buffer {
+    Some(buffer) => @utf8.decode_lossy(buffer.to_bytes())
+    None => ""
+  }
 }
 
 ///|

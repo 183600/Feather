@@ -60,10 +60,10 @@ pub struct RouteNode {
   mut route_path : String
   static_children : Map[String, RouteNode]
   mut param_child : RouteNode?
-  mut param_name : String
   mut wildcard_child : RouteNode?
-  mut wildcard_name : String
   mut has_dynamic : Bool
+  mut param_names : Array[String]
+  mut route_wildcard_name : String
 }
 
 ///|
@@ -98,10 +98,10 @@ fn RouteNode::new() -> RouteNode {
     route_path: "",
     static_children: Map([], capacity=2),
     param_child: None,
-    param_name: "",
     wildcard_child: None,
-    wildcard_name: "",
     has_dynamic: false,
+    param_names: [],
+    route_wildcard_name: "",
   }
 }
 
@@ -154,18 +154,6 @@ fn clean_path_view(path : String) -> StringView {
 }
 
 ///|
-fn join_segments(segments : Array[StringView], start : Int32) -> String {
-  let builder = StringBuilder()
-  for i = start; i < segments.length(); i = i + 1 {
-    if i > start {
-      builder.write_string("/")
-    }
-    builder.write_stringview(segments[i])
-  }
-  builder.to_string()
-}
-
-///|
 fn split_segments(path : StringView) -> Array[StringView] {
   let segments : Array[StringView] = Array(capacity=4)
   for segment in path.split("/") {
@@ -177,87 +165,105 @@ fn split_segments(path : StringView) -> Array[StringView] {
 }
 
 ///|
-priv struct RouteParams {
-  params : Map[String, String]
-  wildcard_name : String
-  wildcard_value : String
-}
-
-///|
-fn extract_route_params(
-  route_path : StringView,
-  segments : Array[StringView],
-) -> RouteParams {
-  let params : Map[String, String] = Map([], capacity=4)
-  let mut wildcard_name = ""
-  let mut wildcard_value = ""
-  let mut index = 0
-  for pattern in split_segments(route_path) {
-    if pattern.has_prefix(":") {
-      if index < segments.length() {
-        params.set(pattern[1:].to_owned(), segments[index].to_owned())
-      }
-      index = index + 1
-    } else if pattern.has_prefix("*") {
-      wildcard_name = pattern[1:].to_owned()
-      wildcard_value = join_segments(segments, index)
-      if wildcard_name != "" {
-        params.set(wildcard_name, wildcard_value)
-      }
-      index = segments.length()
-    } else {
-      index = index + 1
+fn join_wildcard(path : StringView, start : Int32) -> String {
+  let builder = StringBuilder(size_hint=path.length() - start)
+  let mut written = false
+  for segment in path[start:].split("/") {
+    if segment.is_empty() {
+      continue
     }
+    if written {
+      builder.write_string("/")
+    }
+    builder.write_stringview(segment)
+    written = true
   }
-  { params, wildcard_name, wildcard_value, }
+  builder.to_string()
 }
 
 ///|
-fn match_node(
+fn skip_slashes(path : StringView, pos : Int32) -> Int32 {
+  let length = path.length()
+  let mut start = pos
+  while start < length && path.unsafe_get(start) == ('/' : UInt16) {
+    start = start + 1
+  }
+  start
+}
+
+///|
+fn segment_end(path : StringView, start : Int32) -> Int32 {
+  match path[start:].find("/") {
+    Some(offset) => start + offset
+    None => path.length()
+  }
+}
+
+///|
+priv struct MatchOutcome {
+  node : RouteNode
+  wildcard_start : Int32
+}
+
+///|
+fn match_dynamic_node(
   node : RouteNode,
-  segments : Array[StringView],
-  index : Int32,
-) -> RouteNode? {
-  if index == segments.length() {
+  path : StringView,
+  pos : Int32,
+  captures : Array[StringView],
+) -> MatchOutcome? {
+  let start = skip_slashes(path, pos)
+  if start >= path.length() {
     if node.handler is Some(_) {
-      return Some(node)
+      return Some({ node, wildcard_start: -1 })
     }
-    return node.wildcard_child
+    return match node.wildcard_child {
+      Some(child) => Some({ node: child, wildcard_start: pos })
+      None => None
+    }
   }
-  let segment = segments[index]
+  let end = segment_end(path, start)
+  let segment = path[start:end]
   match node.static_children.get_from_string(segment) {
     Some(child) =>
-      match match_node(child, segments, index + 1) {
-        Some(result) => return Some(result)
+      match match_dynamic_node(child, path, end + 1, captures) {
+        Some(outcome) => return Some(outcome)
         None => ()
       }
     None => ()
   }
   match node.param_child {
-    Some(child) =>
-      match match_node(child, segments, index + 1) {
-        Some(result) => return Some(result)
-        None => ()
+    Some(child) => {
+      captures.push(segment)
+      match match_dynamic_node(child, path, end + 1, captures) {
+        Some(outcome) => return Some(outcome)
+        None => ignore(captures.pop())
       }
+    }
     None => ()
   }
-  node.wildcard_child
+  match node.wildcard_child {
+    Some(child) => Some({ node: child, wildcard_start: pos })
+    None => None
+  }
 }
 
 ///|
 fn match_static_node(
   node : RouteNode,
-  segments : Array[StringView],
-  index : Int32,
+  path : StringView,
+  pos : Int32,
 ) -> RouteNode? {
-  if index == segments.length() {
+  let start = skip_slashes(path, pos)
+  if start >= path.length() {
     if node.handler is Some(_) {
       return Some(node)
     }
     return None
   }
-  match node.static_children.get_from_string(segments[index]) {
-    Some(child) => match_static_node(child, segments, index + 1)
+  let end = segment_end(path, start)
+  match node.static_children.get_from_string(path[start:end]) {
+    Some(child) => match_static_node(child, path, end + 1)
     None => None
   }
 }
@@ -287,9 +293,12 @@ pub fn Router::add_route(
       root
     }
   }
-  let ancestors : Array[RouteNode] = [node]
+  let root = node
+  let param_names : Array[String] = []
+  let mut route_wildcard_name = ""
   for segment in split_segments(clean_path) {
     if segment.has_prefix(":") {
+      param_names.push(segment[1:].to_owned())
       let child = match node.param_child {
         Some(child) => child
         None => {
@@ -298,12 +307,10 @@ pub fn Router::add_route(
           child
         }
       }
-      node.param_name = segment[1:].to_owned()
-      for ancestor in ancestors {
-        ancestor.has_dynamic = true
-      }
+      root.has_dynamic = true
       node = child
     } else if segment.has_prefix("*") {
+      route_wildcard_name = segment[1:].to_owned()
       let child = match node.wildcard_child {
         Some(child) => child
         None => {
@@ -312,10 +319,7 @@ pub fn Router::add_route(
           child
         }
       }
-      node.wildcard_name = segment[1:].to_owned()
-      for ancestor in ancestors {
-        ancestor.has_dynamic = true
-      }
+      root.has_dynamic = true
       node = child
       break
     } else {
@@ -330,10 +334,11 @@ pub fn Router::add_route(
       }
       node = child
     }
-    ancestors.push(node)
   }
   node.handler = Some(handler)
   node.route_path = clean_path
+  node.param_names = param_names
+  node.route_wildcard_name = route_wildcard_name
   self.routes.push({
     path: clean_path,
     method: method_key,
@@ -385,12 +390,12 @@ pub fn Router::url_for(
     builder.write_string("/")
     let segment = segments[i]
     if segment.has_prefix(":") {
-      match values.get(segment[1:].to_owned()) {
+      match values.get_from_string(segment[1:]) {
         Some(value) => builder.write_string(url_encode(value))
         None => return None
       }
     } else if segment.has_prefix("*") {
-      match values.get(segment[1:].to_owned()) {
+      match values.get_from_string(segment[1:]) {
         Some(value) => builder.write_string(value)
         None => return None
       }
@@ -404,12 +409,12 @@ pub fn Router::url_for(
 ///|
 fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
   let allowed : Array[String] = []
-  let segments = split_segments(path)
+  let captures : Array[StringView] = []
   for meth, root in self.trees {
     let matched = if root.has_dynamic {
-      match_node(root, segments, 0) is Some(_)
+      match_dynamic_node(root, path, 0, captures) is Some(_)
     } else {
-      match_static_node(root, segments, 0) is Some(_)
+      match_static_node(root, path, 0) is Some(_)
     }
     if matched {
       allowed.push(meth)
@@ -429,9 +434,8 @@ fn Router::match_in_tree(
     Some(root) => root
     None => return None
   }
-  let segments = split_segments(clean_path)
   if !root.has_dynamic {
-    match match_static_node(root, segments, 0) {
+    match match_static_node(root, clean_path, 0) {
       Some(node) =>
         Some(
           found_route(
@@ -446,16 +450,30 @@ fn Router::match_in_tree(
       None => None
     }
   } else {
-    match match_node(root, segments, 0) {
-      Some(node) => {
-        let info = extract_route_params(node.route_path.view(), segments)
+    let captures : Array[StringView] = []
+    match match_dynamic_node(root, clean_path, 0, captures) {
+      Some(outcome) => {
+        let node = outcome.node
+        let names = node.param_names
+        let params : Map[String, String] = Map([], capacity=names.length() + 1)
+        for i = 0; i < names.length(); i = i + 1 {
+          params.set(names[i], captures[i].to_owned())
+        }
+        let wildcard_value = if outcome.wildcard_start >= 0 {
+          join_wildcard(clean_path, outcome.wildcard_start)
+        } else {
+          ""
+        }
+        if node.route_wildcard_name != "" {
+          params.set(node.route_wildcard_name, wildcard_value)
+        }
         Some(
           found_route(
             node.route_path,
             method_key,
-            info.params,
-            info.wildcard_value,
-            info.wildcard_name,
+            params,
+            wildcard_value,
+            node.route_wildcard_name,
             node.handler,
           ),
         )
@@ -723,9 +741,9 @@ pub fn Context::header(self : Context, key : String) -> String {
   match self.request.headers.get(key) {
     Some(value) => value
     None => {
-      let target = key.view().to_lower()
+      let target = key.view()
       for name, value in self.request.headers {
-        if name.view().to_lower() == target {
+        if name.view().equal_ignore_ascii_case(target) {
           return value
         }
       }
@@ -802,33 +820,37 @@ fn is_url_unreserved(value : Int32) -> Bool {
 }
 
 ///|
-fn url_encode_byte(byte : Byte, builder : StringBuilder) -> Unit {
-  let value = byte.to_int()
-  if is_url_unreserved(value) {
-    builder.write_char(value.unsafe_to_char())
-  } else {
-    let hex = "0123456789ABCDEF"
-    builder.write_char('%')
-    builder.write_char(hex[value / 16].unsafe_to_char())
-    builder.write_char(hex[value % 16].unsafe_to_char())
-  }
-}
-
-///|
 pub fn url_encode(source : String) -> String {
   let bytes = @utf8.encode(source)
   let builder = StringBuilder(size_hint=bytes.length())
+  let hex = "0123456789ABCDEF"
   for byte in bytes {
-    url_encode_byte(byte, builder)
+    let value = byte.to_int()
+    if is_url_unreserved(value) {
+      builder.write_char(value.unsafe_to_char())
+    } else {
+      builder.write_char('%')
+      builder.write_char(hex[value / 16].unsafe_to_char())
+      builder.write_char(hex[value % 16].unsafe_to_char())
+    }
   }
   builder.to_string()
 }
 
 ///|
 pub fn mime_type_for(path : String) -> String {
-  let lower = path.view().to_lower()
-  let extension = match lower.rev_find(".") {
-    Some(index) => lower[index + 1:].to_owned()
+  let view = path.view()
+  let last_slash = match view.rev_find("/") {
+    Some(index) => index
+    None => -1
+  }
+  let extension = match view.rev_find(".") {
+    Some(index) =>
+      if index > last_slash {
+        view[index + 1:].to_lower().to_owned()
+      } else {
+        ""
+      }
     None => ""
   }
   match extension {
@@ -967,17 +989,26 @@ pub fn status_text(code : Int32) -> String {
 
 ///|
 fn normalize_prefix(prefix : String) -> String {
-  let mut normalized = prefix
-  while normalized.length() > 1 && normalized.has_suffix("/") {
-    normalized = normalized[:normalized.length() - 1].to_owned()
+  let view = prefix.view()
+  let length = view.length()
+  let mut end = length
+  while end > 1 && view[end - 1:].has_prefix("/") {
+    end = end - 1
   }
-  if normalized == "/" {
+  if end == 1 && view.has_prefix("/") {
     return ""
   }
-  if !normalized.has_prefix("/") {
-    return "/" + normalized
+  let trimmed = if end == length { view } else { view[:end] }
+  if trimmed.has_prefix("/") {
+    if end == length {
+      return prefix
+    }
+    return trimmed.to_owned()
   }
-  normalized
+  if end == 0 {
+    return "/"
+  }
+  "/" + trimmed.to_owned()
 }
 
 ///|
@@ -1281,7 +1312,7 @@ fn join_fs_path(root : String, relative : String) -> String {
 }
 
 ///|
-fn clean_relative_path(relative : String) -> String? {
+fn clean_relative_path(relative : StringView) -> String? {
   if relative.contains("\u{0}") || relative.contains("\\") {
     return None
   }
@@ -1333,7 +1364,10 @@ pub fn App::static_file_for(self : App, path : String) -> String? {
     let matched = if prefix == "" {
       true
     } else {
-      path == prefix || path.has_prefix(prefix + "/")
+      path == prefix ||
+      (path.has_prefix(prefix) &&
+        path.length() > prefix.length() &&
+        path.view()[prefix.length():].has_prefix("/"))
     }
     if matched && prefix.length() > best_length {
       best = Some(mount)
@@ -1343,12 +1377,12 @@ pub fn App::static_file_for(self : App, path : String) -> String? {
   match best {
     None => None
     Some(mount) => {
-      let relative = if mount.url_prefix == "" {
-        path
+      let relative : StringView = if mount.url_prefix == "" {
+        path.view()
       } else if path == mount.url_prefix {
         ""
       } else {
-        path[mount.url_prefix.length() + 1:].to_owned()
+        path.view()[mount.url_prefix.length() + 1:]
       }
       let clean = match clean_relative_path(relative) {
         Some(clean) => clean
