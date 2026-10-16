@@ -8,7 +8,7 @@ repository = ""
 
 license = "MIT"
 
-keywords = ["moonbit", "web", "framework"]
+keywords = [ "moonbit", "web", "framework" ]
 
 preferred_target = "wasm"
 

@@ -1,14 +1,17 @@
 import {
-  "moonbitlang/async/http" @http,
-  "moonbitlang/async/socket" @socket,
-  "moonbitlang/async" @async,
-  "moonbitlang/async/io" @io,
-  "moonbitlang/core/encoding/utf8" @utf8,
-  "moonbitlang/core/buffer" @buffer,
+  "moonbitlang/async/http",
+  "moonbitlang/async/socket",
+  "moonbitlang/async",
+  "moonbitlang/async/io",
+  "moonbitlang/async/fs",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/json",
 }
 
 import {
-  "moonbitlang/async" @async,
-  "moonbitlang/async/http" @http,
-  "moonbitlang/async/socket" @socket,
+  "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/socket",
+  "moonbitlang/async/fs",
 } for "test"
