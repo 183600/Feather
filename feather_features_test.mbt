@@ -307,6 +307,26 @@ test "static_file_for resolves files and rejects traversal" {
 }
 
 ///|
+test "static_file_for ignores query strings" {
+  let app = @feather.App::new().static_files("/assets", "/srv/public")
+  assert_eq(
+    app.static_file_for("/assets/app.css?v=1"),
+    Some("/srv/public/app.css"),
+  )
+  assert_eq(app.static_file_for("/assets?v=1"), Some("/srv/public/index.html"))
+  assert_eq(app.static_file_for("/assets/?v=1"), Some("/srv/public/index.html"))
+  assert_eq(app.static_file_for("/assets/../secret?v=1"), None)
+}
+
+///|
+test "static_files with empty prefix mounts at root" {
+  let app = @feather.App::new().static_files("", "/srv/www")
+  assert_eq(app.static_file_for("/app.css"), Some("/srv/www/app.css"))
+  assert_eq(app.static_file_for("/nested/app.js"), Some("/srv/www/nested/app.js"))
+  assert_eq(app.static_file_for("/"), Some("/srv/www/index.html"))
+}
+
+///|
 test "static_file_for picks the longest matching prefix" {
   let app = @feather.App::new()
     .static_files("/", "/srv/www")
@@ -471,6 +491,19 @@ async test "server answers head requests for static files" {
       Some("application/json; charset=utf-8"),
     )
     assert_eq(client.read_all().text(), "")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "server ignores query strings for static files" {
+  let dir = @fs.tmpdir(prefix="feather-static")
+  @fs.write_file(dir + "/app.css", "body { color: red; }")
+  let app = @feather.App::new().static_files("/assets", dir)
+  with_server(app, client => {
+    let response = client.get("/assets/app.css?v=2")
+    assert_eq(response.code, 200)
+    assert_eq(client.read_all().text(), "body { color: red; }")
   })
   @fs.rmdir(dir, recursive=true)
 }

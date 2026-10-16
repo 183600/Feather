@@ -1006,7 +1006,7 @@ fn normalize_prefix(prefix : String) -> String {
     return trimmed.to_owned()
   }
   if end == 0 {
-    return "/"
+    return ""
   }
   "/" + trimmed.to_owned()
 }
@@ -1357,6 +1357,7 @@ pub fn App::static_files(
 
 ///|
 pub fn App::static_file_for(self : App, path : String) -> String? {
+  let path = clean_route_path(path)
   let mut best : StaticMount? = None
   let mut best_length = -1
   for mount in self.static_mounts {
