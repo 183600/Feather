@@ -82,16 +82,28 @@ async fn send_response(
   for name, value in response.headers {
     headers.set(@http.CaseInsensitiveString(name), value)
   }
-  let has_body = !response.body.is_empty()
-  let body_bytes = if has_body { @utf8.encode(response.body) } else { b"" }
+  let body_bytes = match response.data {
+    Some(data) => data
+    None =>
+      if response.body.is_empty() {
+        b""
+      } else {
+        @utf8.encode(response.body)
+      }
+  }
+  let has_body = body_bytes.length() > 0
   let content_length_header = @http.CaseInsensitiveString("Content-Length")
   if has_body && !headers.contains(content_length_header) {
     headers.set(content_length_header, body_bytes.length().to_string())
+  }
+  if response.cookies.length() > 0 {
+    headers.remove(@http.CaseInsensitiveString("Set-Cookie"))
   }
   conn.send_response(
     response.status,
     status_text(response.status),
     extra_headers=headers,
+    cookies=response.cookies,
   )
   if !head && has_body {
     conn.write(body_bytes)
@@ -120,10 +132,49 @@ async fn send_simple(
 }
 
 ///|
+fn append_trailing_slash(path : String) -> String {
+  match path.find("?") {
+    Some(index) => path[:index].to_owned() + "/" + path[index:].to_owned()
+    None => path + "/"
+  }
+}
+
+///|
+async fn write_file_range(
+  conn : @http.ServerConnection,
+  file : @fs.File,
+  start : Int64,
+  length : Int64,
+) -> Unit {
+  let chunk_size : Int32 = 65536
+  let buffer = FixedArray::make(chunk_size, b'\x00')
+  let mut remaining = length
+  let mut position = start
+  while remaining > 0 {
+    let want : Int32 = if remaining < chunk_size.to_int64() {
+      remaining.to_int()
+    } else {
+      chunk_size
+    }
+    let read = file.read_at(buffer, position=position, len=want) catch {
+      _ => 0
+    }
+    if read <= 0 {
+      break
+    }
+    conn.write(buffer.unsafe_reinterpret_as_bytes()[:read])
+    remaining = remaining - read.to_int64()
+    position = position + read.to_int64()
+  }
+}
+
+///|
 async fn serve_static_file(
   conn : @http.ServerConnection,
   file_path : String,
   head : Bool,
+  request : @http.Request,
+  cache_control : String,
 ) -> Unit {
   let file = @fs.open(file_path, mode=@fs.ReadOnly) catch {
     _ => {
@@ -133,24 +184,147 @@ async fn serve_static_file(
   }
   defer file.close()
   if file.kind() is @fs.Directory {
-    send_simple(conn, 404, "404 Not Found", head)
+    let location = append_trailing_slash(request.path)
+    conn.send_response(
+      301,
+      "Moved Permanently",
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("Location"), location),
+      ]),
+    )
+    conn.end_response()
     return
   }
   let size = file.size() catch {
     _ => 0L
   }
-  conn.send_response(
-    200,
-    "OK",
-    extra_headers=Map([
-      (@http.CaseInsensitiveString("Content-Type"), mime_type_for(file_path)),
-      (@http.CaseInsensitiveString("Content-Length"), size.to_string()),
-    ]),
-  )
-  if !head {
-    conn.write_reader(file)
+  let (mtime_secs, mtime_nanos) = match (file.mtime() catch {
+    _ => (0L, 0)
+  }) {
+    (secs, nanos) => (secs, nanos)
   }
-  conn.end_response()
+  let etag = "\"" +
+    size.to_string() +
+    "-" +
+    mtime_secs.to_string() +
+    "-" +
+    mtime_nanos.to_string() +
+    "\""
+  let last_modified = format_http_date(mtime_secs)
+  let etag_key = @http.CaseInsensitiveString("ETag")
+  let last_modified_key = @http.CaseInsensitiveString("Last-Modified")
+  let cache_control_key = @http.CaseInsensitiveString("Cache-Control")
+  let not_modified = match (
+    request.headers.get(@http.CaseInsensitiveString("If-None-Match"))
+  ) {
+    Some(value) => etag_header_matches(value.view(), etag)
+    None =>
+      match request.headers.get(
+        @http.CaseInsensitiveString("If-Modified-Since"),
+      ) {
+        Some(value) =>
+          match parse_http_date(value) {
+            Some(since) => mtime_secs > 0L && mtime_secs <= since
+            None => false
+          }
+        None => false
+      }
+  }
+  if not_modified {
+    let headers : @http.Headers = Map([
+      (etag_key, etag),
+      (last_modified_key, last_modified),
+    ])
+    if cache_control != "" {
+      headers.set(cache_control_key, cache_control)
+    }
+    conn.send_response(304, "Not Modified", extra_headers=headers)
+    conn.end_response()
+    return
+  }
+  let range_allowed = match request.headers.get(
+    @http.CaseInsensitiveString("If-Range"),
+  ) {
+    Some(value) =>
+      value == etag ||
+      (match parse_http_date(value) {
+        Some(since) => mtime_secs > 0L && mtime_secs <= since
+        None => false
+      })
+    None => true
+  }
+  let range = match request.headers.get(
+    @http.CaseInsensitiveString("Range"),
+  ) {
+    Some(value) =>
+      if range_allowed {
+        parse_byte_range(value, size)
+      } else {
+        ByteRangeFull
+      }
+    None => ByteRangeFull
+  }
+  let content_type_key = @http.CaseInsensitiveString("Content-Type")
+  let content_length_key = @http.CaseInsensitiveString("Content-Length")
+  let content_range_key = @http.CaseInsensitiveString("Content-Range")
+  let accept_ranges_key = @http.CaseInsensitiveString("Accept-Ranges")
+  match range {
+    ByteRangeInvalid => {
+      conn.send_response(
+        416,
+        "Range Not Satisfiable",
+        extra_headers=Map([
+          (content_range_key, "bytes */" + size.to_string()),
+          (accept_ranges_key, "bytes"),
+        ]),
+      )
+      conn.end_response()
+    }
+    ByteRangeSpec(start, end) => {
+      let length = end - start + 1L
+      let headers : @http.Headers = Map([
+        (content_type_key, mime_type_for(file_path)),
+        (content_length_key, length.to_string()),
+        (
+          content_range_key,
+          "bytes " +
+          start.to_string() +
+          "-" +
+          end.to_string() +
+          "/" +
+          size.to_string(),
+        ),
+        (etag_key, etag),
+        (last_modified_key, last_modified),
+        (accept_ranges_key, "bytes"),
+      ])
+      if cache_control != "" {
+        headers.set(cache_control_key, cache_control)
+      }
+      conn.send_response(206, "Partial Content", extra_headers=headers)
+      if !head {
+        write_file_range(conn, file, start, length)
+      }
+      conn.end_response()
+    }
+    ByteRangeFull => {
+      let headers : @http.Headers = Map([
+        (content_type_key, mime_type_for(file_path)),
+        (content_length_key, size.to_string()),
+        (etag_key, etag),
+        (last_modified_key, last_modified),
+        (accept_ranges_key, "bytes"),
+      ])
+      if cache_control != "" {
+        headers.set(cache_control_key, cache_control)
+      }
+      conn.send_response(200, "OK", extra_headers=headers)
+      if !head {
+        conn.write_reader(file)
+      }
+      conn.end_response()
+    }
+  }
 }
 
 ///|
@@ -227,7 +401,13 @@ async fn handle_request(
     match app.static_file_for(request.path) {
       Some(file_path) =>
         if !app.has_route(if head { "HEAD" } else { "GET" }, request.path) {
-          serve_static_file(conn, file_path, head)
+          serve_static_file(
+            conn,
+            file_path,
+            head,
+            request,
+            app.static_cache_control_for(request.path),
+          )
           return
         }
       None => ()
@@ -268,12 +448,19 @@ async fn handle_request(
 }
 
 ///|
-pub async fn App::serve_with(self : App, server : @http.Server) -> Unit {
-  server.run_forever((
-    request : @http.Request,
-    body : &@io.Reader,
-    conn : @http.ServerConnection,
-  ) => handle_request(self, request, body, conn))
+pub async fn App::serve_with(
+  self : App,
+  server : @http.Server,
+  max_connections? : Int32,
+) -> Unit {
+  server.run_forever(
+    (
+      request : @http.Request,
+      body : &@io.Reader,
+      conn : @http.ServerConnection,
+    ) => handle_request(self, request, body, conn),
+    max_connections?,
+  )
 }
 
 ///|
@@ -285,4 +472,9 @@ pub async fn App::serve(self : App, addr : @socket.Addr) -> Unit {
 pub async fn Feather::serve(self : Feather) -> Unit {
   let addr = @socket.Addr::parse("\{self.config.host}:\{self.config.port}")
   self.app.serve(addr)
+}
+
+///|
+pub async fn Feather::serve_with(self : Feather, server : @http.Server) -> Unit {
+  self.app.serve_with(server)
 }

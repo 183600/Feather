@@ -34,6 +34,8 @@ pub(all) struct Response {
   mut status : Int32
   headers : Map[String, String]
   mut body : String
+  mut data : Bytes?
+  cookies : Array[@http.Cookie]
 }
 
 ///|
@@ -124,7 +126,13 @@ pub fn create_router() -> Router {
 pub fn Context::new(request : Request) -> Context {
   {
     request,
-    response: { status: 200, headers: Map([], capacity=4), body: "", },
+    response: {
+      status: 200,
+      headers: Map([], capacity=4),
+      body: "",
+      data: None,
+      cookies: [],
+    },
     state: Map([], capacity=4),
   }
 }
@@ -451,10 +459,40 @@ fn encode_wildcard_path(value : String) -> String {
 }
 
 ///|
+fn encode_query_string(query : Map[String, String]) -> String {
+  if query.length() == 0 {
+    return ""
+  }
+  let keys : Array[String] = []
+  for key, _ in query {
+    keys.push(key)
+  }
+  keys.sort_by(fn(a, b) { a.lexical_compare(b) })
+  let builder = StringBuilder(size_hint=query.length() * 8)
+  let mut first = true
+  for key in keys {
+    if first {
+      builder.write_char('?')
+      first = false
+    } else {
+      builder.write_char('&')
+    }
+    builder.write_string(url_encode(key))
+    builder.write_char('=')
+    match query.get(key) {
+      Some(value) => builder.write_string(url_encode(value))
+      None => ()
+    }
+  }
+  builder.to_string()
+}
+
+///|
 pub fn Router::url_for(
   self : Router,
   name : String,
   params? : Map[String, String],
+  query? : Map[String, String],
 ) -> String? {
   let named = match self.named.get(name) {
     Some(route) => route
@@ -467,11 +505,10 @@ pub fn Router::url_for(
   let path = named.path.view()
   let length = path.length()
   let mut i = skip_slashes(path, 0)
-  if i >= length {
-    return Some("/")
-  }
   let builder = StringBuilder(size_hint=length)
+  let mut has_segment = false
   while i < length {
+    has_segment = true
     builder.write_char('/')
     let end = segment_end(path, i)
     let segment = path[i:end]
@@ -495,7 +532,12 @@ pub fn Router::url_for(
     }
     i = skip_slashes(path, end)
   }
-  Some(builder.to_string())
+  let mut result = if has_segment { builder.to_string() } else { "/" }
+  match query {
+    Some(query) => result = result + encode_query_string(query)
+    None => ()
+  }
+  Some(result)
 }
 
 ///|
@@ -667,6 +709,7 @@ pub fn Router::dispatch_with(
 pub fn not_found(ctx : Context) -> Unit {
   ctx.response.status = 404
   ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
+  ctx.response.data = None
   ctx.response.body = "404 Not Found"
 }
 
@@ -675,6 +718,7 @@ pub fn method_not_allowed(ctx : Context, allowed : Array[String]) -> Unit {
   ctx.response.status = 405
   ctx.response.headers.set("Allow", allowed.join(", "))
   ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
+  ctx.response.data = None
   ctx.response.body = "405 Method Not Allowed"
 }
 
@@ -683,6 +727,7 @@ pub fn internal_error(ctx : Context, detail : String) -> Unit {
   ctx.state.set("error", detail)
   ctx.response.status = 500
   ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
+  ctx.response.data = None
   ctx.response.body = "Internal Server Error"
 }
 
@@ -693,6 +738,7 @@ pub fn error_response(ctx : Context, status : Int32, message : String) -> Unit {
   payload.set("error", Json::string(message))
   ctx.response.status = status
   ctx.response.headers.set("Content-Type", "application/json; charset=utf-8")
+  ctx.response.data = None
   ctx.response.body = Json::object(payload).stringify()
 }
 
@@ -715,6 +761,7 @@ pub fn error_response_with_payload(
   }
   ctx.response.status = status
   ctx.response.headers.set("Content-Type", "application/json; charset=utf-8")
+  ctx.response.data = None
   ctx.response.body = Json::object(body).stringify()
 }
 
@@ -796,13 +843,28 @@ pub fn Context::set_header(
 pub fn Context::text(self : Context, status : Int32, body : String) -> Unit {
   self.response.status = status
   self.response.headers.set("Content-Type", "text/plain; charset=utf-8")
+  self.response.data = None
   self.response.body = body
+}
+
+///|
+pub fn Context::bytes(
+  self : Context,
+  status : Int32,
+  data : Bytes,
+  content_type~ : String = "application/octet-stream",
+) -> Unit {
+  self.response.status = status
+  self.response.headers.set("Content-Type", content_type)
+  self.response.body = ""
+  self.response.data = Some(data)
 }
 
 ///|
 pub fn Context::html(self : Context, status : Int32, body : String) -> Unit {
   self.response.status = status
   self.response.headers.set("Content-Type", "text/html; charset=utf-8")
+  self.response.data = None
   self.response.body = body
 }
 
@@ -819,6 +881,7 @@ pub fn json_object(data : Map[String, String]) -> Json {
 pub fn Context::json_value(self : Context, status : Int32, data : Json) -> Unit {
   self.response.status = status
   self.response.headers.set("Content-Type", "application/json; charset=utf-8")
+  self.response.data = None
   self.response.body = data.stringify()
 }
 
@@ -848,6 +911,7 @@ pub fn Context::redirect(
 ) -> Unit {
   self.response.status = status
   self.response.headers.set("Location", location)
+  self.response.data = None
   self.response.body = ""
 }
 
@@ -855,6 +919,7 @@ pub fn Context::redirect(
 pub fn Context::no_content(self : Context) -> Unit {
   self.response.status = 204
   self.response.body = ""
+  self.response.data = None
   self.response.headers.remove("Content-Type")
 }
 
@@ -893,6 +958,22 @@ pub fn Context::ip(self : Context) -> String {
 }
 
 ///|
+pub fn Context::forwarded_ip(self : Context) -> String {
+  let forwarded = self.header("X-Forwarded-For")
+  if forwarded != "" {
+    return match forwarded.find(",") {
+      Some(index) => forwarded[:index].trim().to_owned()
+      None => forwarded.trim().to_owned()
+    }
+  }
+  let real_ip = self.header("X-Real-IP")
+  if real_ip != "" {
+    return real_ip.trim().to_owned()
+  }
+  self.ip()
+}
+
+///|
 pub fn Context::cookies(self : Context) -> Map[String, String] {
   let cookies : Map[String, String] = Map([], capacity=4)
   for pair in self.header("Cookie").view().split(";") {
@@ -919,40 +1000,110 @@ pub fn Context::cookie(self : Context, name : String) -> String? {
 }
 
 ///|
-pub fn Context::set_cookie(
+pub fn Context::add_cookie(
   self : Context,
   name : String,
   value : String,
   path? : String,
   max_age? : Int64,
+  domain? : String,
+  same_site? : String,
   http_only~ : Bool = false,
   secure~ : Bool = false,
 ) -> Unit {
-  let builder = StringBuilder(size_hint=name.length() + value.length() + 16)
-  builder.write_string(name)
+  self.response.cookies.push(
+    @http.Cookie(
+      name,
+      value,
+      path?,
+      max_age?,
+      domain?,
+      http_only~,
+      secure~,
+      extensions=match same_site {
+        Some(value) => ["SameSite=" + value]
+        None => []
+      },
+    ),
+  )
+}
+
+///|
+fn render_cookie(cookie : @http.Cookie) -> String {
+  let builder = StringBuilder(size_hint=cookie.name.length() + 32)
+  builder.write_string(cookie.name)
   builder.write_char('=')
-  builder.write_string(value)
-  match path {
+  builder.write_string(cookie.value)
+  match cookie.path {
     Some(path) => {
       builder.write_string("; Path=")
       builder.write_string(path)
     }
     None => ()
   }
-  match max_age {
+  match cookie.max_age {
     Some(max_age) => {
       builder.write_string("; Max-Age=")
       builder.write_string(max_age.to_string())
     }
     None => ()
   }
-  if http_only {
+  match cookie.domain {
+    Some(domain) => {
+      builder.write_string("; Domain=")
+      builder.write_string(domain)
+    }
+    None => ()
+  }
+  if cookie.http_only {
     builder.write_string("; HttpOnly")
   }
-  if secure {
+  if cookie.secure {
     builder.write_string("; Secure")
   }
-  self.response.headers.set("Set-Cookie", builder.to_string())
+  for extension in cookie.extensions {
+    builder.write_string("; ")
+    builder.write_string(extension)
+  }
+  builder.to_string()
+}
+
+///|
+pub fn Context::set_cookie(
+  self : Context,
+  name : String,
+  value : String,
+  path? : String,
+  max_age? : Int64,
+  domain? : String,
+  same_site? : String,
+  http_only~ : Bool = false,
+  secure~ : Bool = false,
+) -> Unit {
+  let cookie = @http.Cookie(
+    name,
+    value,
+    path?,
+    max_age?,
+    domain?,
+    http_only~,
+    secure~,
+    extensions=match same_site {
+      Some(value) => ["SameSite=" + value]
+      None => []
+    },
+  )
+  self.response.headers.set("Set-Cookie", render_cookie(cookie))
+  self.response.cookies.push(cookie)
+}
+
+///|
+pub fn Context::clear_cookie(
+  self : Context,
+  name : String,
+  path? : String,
+) -> Unit {
+  self.set_cookie(name, "", path?, max_age=0L)
 }
 
 ///|
@@ -1206,8 +1357,14 @@ fn mime_for_extension(extension : StringView) -> String {
     "text/css; charset=utf-8"
   } else if extension == "js" || extension == "mjs" {
     "text/javascript; charset=utf-8"
-  } else if extension == "json" {
+  } else if extension == "json" || extension == "map" {
     "application/json; charset=utf-8"
+  } else if extension == "webmanifest" {
+    "application/manifest+json; charset=utf-8"
+  } else if extension == "yaml" || extension == "yml" {
+    "application/yaml; charset=utf-8"
+  } else if extension == "toml" {
+    "application/toml; charset=utf-8"
   } else if extension == "txt" || extension == "text" || extension == "log" {
     "text/plain; charset=utf-8"
   } else if extension == "md" || extension == "markdown" {
@@ -1226,6 +1383,8 @@ fn mime_for_extension(extension : StringView) -> String {
     "image/gif"
   } else if extension == "webp" {
     "image/webp"
+  } else if extension == "avif" {
+    "image/avif"
   } else if extension == "bmp" {
     "image/bmp"
   } else if extension == "ico" {
@@ -1240,8 +1399,16 @@ fn mime_for_extension(extension : StringView) -> String {
     "application/gzip"
   } else if extension == "mp3" {
     "audio/mpeg"
+  } else if extension == "wav" {
+    "audio/wav"
+  } else if extension == "ogg" {
+    "audio/ogg"
   } else if extension == "mp4" {
     "video/mp4"
+  } else if extension == "webm" {
+    "video/webm"
+  } else if extension == "mov" {
+    "video/quicktime"
   } else if extension == "woff" {
     "font/woff"
   } else if extension == "woff2" {
@@ -1361,6 +1528,30 @@ pub fn Context::queries(self : Context) -> Map[String, String] {
     Some(index) => parse_urlencoded_view(self.request.path[index + 1:])
     None => Map([], capacity=0)
   }
+}
+
+///|
+pub fn Context::query_values(self : Context, name : String) -> Array[String] {
+  let values : Array[String] = []
+  match self.request.path.find("?") {
+    Some(index) => {
+      let source = self.request.path[index + 1:]
+      for pair in source.view().split("&") {
+        if pair.is_empty() {
+          continue
+        }
+        match pair.find("=") {
+          Some(split) =>
+            if encoded_key_matches(pair[:split], name) {
+              values.push(decode_url(pair[split + 1:]))
+            }
+          None => if encoded_key_matches(pair, name) { values.push("") }
+        }
+      }
+    }
+    None => ()
+  }
+  values
 }
 
 ///|
@@ -1722,8 +1913,11 @@ pub fn status_text(code : Int32) -> String {
     408 => "Request Timeout"
     409 => "Conflict"
     410 => "Gone"
+    411 => "Length Required"
+    412 => "Precondition Failed"
     413 => "Payload Too Large"
     415 => "Unsupported Media Type"
+    416 => "Range Not Satisfiable"
     422 => "Unprocessable Entity"
     429 => "Too Many Requests"
     500 => "Internal Server Error"
@@ -1733,6 +1927,270 @@ pub fn status_text(code : Int32) -> String {
     504 => "Gateway Timeout"
     _ => "Unknown"
   }
+}
+
+///|
+fn days_from_civil(year : Int64, month : Int, day : Int) -> Int64 {
+  let y = if month <= 2 { year - 1 } else { year }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let yoe = y - era * 400
+  let mp = if month > 2 { month - 3 } else { month + 9 }
+  let doy = (153L * mp.to_int64() + 2L) / 5L + day.to_int64() - 1L
+  let doe = yoe * 365L + yoe / 4L - yoe / 100L + doy
+  era * 146097L + doe - 719468L
+}
+
+///|
+fn civil_from_days(days : Int64) -> (Int64, Int, Int) {
+  let z = days + 719468L
+  let era = (if z >= 0 { z } else { z - 146096L }) / 146097L
+  let doe = z - era * 146097L
+  let yoe = (doe - doe / 1460L + doe / 36524L - doe / 146096L) / 365L
+  let y = yoe + era * 400L
+  let doy = doe - (365L * yoe + yoe / 4L - yoe / 100L)
+  let mp = (5L * doy + 2L) / 153L
+  let day = (doy - (153L * mp + 2L) / 5L + 1L).to_int()
+  let month = if mp < 10L { (mp + 3L).to_int() } else { (mp - 9L).to_int() }
+  let year = if month <= 2 { y + 1L } else { y }
+  (year, month, day)
+}
+
+///|
+fn write_two_digits(builder : StringBuilder, value : Int) -> Unit {
+  if value < 10 {
+    builder.write_char('0')
+  }
+  builder.write_string(value.to_string())
+}
+
+///|
+pub fn format_http_date(unix_seconds : Int64) -> String {
+  let days = unix_seconds / 86400L
+  let time_of_day = unix_seconds - days * 86400L
+  let (year, month, day) = civil_from_days(days)
+  let weekday = ((days + 4L) % 7L + 7L) % 7L
+  let hour = (time_of_day / 3600L).to_int()
+  let minute = ((time_of_day % 3600L) / 60L).to_int()
+  let second = (time_of_day % 60L).to_int()
+  let weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+  let months = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+    "Dec",
+  ]
+  let builder = StringBuilder(size_hint=29)
+  builder.write_string(weekdays[weekday.to_int()])
+  builder.write_string(", ")
+  write_two_digits(builder, day)
+  builder.write_char(' ')
+  builder.write_string(months[month - 1])
+  builder.write_char(' ')
+  builder.write_string(year.to_string())
+  builder.write_char(' ')
+  write_two_digits(builder, hour)
+  builder.write_char(':')
+  write_two_digits(builder, minute)
+  builder.write_char(':')
+  write_two_digits(builder, second)
+  builder.write_string(" GMT")
+  builder.to_string()
+}
+
+///|
+fn parse_decimal(view : StringView) -> Int? {
+  let length = view.length()
+  if length == 0 {
+    return None
+  }
+  let mut value = 0
+  let mut i = 0
+  while i < length {
+    let digit = view.unsafe_get(i).to_int() - 48
+    if digit < 0 || digit > 9 {
+      return None
+    }
+    value = value * 10 + digit
+    if value > 100000000 {
+      return None
+    }
+    i = i + 1
+  }
+  Some(value)
+}
+
+///|
+fn month_from_name(name : StringView) -> Int? {
+  let months = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+    "Dec",
+  ]
+  for i, month in months {
+    if name == month.view() {
+      return Some(i + 1)
+    }
+  }
+  None
+}
+
+///|
+pub fn parse_http_date(value : String) -> Int64? {
+  let parts : Array[StringView] = []
+  for part in value.view().split(" ") {
+    if !part.is_empty() {
+      parts.push(part)
+    }
+  }
+  if parts.length() < 5 {
+    return None
+  }
+  let day = match parse_decimal(parts[1]) {
+    Some(day) => day
+    None => return None
+  }
+  let month = match month_from_name(parts[2]) {
+    Some(month) => month
+    None => return None
+  }
+  let year = match parse_decimal(parts[3]) {
+    Some(year) => year.to_int64()
+    None => return None
+  }
+  let time = parts[4]
+  let first_colon = match time.find(":") {
+    Some(index) => index
+    None => return None
+  }
+  let second_colon = match time[first_colon + 1:].find(":") {
+    Some(index) => first_colon + 1 + index
+    None => return None
+  }
+  let hour = match parse_decimal(time[:first_colon]) {
+    Some(hour) => hour
+    None => return None
+  }
+  let minute = match parse_decimal(time[first_colon + 1:second_colon]) {
+    Some(minute) => minute
+    None => return None
+  }
+  let second = match parse_decimal(time[second_colon + 1:]) {
+    Some(second) => second
+    None => return None
+  }
+  if day < 1 ||
+    day > 31 ||
+    year < 1970 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 60 {
+    return None
+  }
+  let seconds = days_from_civil(year, month, day) * 86400L +
+    (hour * 3600 + minute * 60 + second).to_int64()
+  Some(seconds)
+}
+
+///|
+pub(all) enum ByteRange {
+  ByteRangeFull
+  ByteRangeSpec(Int64, Int64)
+  ByteRangeInvalid
+}
+
+///|
+fn etag_header_matches(value : StringView, etag : String) -> Bool {
+  for token in value.split(",") {
+    let token = token.trim()
+    if token == "*" || token == etag.view() {
+      return true
+    }
+    if token.has_prefix("W/") && token[2:] == etag.view() {
+      return true
+    }
+  }
+  false
+}
+
+///|
+pub fn Context::fresh(self : Context, etag : String) -> Bool {
+  if etag == "" {
+    return false
+  }
+  let header = self.header("If-None-Match")
+  if header == "" {
+    return false
+  }
+  etag_header_matches(header.view(), etag)
+}
+
+///|
+pub fn Context::not_modified(
+  self : Context,
+  etag? : String,
+  last_modified? : String,
+) -> Unit {
+  self.response.status = 304
+  self.response.body = ""
+  self.response.data = None
+  self.response.headers.remove("Content-Type")
+  match etag {
+    Some(etag) => self.response.headers.set("ETag", etag)
+    None => ()
+  }
+  match last_modified {
+    Some(last_modified) =>
+      self.response.headers.set("Last-Modified", last_modified)
+    None => ()
+  }
+}
+
+///|
+pub fn parse_byte_range(value : String, total : Int64) -> ByteRange {
+  let view = value.view().trim()
+  if !starts_with_ignore_ascii_case(view, "bytes=".view()) {
+    return ByteRangeFull
+  }
+  let spec = view[6:].trim()
+  if spec.contains(",") {
+    return ByteRangeFull
+  }
+  let dash = match spec.find("-") {
+    Some(index) => index
+    None => return ByteRangeFull
+  }
+  let start_text = spec[:dash].trim()
+  let end_text = spec[dash + 1:].trim()
+  if start_text.is_empty() {
+    let suffix = match parse_decimal(end_text) {
+      Some(suffix) => suffix.to_int64()
+      None => return ByteRangeFull
+    }
+    if suffix <= 0 || total <= 0L {
+      return ByteRangeInvalid
+    }
+    let start = if suffix >= total { 0L } else { total - suffix }
+    return ByteRangeSpec(start, total - 1L)
+  }
+  let start = match parse_decimal(start_text) {
+    Some(start) => start.to_int64()
+    None => return ByteRangeFull
+  }
+  if end_text.is_empty() {
+    if start >= total {
+      return ByteRangeInvalid
+    }
+    return ByteRangeSpec(start, total - 1L)
+  }
+  let end = match parse_decimal(end_text) {
+    Some(end) => end.to_int64()
+    None => return ByteRangeFull
+  }
+  if start > end {
+    return ByteRangeFull
+  }
+  if start >= total {
+    return ByteRangeInvalid
+  }
+  let end = if end >= total { total - 1L } else { end }
+  ByteRangeSpec(start, end)
 }
 
 ///|
@@ -1911,8 +2369,9 @@ pub fn RouteGroup::url_for(
   self : RouteGroup,
   name : String,
   params? : Map[String, String],
+  query? : Map[String, String],
 ) -> String? {
-  self.router.url_for(name, params?)
+  self.router.url_for(name, params?, query?)
 }
 
 ///|
@@ -1920,6 +2379,7 @@ pub(all) struct StaticMount {
   url_prefix : String
   root : String
   index : String
+  max_age : Int32
 }
 
 ///|
@@ -2075,8 +2535,9 @@ pub fn App::url_for(
   self : App,
   name : String,
   params? : Map[String, String],
+  query? : Map[String, String],
 ) -> String? {
-  self.router.url_for(name, params?)
+  self.router.url_for(name, params?, query?)
 }
 
 ///|
@@ -2153,6 +2614,7 @@ pub fn App::static_files(
   url_prefix : String,
   root : String,
   index~ : String = "index.html",
+  max_age~ : Int32 = 0,
 ) -> App {
   let mut clean_root = root
   while clean_root.length() > 1 && clean_root.has_suffix("/") {
@@ -2162,6 +2624,7 @@ pub fn App::static_files(
     url_prefix: normalize_prefix(url_prefix),
     root: clean_root,
     index,
+    max_age,
   })
   self
 }
@@ -2175,11 +2638,13 @@ pub fn App::has_route(self : App, meth : String, path : String) -> Bool {
 }
 
 ///|
-pub fn App::static_file_for(self : App, path : String) -> String? {
+fn App::best_static_mount(
+  self : App,
+  path_view : StringView,
+) -> StaticMount? {
   if self.static_mounts.length() == 0 {
     return None
   }
-  let path_view = clean_path_view(path)
   let path_length = path_view.length()
   let mut best : StaticMount? = None
   let mut best_length = -1
@@ -2199,7 +2664,13 @@ pub fn App::static_file_for(self : App, path : String) -> String? {
       best_length = prefix_length
     }
   }
-  match best {
+  best
+}
+
+///|
+pub fn App::static_file_for(self : App, path : String) -> String? {
+  let path_view = clean_path_view(path)
+  match self.best_static_mount(path_view) {
     None => None
     Some(mount) => {
       let prefix_view = mount.url_prefix.view()
@@ -2222,6 +2693,20 @@ pub fn App::static_file_for(self : App, path : String) -> String? {
         Some(join_fs_path(mount.root, clean))
       }
     }
+  }
+}
+
+///|
+pub fn App::static_cache_control_for(self : App, path : String) -> String {
+  let path_view = clean_path_view(path)
+  match self.best_static_mount(path_view) {
+    Some(mount) =>
+      if mount.max_age > 0 {
+        "public, max-age=" + mount.max_age.to_string()
+      } else {
+        ""
+      }
+    None => ""
   }
 }
 
@@ -2294,11 +2779,41 @@ pub fn middleware_error_handler() -> Middleware {
 }
 
 ///|
-pub fn middleware_logger(log~ : (String) -> Unit = println) -> Middleware {
+pub fn middleware_logger(
+  log~ : (String) -> Unit = println,
+  with_duration~ : Bool = false,
+) -> Middleware {
   fn(next) {
     fn(ctx) raise {
-      next(ctx)
-      log("[\{ctx.response.status}] \{ctx.request.method} \{ctx.request.path}")
+      let started = if with_duration { @async.now() } else { 0L }
+      let record = fn() {
+        if with_duration {
+          let elapsed = @async.now() - started
+          log(
+            "[\{ctx.response.status}] \{ctx.request.method} \{ctx.request.path} (\{elapsed}ms)",
+          )
+        } else {
+          log("[\{ctx.response.status}] \{ctx.request.method} \{ctx.request.path}")
+        }
+      }
+      next(ctx) catch {
+        HttpError(status, message) => {
+          ctx.response.status = status
+          record()
+          raise HttpError(status, message)
+        }
+        HttpErrorPayload(status, message, payload) => {
+          ctx.response.status = status
+          record()
+          raise HttpErrorPayload(status, message, payload)
+        }
+        err => {
+          ctx.response.status = 500
+          record()
+          raise err
+        }
+      }
+      record()
     }
   }
 }
@@ -2344,17 +2859,38 @@ pub fn middleware_secure_headers(
 }
 
 ///|
-pub fn middleware_cors(allow_origin~ : String = "*") -> Middleware {
+pub fn middleware_cors(
+  allow_origin~ : String = "*",
+  allow_methods~ : String = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
+  allow_headers~ : String = "*",
+  expose_headers~ : String = "",
+  allow_credentials~ : Bool = false,
+  max_age~ : Int32 = 0,
+) -> Middleware {
   fn(next) {
     fn(ctx) raise {
       ctx.response.headers.set("Access-Control-Allow-Origin", allow_origin)
+      if allow_credentials {
+        ctx.response.headers.set("Access-Control-Allow-Credentials", "true")
+      }
+      if allow_origin != "*" {
+        ctx.response.headers.set("Vary", "Origin")
+      }
       if ctx.request.method == "OPTIONS" {
         ctx.response.status = 204
-        ctx.response.headers.set(
-          "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
-        )
-        ctx.response.headers.set("Access-Control-Allow-Headers", "*")
+        ctx.response.data = None
+        ctx.response.body = ""
+        ctx.response.headers.set("Access-Control-Allow-Methods", allow_methods)
+        ctx.response.headers.set("Access-Control-Allow-Headers", allow_headers)
+        if max_age > 0 {
+          ctx.response.headers.set(
+            "Access-Control-Max-Age", max_age.to_string(),
+          )
+        }
       } else {
+        if expose_headers != "" {
+          ctx.response.headers.set("Access-Control-Expose-Headers", expose_headers)
+        }
         next(ctx)
       }
     }
@@ -2523,8 +3059,9 @@ pub fn Feather::url_for(
   self : Feather,
   name : String,
   params? : Map[String, String],
+  query? : Map[String, String],
 ) -> String? {
-  self.app.url_for(name, params?)
+  self.app.url_for(name, params?, query?)
 }
 
 ///|
@@ -2533,8 +3070,9 @@ pub fn Feather::static_files(
   url_prefix : String,
   root : String,
   index~ : String = "index.html",
+  max_age~ : Int32 = 0,
 ) -> Feather {
-  ignore(self.app.static_files(url_prefix, root, index~))
+  ignore(self.app.static_files(url_prefix, root, index~, max_age~))
   self
 }
 

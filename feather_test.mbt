@@ -18,7 +18,7 @@ test "Request and Response objects have expected properties" {
     headers: Map::new(),
     body: "",
   }
-  let response : Response = { status: 200, headers: Map::new(), body: "OK", }
+  let response : Response = { status: 200, headers: Map::new(), body: "OK", data: None, cookies: [], }
 
   assert_eq(request.method, "GET")
   assert_eq(request.path, "/test")
@@ -212,18 +212,22 @@ test "Request with headers" {
 
 ///|
 test "Response with different status codes" {
-  let ok_response : Response = { status: 200, headers: Map::new(), body: "OK", }
+  let ok_response : Response = { status: 200, headers: Map::new(), body: "OK", data: None, cookies: [], }
 
   let not_found_response : Response = {
     status: 404,
     headers: Map::new(),
     body: "Not Found",
+  data: None,
+  cookies: [],
   }
 
   let server_error_response : Response = {
     status: 500,
     headers: Map::new(),
     body: "Internal Server Error",
+  data: None,
+  cookies: [],
   }
 
   assert_eq(ok_response.status, 200)
@@ -283,7 +287,7 @@ test "Context with different request paths" {
       headers: Map::new(),
       body: "",
     },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -345,12 +349,16 @@ test "Response body handling" {
     status: 200,
     headers: Map::new(),
     body: "Hello World",
+  data: None,
+  cookies: [],
   }
 
   let empty_response : Response = {
     status: 204,
     headers: Map::new(),
     body: "",
+  data: None,
+  cookies: [],
   }
 
   assert_eq(text_response.body, "Hello World")
@@ -385,13 +393,13 @@ test "Router matching with trailing slashes" {
 test "Context with different HTTP methods" {
   let get_ctx : Context = {
     request: { method: "GET", path: "/test", headers: Map::new(), body: "", },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
   let post_ctx : Context = {
     request: { method: "POST", path: "/test", headers: Map::new(), body: "", },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -451,7 +459,7 @@ test "Response headers handling" {
   headers.set("Content-Type", "application/json")
   headers.set("Cache-Control", "no-cache")
 
-  let response : Response = { status: 200, headers, body: "{}", }
+  let response : Response = { status: 200, headers, body: "{}", data: None, cookies: [], }
 
   assert_eq(response.headers.get("Content-Type"), Some("application/json"))
   assert_eq(response.headers.get("Cache-Control"), Some("no-cache"))
@@ -498,7 +506,7 @@ test "Context with empty request body" {
 
 ///|
 test "Response with empty body" {
-  let response : Response = { status: 204, headers: Map::new(), body: "", }
+  let response : Response = { status: 204, headers: Map::new(), body: "", data: None, cookies: [], }
   assert_eq(response.body, "")
 }
 
@@ -528,7 +536,7 @@ test "Context header with empty value" {
 
   let ctx : Context = {
     request: { method: "GET", path: "/test", headers, body: "", },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -590,12 +598,16 @@ test "Response with different body sizes" {
     status: 200,
     headers: Map::new(),
     body: "small",
+  data: None,
+  cookies: [],
   }
 
   let large_response : Response = {
     status: 200,
     headers: Map::new(),
     body: "x".repeat(100),
+  data: None,
+  cookies: [],
   }
 
   assert_eq(small_response.body.length(), 5)
@@ -613,13 +625,13 @@ test "Router matching with root path" {
 test "Context with different response status codes" {
   let ok_ctx : Context = {
     request: { method: "GET", path: "/test", headers: Map::new(), body: "", },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
   let created_ctx : Context = {
     request: { method: "POST", path: "/test", headers: Map::new(), body: "", },
-    response: { status: 201, headers: Map::new(), body: "", },
+    response: { status: 201, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -686,18 +698,24 @@ test "Response with different content types" {
     status: 200,
     headers: Map::new(),
     body: "{\"data\": \"test\"}",
+  data: None,
+  cookies: [],
   }
 
   let html_response : Response = {
     status: 200,
     headers: Map::new(),
     body: "<html></html>",
+  data: None,
+  cookies: [],
   }
 
   let text_response : Response = {
     status: 200,
     headers: Map::new(),
     body: "Hello World",
+  data: None,
+  cookies: [],
   }
 
   assert_eq(json_response.body, "{\"data\": \"test\"}")
@@ -738,7 +756,7 @@ test "Router matching with path containing query-like strings" {
 test "Context with different request methods" {
   let get_ctx : Context = {
     request: { method: "GET", path: "/test", headers: Map::new(), body: "", },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -749,7 +767,7 @@ test "Context with different request methods" {
       headers: Map::new(),
       body: "data",
     },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -809,7 +827,7 @@ test "Response with headers containing special characters" {
   let headers = Map::new()
   headers.set("Content-Type", "application/json; charset=utf-8")
 
-  let response : Response = { status: 200, headers, body: "{}", }
+  let response : Response = { status: 200, headers, body: "{}", data: None, cookies: [], }
 
   assert_eq(
     response.headers.get("Content-Type"),
@@ -850,7 +868,7 @@ test "Router matching with path containing parentheses" {
 test "Context with different response bodies" {
   let empty_ctx : Context = {
     request: { method: "GET", path: "/test", headers: Map::new(), body: "", },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -860,6 +878,8 @@ test "Context with different response bodies" {
       status: 200,
       headers: Map::new(),
       body: "{\"data\": \"test\"}",
+    data: None,
+    cookies: [],
     },
     state: Map::new(),
   }
@@ -909,12 +929,16 @@ test "Response with different status codes and bodies" {
     status: 200,
     headers: Map::new(),
     body: "{\"success\": true}",
+  data: None,
+  cookies: [],
   }
 
   let error_response : Response = {
     status: 500,
     headers: Map::new(),
     body: "{\"error\": \"Internal Server Error\"}",
+  data: None,
+  cookies: [],
   }
 
   assert_eq(success_response.status, 200)
@@ -964,12 +988,16 @@ test "Response with different headers and bodies" {
     status: 200,
     headers: Map::new(),
     body: "{\"data\": \"test\"}",
+  data: None,
+  cookies: [],
   }
 
   let html_response : Response = {
     status: 200,
     headers: Map::new(),
     body: "<html><body>Test</body></html>",
+  data: None,
+  cookies: [],
   }
 
   assert_eq(json_response.body, "{\"data\": \"test\"}")
@@ -1046,12 +1074,16 @@ test "Response with different header configurations" {
     status: 200,
     headers: Map::new(),
     body: "OK",
+  data: None,
+  cookies: [],
   }
 
   let with_headers_response : Response = {
     status: 200,
     headers: { "Content-Type": "application/json" },
     body: "OK",
+  data: None,
+  cookies: [],
   }
 
   assert_eq(no_headers_response.headers.size(), 0)
@@ -1096,7 +1128,7 @@ test "Context with different request and response combinations" {
       headers: Map::new(),
       body: "data",
     },
-    response: { status: 201, headers: Map::new(), body: "{\"id\": \"123\"}", },
+    response: { status: 201, headers: Map::new(), body: "{\"id\": \"123\"}", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1141,12 +1173,14 @@ test "Request with different body sizes and methods" {
 
 ///|
 test "Response with different status codes and body sizes" {
-  let small_200 : Response = { status: 200, headers: Map::new(), body: "OK", }
+  let small_200 : Response = { status: 200, headers: Map::new(), body: "OK", data: None, cookies: [], }
 
   let large_500 : Response = {
     status: 500,
     headers: Map::new(),
     body: "x".repeat(200),
+  data: None,
+  cookies: [],
   }
 
   assert_eq(small_200.body.length(), 2)
@@ -1196,7 +1230,7 @@ test "Context with different request headers and methods" {
       headers: { "Accept": "application/json" },
       body: "",
     },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1207,7 +1241,7 @@ test "Context with different request headers and methods" {
       headers: { "Content-Type": "application/json" },
       body: "{\"data\": \"test\"}",
     },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1259,12 +1293,16 @@ test "Response with different status codes and header sizes" {
     status: 200,
     headers: Map::new(),
     body: "OK",
+  data: None,
+  cookies: [],
   }
 
   let with_headers_500 : Response = {
     status: 500,
     headers: { "Content-Type": "application/json", "X-Error": "test" },
     body: "Error",
+  data: None,
+  cookies: [],
   }
 
   assert_eq(no_headers_200.headers.size(), 0)
@@ -1309,7 +1347,7 @@ test "Router matching with path containing backslashes" {
 test "Context with different request and response states" {
   let ctx : Context = {
     request: { method: "GET", path: "/test", headers: Map::new(), body: "", },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: { "key1": "value1", "key2": "value2" },
   }
 
@@ -1349,7 +1387,7 @@ test "Router matching with path containing dollar signs" {
 test "Context with different request methods and paths" {
   let get_root : Context = {
     request: { method: "GET", path: "/", headers: Map::new(), body: "", },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1360,7 +1398,7 @@ test "Context with different request methods and paths" {
       headers: Map::new(),
       body: "data",
     },
-    response: { status: 201, headers: Map::new(), body: "", },
+    response: { status: 201, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1409,7 +1447,7 @@ test "Context with different request headers and body" {
       },
       body: "{\"data\": \"test\"}",
     },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1454,12 +1492,14 @@ test "Request with different methods and header configurations" {
 
 ///|
 test "Response with different status codes and body configurations" {
-  let ok_no_body : Response = { status: 200, headers: Map::new(), body: "", }
+  let ok_no_body : Response = { status: 200, headers: Map::new(), body: "", data: None, cookies: [], }
 
   let error_with_body : Response = {
     status: 500,
     headers: Map::new(),
     body: "{\"error\": \"Internal Server Error\"}",
+  data: None,
+  cookies: [],
   }
 
   assert_eq(ok_no_body.body, "")
@@ -1504,7 +1544,7 @@ test "Context with different request methods and paths with unicode" {
       headers: Map::new(),
       body: "",
     },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1549,7 +1589,7 @@ test "Context with different request and response with unicode" {
       headers: Map::new(),
       body: "数据",
     },
-    response: { status: 200, headers: Map::new(), body: "响应", },
+    response: { status: 200, headers: Map::new(), body: "响应", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1595,7 +1635,7 @@ test "Context with different request methods and unicode paths" {
       headers: Map::new(),
       body: "",
     },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1606,7 +1646,7 @@ test "Context with different request methods and unicode paths" {
       headers: Map::new(),
       body: "数据",
     },
-    response: { status: 201, headers: Map::new(), body: "", },
+    response: { status: 201, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1652,7 +1692,7 @@ test "Context with different request and response with mixed content" {
       headers: Map::new(),
       body: "数据!@#",
     },
-    response: { status: 201, headers: Map::new(), body: "响应$%^", },
+    response: { status: 201, headers: Map::new(), body: "响应$%^", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1693,7 +1733,7 @@ test "Router matching with path containing mixed special characters and numbers"
 test "Context with different request methods and special character paths" {
   let get_ctx : Context = {
     request: { method: "GET", path: "/!@#", headers: Map::new(), body: "", },
-    response: { status: 200, headers: Map::new(), body: "", },
+    response: { status: 200, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1704,7 +1744,7 @@ test "Context with different request methods and special character paths" {
       headers: Map::new(),
       body: "data",
     },
-    response: { status: 201, headers: Map::new(), body: "", },
+    response: { status: 201, headers: Map::new(), body: "", data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1752,7 +1792,7 @@ test "Context with different request and response with very long unicode content
       headers: Map::new(),
       body: long_unicode,
     },
-    response: { status: 201, headers: Map::new(), body: long_unicode, },
+    response: { status: 201, headers: Map::new(), body: long_unicode, data: None, cookies: [], },
     state: Map::new(),
   }
 
@@ -1803,7 +1843,7 @@ test "Context with different request and response with maximum length content" {
       headers: Map::new(),
       body: max_content,
     },
-    response: { status: 201, headers: Map::new(), body: max_content, },
+    response: { status: 201, headers: Map::new(), body: max_content, data: None, cookies: [], },
     state: Map::new(),
   }
 
