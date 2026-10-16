@@ -65,6 +65,30 @@ test "accepts tolerates malformed headers" {
 }
 
 ///|
+test "accepts understands wildcards in the offered media type" {
+  assert_true(accept_ctx("text/html").accepts("*/*"))
+  assert_true(accept_ctx("text/html").accepts("text/*"))
+  assert_true(accept_ctx("Text/HTML").accepts("text/*"))
+  assert_false(accept_ctx("application/json").accepts("text/*"))
+  assert_true(accept_ctx("application/json").accepts("application/*"))
+  assert_false(accept_ctx("text/html;q=0").accepts("text/*"))
+  assert_true(accept_ctx("text/html;q=0, text/*;q=0.5").accepts("text/*"))
+  assert_false(accept_ctx("*/*;q=0").accepts("*/*"))
+  assert_true(accept_ctx("*/*;q=0.2").accepts("application/*"))
+  assert_true(accept_ctx("application/json, text/html").accepts("*/*"))
+  assert_true(accept_ctx("").accepts("text/*"))
+}
+
+///|
+test "preferred_type treats wildcard offers as patterns" {
+  let ctx = accept_ctx("application/json;q=0.8, text/html;q=0.9")
+  assert_eq(ctx.preferred_type(["application/*", "text/*"]), Some("text/*"))
+  assert_eq(ctx.preferred_type(["image/*", "audio/*"]), None)
+  let json_ctx = accept_ctx("application/json")
+  assert_eq(json_ctx.preferred_type(["application/*"]), Some("application/*"))
+}
+
+///|
 test "preferred_type picks the best matching offer" {
   let ctx = accept_ctx("text/html;q=0.9, application/json;q=0.8")
   assert_eq(ctx.preferred_type(["application/json", "text/html"]), Some("text/html"))

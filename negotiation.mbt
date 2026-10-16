@@ -85,19 +85,32 @@ fn accept_quality_for(header : StringView, media_type : StringView) -> Int {
       match parts {
         Some((range_type, range_subtype)) => {
           saw_entry = true
-          let specificity = if range_type == "*" && range_subtype == "*" {
-            0
-          } else if range_subtype == "*" {
-            if range_type.equal_ignore_ascii_case(want_type) { 1 } else { -1 }
-          } else if range_type.equal_ignore_ascii_case(want_type) &&
-            range_subtype.equal_ignore_ascii_case(want_subtype) {
-            2
+          if want_type == "*" || want_subtype == "*" {
+            let type_ok = range_type == "*" ||
+              want_type == "*" ||
+              range_type.equal_ignore_ascii_case(want_type)
+            let subtype_ok = range_subtype == "*" ||
+              want_subtype == "*" ||
+              range_subtype.equal_ignore_ascii_case(want_subtype)
+            if type_ok && subtype_ok && quality > best_q {
+              best_specificity = 0
+              best_q = quality
+            }
           } else {
-            -1
-          }
-          if specificity >= 0 && specificity > best_specificity {
-            best_specificity = specificity
-            best_q = quality
+            let specificity = if range_type == "*" && range_subtype == "*" {
+              0
+            } else if range_subtype == "*" {
+              if range_type.equal_ignore_ascii_case(want_type) { 1 } else { -1 }
+            } else if range_type.equal_ignore_ascii_case(want_type) &&
+              range_subtype.equal_ignore_ascii_case(want_subtype) {
+              2
+            } else {
+              -1
+            }
+            if specificity >= 0 && specificity > best_specificity {
+              best_specificity = specificity
+              best_q = quality
+            }
           }
         }
         None => ()
