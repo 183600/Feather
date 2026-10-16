@@ -82,8 +82,11 @@ pub struct RouteNode {
   mut wildcard_child : RouteNode?
   mut has_dynamic : Bool
   mut param_names : Array[String]
+  mut param_keys : Array[String]
   mut pattern_kinds : Array[Int]
   mut route_wildcard_name : String
+  mut route_wildcard_key : String
+  mut exact_cache : Map[String, RouteNode]?
 }
 
 ///|
@@ -121,8 +124,11 @@ fn RouteNode::new() -> RouteNode {
     wildcard_child: None,
     has_dynamic: false,
     param_names: [],
+    param_keys: [],
     pattern_kinds: [],
     route_wildcard_name: "",
+    route_wildcard_key: "",
+    exact_cache: None,
   }
 }
 
@@ -367,11 +373,17 @@ pub fn Router::add_route(
   }
   let root = node
   let param_names : Array[String] = []
+  let param_keys : Array[String] = []
   let pattern_kinds : Array[Int] = []
   let mut route_wildcard_name = ""
+  let mut route_wildcard_key = ""
+  let mut is_static = true
   for segment in split_segments(clean_path) {
     if segment.has_prefix(":") {
-      param_names.push(segment[1:].to_owned())
+      is_static = false
+      let name = segment[1:].to_owned()
+      param_names.push(name)
+      param_keys.push(PARAM_PREFIX + name)
       pattern_kinds.push(1)
       let child = match node.param_child {
         Some(child) => child
@@ -384,7 +396,10 @@ pub fn Router::add_route(
       root.has_dynamic = true
       node = child
     } else if segment.has_prefix("*") {
-      route_wildcard_name = segment[1:].to_owned()
+      is_static = false
+      let name = segment[1:].to_owned()
+      route_wildcard_name = name
+      route_wildcard_key = PARAM_PREFIX + name
       pattern_kinds.push(2)
       let child = match node.wildcard_child {
         Some(child) => child
@@ -424,8 +439,20 @@ pub fn Router::add_route(
   node.handler = Some(handler)
   node.route_path = clean_path
   node.param_names = param_names
+  node.param_keys = param_keys
   node.pattern_kinds = pattern_kinds
   node.route_wildcard_name = route_wildcard_name
+  node.route_wildcard_key = route_wildcard_key
+  if is_static {
+    match root.exact_cache {
+      Some(cache) => cache.set(clean_path, node)
+      None => {
+        let cache : Map[String, RouteNode] = Map([], capacity=4)
+        cache.set(clean_path, node)
+        root.exact_cache = Some(cache)
+      }
+    }
+  }
   self.routes.push({
     path: clean_path,
     method: method_key,
@@ -582,33 +609,122 @@ priv enum RouteMatch {
 }
 
 ///|
+fn Router::find_node_raw(
+  self : Router,
+  tree_key : String,
+  clean_path : StringView,
+) -> (RouteNode, Int32)? {
+  let root = match self.trees.get(tree_key) {
+    Some(root) => root
+    None => return None
+  }
+  match root.exact_cache {
+    Some(cache) =>
+      match cache.get_from_string(clean_path) {
+        Some(node) => return Some((node, -1))
+        None => ()
+      }
+    None => ()
+  }
+  if !root.has_dynamic {
+    match match_static_node(root, clean_path, 0) {
+      Some(node) => Some((node, -1))
+      None => None
+    }
+  } else {
+    match match_dynamic_node(root, clean_path, 0) {
+      Some(outcome) => Some((outcome.node, outcome.wildcard_start))
+      None => None
+    }
+  }
+}
+
+///|
 fn Router::find_node(
   self : Router,
   tree_key : String,
   clean_path : StringView,
 ) -> (RouteNode, Map[String, String]?, String)? {
-  let root = match self.trees.get(tree_key) {
-    Some(root) => root
-    None => return None
-  }
-  if !root.has_dynamic {
-    match match_static_node(root, clean_path, 0) {
-      Some(node) => Some((node, None, ""))
-      None => None
+  match self.find_node_raw(tree_key, clean_path) {
+    Some(hit) => {
+      let (node, wildcard_start) = hit
+      if wildcard_start < 0 && node.param_names.length() == 0 {
+        Some((node, None, ""))
+      } else {
+        let (params, wildcard_value) = extract_route_params(node, clean_path)
+        Some((node, Some(params), wildcard_value))
+      }
     }
-  } else {
-    match match_dynamic_node(root, clean_path, 0) {
-      Some(outcome) => {
-        let node = outcome.node
-        if outcome.wildcard_start < 0 && node.param_names.length() == 0 {
-          Some((node, None, ""))
+    None => None
+  }
+}
+
+///|
+fn bind_route_params(node : RouteNode, path : StringView, ctx : Context) -> Unit {
+  let keys = node.param_keys
+  if keys.length() == 0 && node.route_wildcard_key == "" {
+    return
+  }
+  let mut path_pos = skip_slashes(path, 0)
+  let mut name_index = 0
+  for kind in node.pattern_kinds {
+    if kind == 1 {
+      let path_end = segment_end(path, path_pos)
+      if name_index < keys.length() {
+        ctx.state.set(keys[name_index], path[path_pos:path_end].to_owned())
+      }
+      name_index = name_index + 1
+      path_pos = skip_slashes(path, path_end + 1)
+    } else if kind == 0 {
+      path_pos = skip_slashes(path, segment_end(path, path_pos) + 1)
+    } else {
+      if node.route_wildcard_key != "" {
+        ctx.state.set(
+          node.route_wildcard_key,
+          join_wildcard(path, path_pos),
+        )
+      }
+      break
+    }
+  }
+}
+
+///|
+priv enum DispatchMatch {
+  DispatchFound(RouteNode)
+  DispatchMethods(Array[String])
+  DispatchMissing
+}
+
+///|
+fn Router::match_dispatch(
+  self : Router,
+  meth : String,
+  clean_path : StringView,
+) -> DispatchMatch {
+  match self.find_node_raw(meth, clean_path) {
+    Some(hit) => DispatchFound(hit.0)
+    None =>
+      if meth == "HEAD" {
+        match self.find_node_raw("GET", clean_path) {
+          Some(hit) => DispatchFound(hit.0)
+          None => {
+            let allowed = self.allowed_methods(clean_path)
+            if allowed.length() > 0 {
+              DispatchMethods(allowed)
+            } else {
+              DispatchMissing
+            }
+          }
+        }
+      } else {
+        let allowed = self.allowed_methods(clean_path)
+        if allowed.length() > 0 {
+          DispatchMethods(allowed)
         } else {
-          let (params, wildcard_value) = extract_route_params(node, clean_path)
-          Some((node, Some(params), wildcard_value))
+          DispatchMissing
         }
       }
-      None => None
-    }
   }
 }
 
@@ -699,22 +815,16 @@ pub fn Router::dispatch_with(
   fallback : Handler?,
 ) -> Unit raise {
   let clean_path = clean_path_view(ctx.request.path)
-  match self.match_route(ctx.request.method, clean_path) {
-    MatchFound(node, params, _) => {
-      match params {
-        Some(params) =>
-          for name, value in params {
-            ctx.state.set(PARAM_PREFIX + name, value)
-          }
-        None => ()
-      }
+  match self.match_dispatch(ctx.request.method, clean_path) {
+    DispatchFound(node) => {
+      bind_route_params(node, clean_path, ctx)
       match node.handler {
         Some(handler) => handler(ctx)
         None => not_found(ctx)
       }
     }
-    MatchMethods(methods) => method_not_allowed(ctx, methods)
-    MatchMissing =>
+    DispatchMethods(methods) => method_not_allowed(ctx, methods)
+    DispatchMissing =>
       match fallback {
         Some(handler) => handler(ctx)
         None => not_found(ctx)
@@ -2135,13 +2245,16 @@ fn header_parameter(value : StringView, name : String) -> String? {
 
 ///|
 pub fn multipart_boundary(content_type : String) -> String? {
-  match find_view_ignore_ascii_case(
-    content_type.view(),
+  let view = content_type.view()
+  let is_multipart = starts_with_ignore_ascii_case(
+    view,
     "multipart/form-data".view(),
-    0,
-  ) {
-    None => None
-    Some(_) => header_parameter(content_type.view(), "boundary")
+  ) ||
+    find_view_ignore_ascii_case(view, "multipart/form-data".view(), 0) is Some(_)
+  if is_multipart {
+    header_parameter(view, "boundary")
+  } else {
+    None
   }
 }
 
@@ -2170,25 +2283,28 @@ fn parse_part_headers(header_text : StringView) -> Map[String, String] {
   let mut pos = 0
   while pos <= length {
     let mut end = pos
-    while end < length && header_text.unsafe_get(end) != ('\n' : UInt16) {
+    let mut colon = -1
+    while end < length {
+      let code = header_text.unsafe_get(end)
+      if code == ('\n' : UInt16) {
+        break
+      }
+      if code == (':' : UInt16) && colon < 0 {
+        colon = end
+      }
       end = end + 1
     }
-    let line = if end > pos &&
+    let line_end = if end > pos &&
       header_text.unsafe_get(end - 1) == ('\r' : UInt16) {
-      header_text[pos:end - 1]
+      end - 1
     } else {
-      header_text[pos:end]
+      end
     }
-    if !line.is_empty() {
-      match line.find(":") {
-        Some(index) => {
-          let name = trim_ascii_space(line[:index]).to_owned()
-          let value = trim_ascii_space(line[index + 1:]).to_owned()
-          if name != "" {
-            headers.set(name, value)
-          }
-        }
-        None => ()
+    if line_end > pos && colon >= 0 && colon < line_end {
+      let name = trim_ascii_space(header_text[pos:colon]).to_owned()
+      let value = trim_ascii_space(header_text[colon + 1:line_end]).to_owned()
+      if name != "" {
+        headers.set(name, value)
       }
     }
     if end >= length {
@@ -2197,6 +2313,20 @@ fn parse_part_headers(header_text : StringView) -> Map[String, String] {
     pos = end + 1
   }
   headers
+}
+
+///|
+fn skip_line_break(view : StringView, pos : Int32) -> Int32 {
+  let length = view.length()
+  if pos + 1 < length &&
+    view.unsafe_get(pos) == ('\r' : UInt16) &&
+    view.unsafe_get(pos + 1) == ('\n' : UInt16) {
+    pos + 2
+  } else if pos < length && view.unsafe_get(pos) == ('\n' : UInt16) {
+    pos + 1
+  } else {
+    pos
+  }
 }
 
 ///|
@@ -2210,11 +2340,16 @@ pub fn parse_multipart(
   }
   let delimiter = "--" + boundary
   let delimiter_view = delimiter.view()
+  let delimiter_length = delimiter.length()
   let crlf_delimiter = "\r\n" + delimiter
   let crlf_delimiter_view = crlf_delimiter.view()
+  let lf_delimiter = "\n" + delimiter
+  let lf_delimiter_view = lf_delimiter.view()
+  let crlfcrlf_view = "\r\n\r\n".view()
+  let lflf_view = "\n\n".view()
   let view = body.view()
   let mut pos = match find_terminated_delimiter(view, delimiter_view, 0) {
-    Some(index) => index + delimiter.length()
+    Some(index) => index + delimiter_length
     None => return Some([])
   }
   let estimate = body.length() / (crlf_delimiter.length() + 8)
@@ -2222,26 +2357,24 @@ pub fn parse_multipart(
     capacity=if estimate > 64 { 64 } else { estimate + 1 },
   )
   while pos <= view.length() {
-    if starts_with_ignore_ascii_case(view[pos:], "--".view()) {
+    if pos + 1 < view.length() &&
+      view.unsafe_get(pos) == ('-' : UInt16) &&
+      view.unsafe_get(pos + 1) == ('-' : UInt16) {
       break
     }
-    if view[pos:].has_prefix("\r\n") {
-      pos = pos + 2
-    } else if view[pos:].has_prefix("\n") {
-      pos = pos + 1
-    }
+    pos = skip_line_break(view, pos)
     let data_end = match find_terminated_delimiter(view, crlf_delimiter_view, pos) {
       Some(index) => index
       None =>
-        match find_terminated_delimiter(view, ("\n" + delimiter).view(), pos) {
+        match find_terminated_delimiter(view, lf_delimiter_view, pos) {
           Some(index) => index
           None => break
         }
     }
-    let header_end = match find_view_from(view, "\r\n\r\n".view(), pos) {
+    let header_end = match find_view_from(view, crlfcrlf_view, pos) {
       Some(index) => index
       None =>
-        match find_view_from(view, "\n\n".view(), pos) {
+        match find_view_from(view, lflf_view, pos) {
           Some(index) => index
           None => break
         }
@@ -2249,7 +2382,7 @@ pub fn parse_multipart(
     if header_end >= data_end {
       break
     }
-    let separator_length = if view[header_end:header_end + 2] == "\r\n" {
+    let separator_length = if view.unsafe_get(header_end) == ('\r' : UInt16) {
       4
     } else {
       2
@@ -2277,13 +2410,7 @@ pub fn parse_multipart(
       headers,
       data: data.to_owned(),
     })
-    pos = data_end
-    if view[pos:].has_prefix("\r\n") {
-      pos = pos + 2
-    } else if view[pos:].has_prefix("\n") {
-      pos = pos + 1
-    }
-    pos = pos + delimiter.length()
+    pos = skip_line_break(view, data_end) + delimiter_length
   }
   Some(parts)
 }
@@ -2419,6 +2546,17 @@ fn civil_from_days(days : Int64) -> (Int64, Int, Int) {
 }
 
 ///|
+let http_weekdays : Array[String] = [
+  "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat",
+]
+
+///|
+let http_months : Array[String] = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+  "Dec",
+]
+
+///|
 fn write_two_digits(builder : StringBuilder, value : Int) -> Unit {
   if value < 10 {
     builder.write_char('0')
@@ -2453,17 +2591,12 @@ pub fn format_http_date(unix_seconds : Int64) -> String {
   let hour = (time_of_day / 3600L).to_int()
   let minute = ((time_of_day % 3600L) / 60L).to_int()
   let second = (time_of_day % 60L).to_int()
-  let weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-  let months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
-    "Dec",
-  ]
   let builder = StringBuilder(size_hint=29)
-  builder.write_string(weekdays[weekday.to_int()])
+  builder.write_string(http_weekdays[weekday.to_int()])
   builder.write_string(", ")
   write_two_digits(builder, day)
   builder.write_char(' ')
-  builder.write_string(months[month - 1])
+  builder.write_string(http_months[month - 1])
   builder.write_char(' ')
   write_year(builder, year)
   builder.write_char(' ')
@@ -2500,11 +2633,11 @@ fn parse_decimal(view : StringView) -> Int? {
 
 ///|
 fn month_from_name(name : StringView) -> Int? {
-  let months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
-    "Dec",
-  ]
-  for i, month in months {
+  let length = name.length()
+  if length != 3 {
+    return None
+  }
+  for i, month in http_months {
     if name == month.view() {
       return Some(i + 1)
     }
@@ -2542,7 +2675,7 @@ fn parse_time_of_day(time : StringView) -> Int64? {
 
 ///|
 pub fn parse_http_date(value : String) -> Int64? {
-  let parts : Array[StringView] = []
+  let parts : Array[StringView] = Array(capacity=6)
   for part in value.view().split(" ") {
     if !part.is_empty() {
       parts.push(part)
@@ -3177,11 +3310,16 @@ pub fn App::static_files(
 }
 
 ///|
-pub fn App::has_route(self : App, meth : String, path : String) -> Bool {
-  match self.router.route(meth, path) {
-    RouteFound(_) => true
+fn Router::is_routable(self : Router, meth : String, path : String) -> Bool {
+  match self.match_dispatch(meth, clean_path_view(path)) {
+    DispatchFound(_) => true
     _ => false
   }
+}
+
+///|
+pub fn App::has_route(self : App, meth : String, path : String) -> Bool {
+  self.router.is_routable(meth, path)
 }
 
 ///|
