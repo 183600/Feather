@@ -1019,6 +1019,9 @@ pub fn Context::get(self : Context, key : String) -> String {
 
 ///|
 pub fn Context::param(self : Context, name : String) -> String {
+  if self.state.is_empty() {
+    return ""
+  }
   match self.state.get(PARAM_PREFIX + name) {
     Some(value) => value
     None => ""
@@ -1098,7 +1101,11 @@ pub fn Context::json_value(self : Context, status : Int32, data : Json) -> Unit 
   self.response.status = status
   self.response.headers.set("Content-Type", "application/json; charset=utf-8")
   self.response.data = None
-  self.response.body = data.stringify()
+  self.response.body = match data {
+    Json::Object(members) if members.is_empty() => "{}"
+    Json::Array(items) if items.is_empty() => "[]"
+    _ => data.stringify()
+  }
 }
 
 ///|
@@ -1247,7 +1254,7 @@ pub fn Context::forwarded_ip(self : Context) -> String {
 
 ///|
 pub fn Context::cookies(self : Context) -> Map[String, String] {
-  let cookies : Map[String, String] = Map([], capacity=4)
+  let cookies : Map[String, String] = Map([], capacity=8)
   let header = self.header("Cookie").view()
   let length = header.length()
   let mut pos = 0
@@ -1288,7 +1295,46 @@ pub fn Context::cookies(self : Context) -> Map[String, String] {
 
 ///|
 pub fn Context::cookie(self : Context, name : String) -> String? {
-  self.cookies().get(name)
+  let target = name.view()
+  let header = self.header("Cookie").view()
+  let length = header.length()
+  let mut pos = 0
+  let mut result : String? = None
+  while pos <= length {
+    let mut end = pos
+    while end < length && header.unsafe_get(end) != (';' : UInt16) {
+      end = end + 1
+    }
+    let pair = trim_ascii_space(header[pos:end])
+    if !pair.is_empty() {
+      let pair_length = pair.length()
+      let mut eq = 0
+      while eq < pair_length && pair.unsafe_get(eq) != ('=' : UInt16) {
+        eq = eq + 1
+      }
+      if eq < pair_length {
+        let name_view = trim_ascii_space(pair[:eq])
+        if !name_view.is_empty() && name_view == target {
+          let raw_value = pair[eq + 1:]
+          let raw_length = raw_value.length()
+          result = Some(
+            if raw_length >= 2 &&
+              raw_value.unsafe_get(0) == ('"' : UInt16) &&
+              raw_value.unsafe_get(raw_length - 1) == ('"' : UInt16) {
+              raw_value[1:raw_length - 1].to_owned()
+            } else {
+              raw_value.to_owned()
+            },
+          )
+        }
+      }
+    }
+    if end >= length {
+      break
+    }
+    pos = end + 1
+  }
+  result
 }
 
 ///|
@@ -1713,6 +1759,13 @@ fn hex_digit(value : Int) -> Int {
 }
 
 ///|
+fn decode_utf8_bytes(bytes : Bytes) -> String {
+  try @utf8.decode(bytes) catch {
+    _ => @utf8.decode_lossy(bytes)
+  }
+}
+
+///|
 fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
   let length = source.length()
   let mut needs_decoding = false
@@ -1817,7 +1870,7 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
       i = i + 1
     }
   }
-  @utf8.decode_lossy(buffer.to_bytes())
+  decode_utf8_bytes(buffer.to_bytes())
 }
 
 ///|
@@ -1918,11 +1971,11 @@ pub fn url_encode(source : String) -> String {
     }
     i = i + 1
   }
-  @utf8.decode_lossy(buffer.to_bytes())
+  decode_utf8_bytes(buffer.to_bytes())
 }
 
 ///|
-let base64_alphabet : String = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+let base64_alphabet : Bytes = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 ///|
 fn base64_value(value : UInt16) -> Int {
@@ -1949,32 +2002,33 @@ pub fn base64_encode(data : Bytes) -> String {
   if length == 0 {
     return ""
   }
-  let builder = StringBuilder(size_hint=(length + 2) / 3 * 4)
+  let alphabet = base64_alphabet
+  let out = FixedArray::make((length + 2) / 3 * 4, b'=')
   let mut i = 0
+  let mut out_index = 0
   while i + 3 <= length {
     let value = (data[i].to_int() << 16) |
       (data[i + 1].to_int() << 8) |
       data[i + 2].to_int()
-    builder.write_char(base64_alphabet[(value >> 18) & 63].unsafe_to_char())
-    builder.write_char(base64_alphabet[(value >> 12) & 63].unsafe_to_char())
-    builder.write_char(base64_alphabet[(value >> 6) & 63].unsafe_to_char())
-    builder.write_char(base64_alphabet[value & 63].unsafe_to_char())
+    out[out_index] = alphabet[(value >> 18) & 63]
+    out[out_index + 1] = alphabet[(value >> 12) & 63]
+    out[out_index + 2] = alphabet[(value >> 6) & 63]
+    out[out_index + 3] = alphabet[value & 63]
     i = i + 3
+    out_index = out_index + 4
   }
   let remaining = length - i
   if remaining == 1 {
     let value = data[i].to_int() << 16
-    builder.write_char(base64_alphabet[(value >> 18) & 63].unsafe_to_char())
-    builder.write_char(base64_alphabet[(value >> 12) & 63].unsafe_to_char())
-    builder.write_string("==")
+    out[out_index] = alphabet[(value >> 18) & 63]
+    out[out_index + 1] = alphabet[(value >> 12) & 63]
   } else if remaining == 2 {
     let value = (data[i].to_int() << 16) | (data[i + 1].to_int() << 8)
-    builder.write_char(base64_alphabet[(value >> 18) & 63].unsafe_to_char())
-    builder.write_char(base64_alphabet[(value >> 12) & 63].unsafe_to_char())
-    builder.write_char(base64_alphabet[(value >> 6) & 63].unsafe_to_char())
-    builder.write_char('=')
+    out[out_index] = alphabet[(value >> 18) & 63]
+    out[out_index + 1] = alphabet[(value >> 12) & 63]
+    out[out_index + 2] = alphabet[(value >> 6) & 63]
   }
-  builder.to_string()
+  decode_utf8_bytes(out.unsafe_reinterpret_as_bytes())
 }
 
 ///|
@@ -2977,7 +3031,10 @@ pub fn format_http_date(unix_seconds : Int64) -> String {
     time_of_day = time_of_day + 86400L
   }
   let (year, month, day) = civil_from_days(days)
-  let weekday = ((days + 4L) % 7L + 7L) % 7L
+  let mut weekday = (days + 4L) % 7L
+  if weekday < 0L {
+    weekday = weekday + 7L
+  }
   let mut hour = 0
   let mut minute = 0
   let mut second = 0
@@ -3075,13 +3132,26 @@ fn parse_time_of_day(time : StringView) -> Int64? {
 
 ///|
 pub fn parse_http_date(value : String) -> Int64? {
-  let parts : Array[StringView] = Array(capacity=6)
-  for part in value.view().split(" ") {
-    if !part.is_empty() {
-      parts.push(part)
+  let view = value.view()
+  let length = view.length()
+  let parts : FixedArray[StringView] = FixedArray::make(6, "")
+  let mut count = 0
+  let mut i = 0
+  while i < length && count < 6 {
+    while i < length && view.unsafe_get(i) == (' ' : UInt16) {
+      i = i + 1
     }
+    if i >= length {
+      break
+    }
+    let start = i
+    while i < length && view.unsafe_get(i) != (' ' : UInt16) {
+      i = i + 1
+    }
+    parts[count] = view[start:i]
+    count = count + 1
   }
-  if parts.length() < 4 {
+  if count < 4 {
     return None
   }
   let mut day = 0
@@ -3089,9 +3159,6 @@ pub fn parse_http_date(value : String) -> Int64? {
   let mut year = 0L
   let mut time = parts[0]
   if parts[1].contains("-") {
-    if parts.length() < 4 {
-      return None
-    }
     let date = parts[1]
     let first_dash = match date.find("-") {
       Some(index) => index
@@ -3123,7 +3190,7 @@ pub fn parse_http_date(value : String) -> Int64? {
     }
     time = parts[2]
   } else if parts[0].contains(",") {
-    if parts.length() < 5 {
+    if count < 5 {
       return None
     }
     day = match parse_decimal(parts[1]) {
@@ -3140,7 +3207,7 @@ pub fn parse_http_date(value : String) -> Int64? {
     }
     time = parts[4]
   } else {
-    if parts.length() < 5 {
+    if count < 5 {
       return None
     }
     month = match month_from_name(parts[1]) {

@@ -76,6 +76,27 @@ let header_content_encoding : @http.CaseInsensitiveString = @http.CaseInsensitiv
 priv suberror MalformedRequestBody
 
 ///|
+let cached_date_second : Ref[Int64] = Ref(-1L)
+
+///|
+let cached_date_value : Ref[String] = Ref("")
+
+///|
+/// `format_http_date` for the current second, memoized so a burst of
+/// responses within the same second reuses one formatted `Date` value.
+/// The async runtime is single threaded, so the plain refs are safe.
+fn cached_http_date(unix_seconds : Int64) -> String {
+  if cached_date_second.val == unix_seconds {
+    cached_date_value.val
+  } else {
+    let formatted = format_http_date(unix_seconds)
+    cached_date_second.val = unix_seconds
+    cached_date_value.val = formatted
+    formatted
+  }
+}
+
+///|
 /// Send a response, stamping the mandatory `Date` header (RFC 7231 §7.1.1.2)
 /// when the handler did not already provide one.
 async fn send_with_date(
@@ -86,7 +107,7 @@ async fn send_with_date(
   cookies? : Array[@http.Cookie],
 ) -> Unit {
   if !headers.contains(header_date) {
-    headers.set(header_date, format_http_date(@async.now() / 1000L))
+    headers.set(header_date, cached_http_date(@async.now() / 1000L))
   }
   conn.send_response(code, reason, extra_headers=headers, cookies?)
 }
