@@ -142,69 +142,69 @@ fn split_segments(path : StringView) -> Array[StringView] {
   segments
 }
 
-priv struct MatchResult {
-  route_path : String
-  handler : Handler?
+priv struct RouteParams {
+  params : Map[String, String]
   wildcard_name : String
   wildcard_value : String
 }
 
-fn leaf_result(
-  node : RouteNode,
-  wildcard_name : String,
-  wildcard_value : String,
-) -> MatchResult {
-  {
-    route_path: node.route_path,
-    handler: node.handler,
-    wildcard_name,
-    wildcard_value,
+fn extract_route_params(
+  route_path : StringView,
+  segments : Array[StringView],
+) -> RouteParams {
+  let params : Map[String, String] = Map([], capacity=4)
+  let mut wildcard_name = ""
+  let mut wildcard_value = ""
+  let mut index = 0
+  for pattern in split_segments(route_path) {
+    if pattern.has_prefix(":") {
+      if index < segments.length() {
+        params.set(pattern[1:].to_owned(), segments[index].to_owned())
+      }
+      index = index + 1
+    } else if pattern.has_prefix("*") {
+      wildcard_name = pattern[1:].to_owned()
+      wildcard_value = join_segments(segments, index)
+      if wildcard_name != "" {
+        params.set(wildcard_name, wildcard_value)
+      }
+      index = segments.length()
+    } else {
+      index = index + 1
+    }
   }
+  { params, wildcard_name, wildcard_value }
 }
 
 fn match_node(
   node : RouteNode,
   segments : Array[StringView],
   index : Int,
-  captures : Array[(String, String)],
-) -> MatchResult? {
+) -> RouteNode? {
   if index == segments.length() {
     if node.handler is Some(_) {
-      return Some(leaf_result(node, "", ""))
+      return Some(node)
     }
-    match node.wildcard_child {
-      Some(child) =>
-        return Some(leaf_result(child, node.wildcard_name, ""))
-      None => return None
-    }
+    return node.wildcard_child
   }
   let segment = segments[index]
-  let mark = captures.length()
   match node.static_children.get_from_string(segment) {
     Some(child) =>
-      match match_node(child, segments, index + 1, captures) {
+      match match_node(child, segments, index + 1) {
         Some(result) => return Some(result)
         None => ()
       }
     None => ()
   }
-  captures.truncate(mark)
   match node.param_child {
-    Some(child) => {
-      captures.push((node.param_name, segment.to_owned()))
-      match match_node(child, segments, index + 1, captures) {
+    Some(child) =>
+      match match_node(child, segments, index + 1) {
         Some(result) => return Some(result)
         None => ()
       }
-    }
     None => ()
   }
-  captures.truncate(mark)
-  match node.wildcard_child {
-    Some(child) =>
-      return Some(leaf_result(child, node.wildcard_name, join_segments(segments, index)))
-    None => return None
-  }
+  node.wildcard_child
 }
 
 fn match_static_node(
@@ -305,8 +305,7 @@ fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
   let segments = split_segments(path)
   for meth, root in self.trees {
     let matched = if root.has_dynamic {
-      let captures : Array[(String, String)] = []
-      match_node(root, segments, 0, captures) is Some(_)
+      match_node(root, segments, 0) is Some(_)
     } else {
       match_static_node(root, segments, 0) is Some(_)
     }
@@ -317,6 +316,52 @@ fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
   allowed
 }
 
+fn Router::match_in_tree(
+  self : Router,
+  tree_key : String,
+  method_key : String,
+  clean_path : StringView,
+) -> RouteOutcome? {
+  let root = match self.trees.get(tree_key) {
+    Some(root) => root
+    None => return None
+  }
+  let segments = split_segments(clean_path)
+  if !(root.has_dynamic) {
+    match match_static_node(root, segments, 0) {
+      Some(node) =>
+        Some(
+          found_route(
+            node.route_path,
+            method_key,
+            Map([], capacity=0),
+            "",
+            "",
+            node.handler,
+          ),
+        )
+      None => None
+    }
+  } else {
+    match match_node(root, segments, 0) {
+      Some(node) => {
+        let info = extract_route_params(node.route_path.view(), segments)
+        Some(
+          found_route(
+            node.route_path,
+            method_key,
+            info.params,
+            info.wildcard_value,
+            info.wildcard_name,
+            node.handler,
+          ),
+        )
+      }
+      None => None
+    }
+  }
+}
+
 pub fn Router::route(
   self : Router,
   meth : String,
@@ -324,60 +369,17 @@ pub fn Router::route(
 ) -> RouteOutcome {
   let clean_path = clean_path_view(path)
   let method_key = meth
-  let root = match self.trees.get(method_key) {
-    Some(root) => Some(root)
+  match self.match_in_tree(method_key, method_key, clean_path) {
+    Some(outcome) => outcome
     None =>
       if method_key == "HEAD" {
-        self.trees.get("GET")
-      } else {
-        None
-      }
-  }
-  match root {
-    Some(root) => {
-      let segments = split_segments(clean_path)
-      if !(root.has_dynamic) {
-        match match_static_node(root, segments, 0) {
-          Some(node) =>
-            found_route(
-              node.route_path,
-              method_key,
-              Map([], capacity=0),
-              "",
-              "",
-              node.handler,
-            )
+        match self.match_in_tree("GET", method_key, clean_path) {
+          Some(outcome) => outcome
           None => self.dispatch_miss(clean_path)
         }
       } else {
-        let captures : Array[(String, String)] = []
-        match match_node(root, segments, 0, captures) {
-          Some(result) => {
-            let extra = if result.wildcard_name != "" { 1 } else { 0 }
-            let params : Map[String, String] = Map(
-              [],
-              capacity=captures.length() + extra,
-            )
-            for capture in captures {
-              params.set(capture.0, capture.1)
-            }
-            if result.wildcard_name != "" {
-              params.set(result.wildcard_name, result.wildcard_value)
-            }
-            found_route(
-              result.route_path,
-              method_key,
-              params,
-              result.wildcard_value,
-              result.wildcard_name,
-              result.handler,
-            )
-          }
-          None => self.dispatch_miss(clean_path)
-        }
+        self.dispatch_miss(clean_path)
       }
-    }
-    None => self.dispatch_miss(clean_path)
   }
 }
 
@@ -538,7 +540,15 @@ pub fn Context::get_path(self : Context) -> String {
 pub fn Context::header(self : Context, key : String) -> String {
   match self.request.headers.get(key) {
     Some(value) => value
-    None => ""
+    None => {
+      let target = key.view().to_lower()
+      for name, value in self.request.headers {
+        if name.view().to_lower() == target {
+          return value
+        }
+      }
+      ""
+    }
   }
 }
 
@@ -649,7 +659,7 @@ pub fn Context::query(self : Context, name : String) -> String {
 
 pub fn Context::form(self : Context, name : String) -> String {
   let content_type = self.header("Content-Type")
-  if !(content_type.has_prefix("application/x-www-form-urlencoded")) {
+  if !(content_type.view().to_lower().has_prefix("application/x-www-form-urlencoded")) {
     return ""
   }
   query_param(self.request.body.view(), name)

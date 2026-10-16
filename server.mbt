@@ -1,17 +1,5 @@
 pub suberror PayloadTooLarge
 
-fn bytes_are_ascii(bytes : BytesView) -> Bool {
-  let mut i = 0
-  let len = bytes.length()
-  while i < len {
-    if bytes[i].to_int() >= 128 {
-      return false
-    }
-    i = i + 1
-  }
-  true
-}
-
 async fn read_body(reader : &@io.Reader, limit : Int) -> String raise {
   let buffer = @buffer.Buffer::Buffer(size_hint=limit.min(4096).max(0))
   let mut total = 0
@@ -24,11 +12,7 @@ async fn read_body(reader : &@io.Reader, limit : Int) -> String raise {
         if total > limit {
           raise PayloadTooLarge
         }
-        if bytes_are_ascii(chunk) {
-          buffer.write_bytes(chunk)
-        } else {
-          buffer.write_string_utf8(@utf8.decode_lossy(chunk))
-        }
+        buffer.write_bytes(chunk)
       }
     }
   }
