@@ -58,11 +58,12 @@ pub(all) struct Route {
 pub struct RouteNode {
   mut handler : Handler?
   mut route_path : String
-  static_children : Map[String, RouteNode]
+  mut static_children : Map[String, RouteNode]?
   mut param_child : RouteNode?
   mut wildcard_child : RouteNode?
   mut has_dynamic : Bool
   mut param_names : Array[String]
+  mut pattern_kinds : Array[Int]
   mut route_wildcard_name : String
 }
 
@@ -96,11 +97,12 @@ fn RouteNode::new() -> RouteNode {
   {
     handler: None,
     route_path: "",
-    static_children: Map([], capacity=2),
+    static_children: None,
     param_child: None,
     wildcard_child: None,
     has_dynamic: false,
     param_names: [],
+    pattern_kinds: [],
     route_wildcard_name: "",
   }
 }
@@ -166,17 +168,19 @@ fn split_segments(path : StringView) -> Array[StringView] {
 
 ///|
 fn join_wildcard(path : StringView, start : Int32) -> String {
-  let builder = StringBuilder(size_hint=path.length() - start)
+  let length = path.length()
+  let hint = length - start
+  let builder = StringBuilder(size_hint=if hint > 0 { hint } else { 0 })
+  let mut i = skip_slashes(path, start)
   let mut written = false
-  for segment in path[start:].split("/") {
-    if segment.is_empty() {
-      continue
-    }
+  while i < length {
     if written {
-      builder.write_string("/")
+      builder.write_char('/')
     }
-    builder.write_stringview(segment)
+    let end = segment_end(path, i)
+    builder.write_stringview(path[i:end])
     written = true
+    i = skip_slashes(path, end)
   }
   builder.to_string()
 }
@@ -210,7 +214,6 @@ fn match_dynamic_node(
   node : RouteNode,
   path : StringView,
   pos : Int32,
-  captures : Array[StringView],
 ) -> MatchOutcome? {
   let start = skip_slashes(path, pos)
   if start >= path.length() {
@@ -223,29 +226,61 @@ fn match_dynamic_node(
     }
   }
   let end = segment_end(path, start)
-  let segment = path[start:end]
-  match node.static_children.get_from_string(segment) {
-    Some(child) =>
-      match match_dynamic_node(child, path, end + 1, captures) {
-        Some(outcome) => return Some(outcome)
+  match node.static_children {
+    Some(children) =>
+      match children.get_from_string(path[start:end]) {
+        Some(child) =>
+          match match_dynamic_node(child, path, end + 1) {
+            Some(outcome) => return Some(outcome)
+            None => ()
+          }
         None => ()
       }
     None => ()
   }
   match node.param_child {
-    Some(child) => {
-      captures.push(segment)
-      match match_dynamic_node(child, path, end + 1, captures) {
+    Some(child) =>
+      match match_dynamic_node(child, path, end + 1) {
         Some(outcome) => return Some(outcome)
-        None => ignore(captures.pop())
+        None => ()
       }
-    }
     None => ()
   }
   match node.wildcard_child {
     Some(child) => Some({ node: child, wildcard_start: pos })
     None => None
   }
+}
+
+///|
+fn extract_route_params(
+  node : RouteNode,
+  path : StringView,
+) -> (Map[String, String], String) {
+  let names = node.param_names
+  let params : Map[String, String] = Map([], capacity=names.length() + 1)
+  let mut path_pos = skip_slashes(path, 0)
+  let mut name_index = 0
+  let mut wildcard_value = ""
+  for kind in node.pattern_kinds {
+    if kind == 1 {
+      let path_end = segment_end(path, path_pos)
+      if name_index < names.length() {
+        params.set(names[name_index], path[path_pos:path_end].to_owned())
+      }
+      name_index = name_index + 1
+      path_pos = skip_slashes(path, path_end + 1)
+    } else if kind == 0 {
+      path_pos = skip_slashes(path, segment_end(path, path_pos) + 1)
+    } else {
+      wildcard_value = join_wildcard(path, path_pos)
+      if node.route_wildcard_name != "" {
+        params.set(node.route_wildcard_name, wildcard_value)
+      }
+      break
+    }
+  }
+  (params, wildcard_value)
 }
 
 ///|
@@ -262,8 +297,12 @@ fn match_static_node(
     return None
   }
   let end = segment_end(path, start)
-  match node.static_children.get_from_string(path[start:end]) {
-    Some(child) => match_static_node(child, path, end + 1)
+  match node.static_children {
+    Some(children) =>
+      match children.get_from_string(path[start:end]) {
+        Some(child) => match_static_node(child, path, end + 1)
+        None => None
+      }
     None => None
   }
 }
@@ -295,10 +334,12 @@ pub fn Router::add_route(
   }
   let root = node
   let param_names : Array[String] = []
+  let pattern_kinds : Array[Int] = []
   let mut route_wildcard_name = ""
   for segment in split_segments(clean_path) {
     if segment.has_prefix(":") {
       param_names.push(segment[1:].to_owned())
+      pattern_kinds.push(1)
       let child = match node.param_child {
         Some(child) => child
         None => {
@@ -311,6 +352,7 @@ pub fn Router::add_route(
       node = child
     } else if segment.has_prefix("*") {
       route_wildcard_name = segment[1:].to_owned()
+      pattern_kinds.push(2)
       let child = match node.wildcard_child {
         Some(child) => child
         None => {
@@ -323,12 +365,23 @@ pub fn Router::add_route(
       node = child
       break
     } else {
+      pattern_kinds.push(0)
       let key = segment.to_owned()
-      let child = match node.static_children.get(key) {
-        Some(child) => child
+      let child = match node.static_children {
+        Some(children) =>
+          match children.get(key) {
+            Some(child) => child
+            None => {
+              let child = RouteNode::new()
+              children.set(key, child)
+              child
+            }
+          }
         None => {
+          let children : Map[String, RouteNode] = Map([], capacity=2)
           let child = RouteNode::new()
-          node.static_children.set(key, child)
+          children.set(key, child)
+          node.static_children = Some(children)
           child
         }
       }
@@ -338,6 +391,7 @@ pub fn Router::add_route(
   node.handler = Some(handler)
   node.route_path = clean_path
   node.param_names = param_names
+  node.pattern_kinds = pattern_kinds
   node.route_wildcard_name = route_wildcard_name
   self.routes.push({
     path: clean_path,
@@ -381,14 +435,17 @@ pub fn Router::url_for(
     Some(params) => params
     None => Map([])
   }
-  let segments = split_segments(named.path.view())
-  if segments.length() == 0 {
+  let path = named.path.view()
+  let length = path.length()
+  let mut i = skip_slashes(path, 0)
+  if i >= length {
     return Some("/")
   }
-  let builder = StringBuilder()
-  for i = 0; i < segments.length(); i = i + 1 {
-    builder.write_string("/")
-    let segment = segments[i]
+  let builder = StringBuilder(size_hint=length)
+  while i < length {
+    builder.write_char('/')
+    let end = segment_end(path, i)
+    let segment = path[i:end]
     if segment.has_prefix(":") {
       match values.get_from_string(segment[1:]) {
         Some(value) => builder.write_string(url_encode(value))
@@ -402,6 +459,7 @@ pub fn Router::url_for(
     } else {
       builder.write_stringview(segment)
     }
+    i = skip_slashes(path, end)
   }
   Some(builder.to_string())
 }
@@ -409,10 +467,9 @@ pub fn Router::url_for(
 ///|
 fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
   let allowed : Array[String] = []
-  let captures : Array[StringView] = []
   for meth, root in self.trees {
     let matched = if root.has_dynamic {
-      match_dynamic_node(root, path, 0, captures) is Some(_)
+      match_dynamic_node(root, path, 0) is Some(_)
     } else {
       match_static_node(root, path, 0) is Some(_)
     }
@@ -450,22 +507,14 @@ fn Router::match_in_tree(
       None => None
     }
   } else {
-    let captures : Array[StringView] = []
-    match match_dynamic_node(root, clean_path, 0, captures) {
+    match match_dynamic_node(root, clean_path, 0) {
       Some(outcome) => {
         let node = outcome.node
-        let names = node.param_names
-        let params : Map[String, String] = Map([], capacity=names.length() + 1)
-        for i = 0; i < names.length(); i = i + 1 {
-          params.set(names[i], captures[i].to_owned())
-        }
-        let wildcard_value = if outcome.wildcard_start >= 0 {
-          join_wildcard(clean_path, outcome.wildcard_start)
+        let (params, wildcard_value) = if outcome.wildcard_start < 0 &&
+          node.param_names.length() == 0 {
+          (Map([], capacity=0), "")
         } else {
-          ""
-        }
-        if node.route_wildcard_name != "" {
-          params.set(node.route_wildcard_name, wildcard_value)
+          extract_route_params(node, clean_path)
         }
         Some(
           found_route(
@@ -761,8 +810,7 @@ pub fn Context::ip(self : Context) -> String {
 }
 
 ///|
-fn hex_digit(byte : Byte) -> Int32 {
-  let value = byte.to_int()
+fn hex_digit(value : Int) -> Int {
   if value >= 48 && value <= 57 {
     value - 48
   } else if value >= 65 && value <= 70 {
@@ -775,9 +823,70 @@ fn hex_digit(byte : Byte) -> Int32 {
 }
 
 ///|
+fn is_ascii_view(view : StringView) -> Bool {
+  let length = view.length()
+  let mut i = 0
+  while i < length {
+    if view.unsafe_get(i).to_int() > 127 {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+///|
 fn decode_url(source : StringView) -> String {
-  if !source.contains("%") && !source.contains("+") {
+  let length = source.length()
+  let mut needs_decoding = false
+  let mut ascii_only = true
+  let mut high_byte = false
+  let mut i = 0
+  while i < length {
+    let value = source.unsafe_get(i).to_int()
+    if value > 127 {
+      ascii_only = false
+    } else if value == 37 {
+      needs_decoding = true
+      if i + 2 < length {
+        let high = hex_digit(source.unsafe_get(i + 1).to_int())
+        let low = hex_digit(source.unsafe_get(i + 2).to_int())
+        if high >= 8 && low >= 0 {
+          high_byte = true
+        }
+      }
+    } else if value == 43 {
+      needs_decoding = true
+    }
+    i = i + 1
+  }
+  if !needs_decoding {
     return source.to_owned()
+  }
+  if ascii_only && !high_byte {
+    let builder = StringBuilder(size_hint=length)
+    let mut i = 0
+    while i < length {
+      let value = source.unsafe_get(i).to_int()
+      if value == 37 {
+        if i + 2 < length {
+          let high = hex_digit(source.unsafe_get(i + 1).to_int())
+          let low = hex_digit(source.unsafe_get(i + 2).to_int())
+          if high >= 0 && low >= 0 {
+            builder.write_char((high * 16 + low).unsafe_to_char())
+            i = i + 3
+            continue
+          }
+        }
+        builder.write_char('%')
+      } else if value == 43 {
+        builder.write_char(' ')
+      } else {
+        builder.write_char(value.unsafe_to_char())
+      }
+      i = i + 1
+    }
+    return builder.to_string()
   }
   let bytes = @utf8.encode(source)
   let buffer = @buffer.Buffer::Buffer(size_hint=bytes.length())
@@ -785,8 +894,8 @@ fn decode_url(source : StringView) -> String {
   while i < bytes.length() {
     let byte = bytes[i]
     if byte == b'%' && i + 2 < bytes.length() {
-      let high = hex_digit(bytes[i + 1])
-      let low = hex_digit(bytes[i + 2])
+      let high = hex_digit(bytes[i + 1].to_int())
+      let low = hex_digit(bytes[i + 2].to_int())
       if high >= 0 && low >= 0 {
         buffer.write_byte((high * 16 + low).to_byte())
         i = i + 2
@@ -821,9 +930,27 @@ fn is_url_unreserved(value : Int32) -> Bool {
 
 ///|
 pub fn url_encode(source : String) -> String {
+  let hex = "0123456789ABCDEF"
+  let view = source.view()
+  if is_ascii_view(view) {
+    let length = view.length()
+    let builder = StringBuilder(size_hint=length)
+    let mut i = 0
+    while i < length {
+      let value = view.unsafe_get(i).to_int()
+      if is_url_unreserved(value) {
+        builder.write_char(value.unsafe_to_char())
+      } else {
+        builder.write_char('%')
+        builder.write_char(hex[value / 16].unsafe_to_char())
+        builder.write_char(hex[value % 16].unsafe_to_char())
+      }
+      i = i + 1
+    }
+    return builder.to_string()
+  }
   let bytes = @utf8.encode(source)
   let builder = StringBuilder(size_hint=bytes.length())
-  let hex = "0123456789ABCDEF"
   for byte in bytes {
     let value = byte.to_int()
     if is_url_unreserved(value) {
@@ -838,48 +965,123 @@ pub fn url_encode(source : String) -> String {
 }
 
 ///|
+fn has_ascii_upper(view : StringView) -> Bool {
+  let length = view.length()
+  let mut i = 0
+  while i < length {
+    let value = view.unsafe_get(i).to_int()
+    if value >= 65 && value <= 90 {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+fn starts_with_ignore_ascii_case(
+  view : StringView,
+  prefix : StringView,
+) -> Bool {
+  let length = prefix.length()
+  if view.length() < length {
+    return false
+  }
+  let mut i = 0
+  while i < length {
+    let mut left = view.unsafe_get(i).to_int()
+    let mut right = prefix.unsafe_get(i).to_int()
+    if left >= 65 && left <= 90 {
+      left = left + 32
+    }
+    if right >= 65 && right <= 90 {
+      right = right + 32
+    }
+    if left != right {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+///|
+fn mime_for_extension(extension : StringView) -> String {
+  if extension == "html" || extension == "htm" {
+    "text/html; charset=utf-8"
+  } else if extension == "css" {
+    "text/css; charset=utf-8"
+  } else if extension == "js" || extension == "mjs" {
+    "text/javascript; charset=utf-8"
+  } else if extension == "json" {
+    "application/json; charset=utf-8"
+  } else if extension == "txt" || extension == "text" || extension == "log" {
+    "text/plain; charset=utf-8"
+  } else if extension == "md" || extension == "markdown" {
+    "text/markdown; charset=utf-8"
+  } else if extension == "csv" {
+    "text/csv; charset=utf-8"
+  } else if extension == "xml" {
+    "application/xml"
+  } else if extension == "svg" {
+    "image/svg+xml"
+  } else if extension == "png" {
+    "image/png"
+  } else if extension == "jpg" || extension == "jpeg" {
+    "image/jpeg"
+  } else if extension == "gif" {
+    "image/gif"
+  } else if extension == "webp" {
+    "image/webp"
+  } else if extension == "bmp" {
+    "image/bmp"
+  } else if extension == "ico" {
+    "image/x-icon"
+  } else if extension == "wasm" {
+    "application/wasm"
+  } else if extension == "pdf" {
+    "application/pdf"
+  } else if extension == "zip" {
+    "application/zip"
+  } else if extension == "gz" {
+    "application/gzip"
+  } else if extension == "mp3" {
+    "audio/mpeg"
+  } else if extension == "mp4" {
+    "video/mp4"
+  } else if extension == "woff" {
+    "font/woff"
+  } else if extension == "woff2" {
+    "font/woff2"
+  } else if extension == "ttf" {
+    "font/ttf"
+  } else if extension == "otf" {
+    "font/otf"
+  } else {
+    "application/octet-stream"
+  }
+}
+
+///|
 pub fn mime_type_for(path : String) -> String {
   let view = path.view()
   let last_slash = match view.rev_find("/") {
     Some(index) => index
     None => -1
   }
-  let extension = match view.rev_find(".") {
+  match view.rev_find(".") {
     Some(index) =>
       if index > last_slash {
-        view[index + 1:].to_lower().to_owned()
+        let extension = view[index + 1:]
+        if has_ascii_upper(extension) {
+          mime_for_extension(extension.to_lower().view())
+        } else {
+          mime_for_extension(extension)
+        }
       } else {
-        ""
+        mime_for_extension("")
       }
-    None => ""
-  }
-  match extension {
-    "html" | "htm" => "text/html; charset=utf-8"
-    "css" => "text/css; charset=utf-8"
-    "js" | "mjs" => "text/javascript; charset=utf-8"
-    "json" => "application/json; charset=utf-8"
-    "txt" | "text" | "log" => "text/plain; charset=utf-8"
-    "md" | "markdown" => "text/markdown; charset=utf-8"
-    "csv" => "text/csv; charset=utf-8"
-    "xml" => "application/xml"
-    "svg" => "image/svg+xml"
-    "png" => "image/png"
-    "jpg" | "jpeg" => "image/jpeg"
-    "gif" => "image/gif"
-    "webp" => "image/webp"
-    "bmp" => "image/bmp"
-    "ico" => "image/x-icon"
-    "wasm" => "application/wasm"
-    "pdf" => "application/pdf"
-    "zip" => "application/zip"
-    "gz" => "application/gzip"
-    "mp3" => "audio/mpeg"
-    "mp4" => "video/mp4"
-    "woff" => "font/woff"
-    "woff2" => "font/woff2"
-    "ttf" => "font/ttf"
-    "otf" => "font/otf"
-    _ => "application/octet-stream"
+    None => mime_for_extension("")
   }
 }
 
@@ -908,22 +1110,31 @@ pub fn parse_urlencoded(source : String) -> Map[String, String] {
 }
 
 ///|
+fn encoded_key_matches(key : StringView, name : String) -> Bool {
+  if !key.contains("%") && !key.contains("+") {
+    key == name.view()
+  } else {
+    decode_url(key) == name
+  }
+}
+
+///|
 fn query_param(source : StringView, name : String) -> String {
-  let mut found : String? = None
+  let mut found : StringView? = None
   for pair in source.split("&") {
     if pair.is_empty() {
       continue
     }
     match pair.find("=") {
       Some(index) =>
-        if decode_url(pair[:index]) == name {
-          found = Some(decode_url(pair[index + 1:]))
+        if encoded_key_matches(pair[:index], name) {
+          found = Some(pair[index + 1:])
         }
-      None => if decode_url(pair) == name { found = Some("") }
+      None => if encoded_key_matches(pair, name) { found = Some("") }
     }
   }
   match found {
-    Some(value) => value
+    Some(value) => decode_url(value)
     None => ""
   }
 }
@@ -940,10 +1151,10 @@ pub fn Context::query(self : Context, name : String) -> String {
 ///|
 pub fn Context::form(self : Context, name : String) -> String {
   let content_type = self.header("Content-Type")
-  if !content_type
-    .view()
-    .to_lower()
-    .has_prefix("application/x-www-form-urlencoded") {
+  if !starts_with_ignore_ascii_case(
+    content_type.view(),
+    "application/x-www-form-urlencoded".view(),
+  ) {
     return ""
   }
   query_param(self.request.body.view(), name)
@@ -1308,13 +1519,42 @@ fn join_fs_path(root : String, relative : String) -> String {
   if root.has_suffix("/") {
     return root + relative
   }
-  root + "/" + relative
+  let builder = StringBuilder(size_hint=root.length() + 1 + relative.length())
+  builder.write_string(root)
+  builder.write_char('/')
+  builder.write_string(relative)
+  builder.to_string()
 }
 
 ///|
 fn clean_relative_path(relative : StringView) -> String? {
   if relative.contains("\u{0}") || relative.contains("\\") {
     return None
+  }
+  let length = relative.length()
+  let mut needs_clean = false
+  let mut i = 0
+  let mut at_start = true
+  while i < length {
+    if relative.unsafe_get(i).to_int() == 47 {
+      if at_start || i + 1 == length || relative.unsafe_get(i - 1).to_int() == 47 {
+        needs_clean = true
+      }
+      i = i + 1
+    } else {
+      at_start = false
+      let end = segment_end(relative, i)
+      let segment = relative[i:end]
+      if segment == "." {
+        needs_clean = true
+      } else if segment == ".." {
+        return None
+      }
+      i = end
+    }
+  }
+  if !needs_clean {
+    return Some(relative.to_owned())
   }
   let segments : Array[StringView] = []
   for segment in relative.split("/") {
@@ -1357,33 +1597,40 @@ pub fn App::static_files(
 
 ///|
 pub fn App::static_file_for(self : App, path : String) -> String? {
-  let path = clean_route_path(path)
+  if self.static_mounts.length() == 0 {
+    return None
+  }
+  let path_view = clean_path_view(path)
+  let path_length = path_view.length()
   let mut best : StaticMount? = None
   let mut best_length = -1
   for mount in self.static_mounts {
-    let prefix = mount.url_prefix
-    let matched = if prefix == "" {
+    let prefix_view = mount.url_prefix.view()
+    let prefix_length = mount.url_prefix.length()
+    let matched = if prefix_length == 0 {
       true
     } else {
-      path == prefix ||
-      (path.has_prefix(prefix) &&
-        path.length() > prefix.length() &&
-        path.view()[prefix.length():].has_prefix("/"))
+      path_view == prefix_view ||
+      (path_length > prefix_length &&
+        path_view[:prefix_length] == prefix_view &&
+        path_view[prefix_length:].has_prefix("/"))
     }
-    if matched && prefix.length() > best_length {
+    if matched && prefix_length > best_length {
       best = Some(mount)
-      best_length = prefix.length()
+      best_length = prefix_length
     }
   }
   match best {
     None => None
     Some(mount) => {
-      let relative : StringView = if mount.url_prefix == "" {
-        path.view()
-      } else if path == mount.url_prefix {
+      let prefix_view = mount.url_prefix.view()
+      let prefix_length = mount.url_prefix.length()
+      let relative : StringView = if prefix_length == 0 {
+        path_view
+      } else if path_view == prefix_view {
         ""
       } else {
-        path.view()[mount.url_prefix.length() + 1:]
+        path_view[prefix_length + 1:]
       }
       let clean = match clean_relative_path(relative) {
         Some(clean) => clean
