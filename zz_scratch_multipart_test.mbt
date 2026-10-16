@@ -65,16 +65,10 @@ test "zz-fuzz-multipart-roundtrip" {
     let content_type = "multipart/form-data; boundary=" + boundary
     let parsed = @feather.parse_multipart(body, content_type)
     match parsed {
-      None => {
-        failures = failures + 1
-        println("parse returned None for boundary \{boundary}")
-      }
+      None => failures = failures + 1
       Some(parsed_parts) => {
         if parsed_parts.length() != parts.length() {
           failures = failures + 1
-          println(
-            "part count \{parsed_parts.length()} != \{parts.length()} (crlf=\{crlf}, boundary=\{boundary})",
-          )
         } else {
           for j = 0; j < parts.length(); j = j + 1 {
             let (name, filename, content_type, data) = parts[j]
@@ -84,11 +78,6 @@ test "zz-fuzz-multipart-roundtrip" {
               got.content_type != content_type ||
               got.data != data {
               failures = failures + 1
-              if failures < 10 {
-                println(
-                  "part \{j} mismatch: want \{name}/\{filename}/\{content_type}/\{data}, got \{got.name}/\{got.filename}/\{got.content_type}/\{got.data}",
-                )
-              }
             }
           }
         }

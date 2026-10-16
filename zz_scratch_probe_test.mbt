@@ -27,9 +27,6 @@ test "zz-fuzz-roundtrip" {
     let decoded = @feather.url_decode(encoded)
     if decoded != s {
       failures = failures + 1
-      println(
-        "roundtrip mismatch: \{s} -> \{encoded} -> \{decoded}",
-      )
     }
   }
   assert_eq(failures, 0)
@@ -52,7 +49,6 @@ test "zz-fuzz-static-escape" {
       Some(file) =>
         if !(file == "/root" || file.has_prefix("/root/")) {
           failures = failures + 1
-          println("escape: \{path} -> \{file}")
         }
       None => ()
     }
@@ -83,19 +79,10 @@ test "zz-fuzz-param-roundtrip" {
               Some(v) =>
                 if @feather.url_decode(v) != s {
                   failures = failures + 1
-                  println(
-                    "param mismatch: \{s} -> \{url} -> \{v} -> \{@feather.url_decode(v)}",
-                  )
                 }
-              None => {
-                failures = failures + 1
-                println("param missing: \{s} -> \{url}")
-              }
+              None => failures = failures + 1
             }
-          _ => {
-            failures = failures + 1
-            println("no route for \{s} -> \{url}")
-          }
+          _ => failures = failures + 1
         }
       None => ()
     }
@@ -120,9 +107,6 @@ test "zz-fuzz-form-roundtrip" {
     let decoded = @feather.parse_urlencoded(body).get("k").unwrap_or("<missing>")
     if decoded != s {
       failures = failures + 1
-      println(
-        "form mismatch: \{s} -> \{body} -> \{decoded}",
-      )
     }
   }
   assert_eq(failures, 0)
@@ -149,9 +133,6 @@ test "zz-fuzz-multipart" {
       .unwrap()
     if parts.length() != 1 || parts[0].data != value || parts[0].name != "a" {
       failures = failures + 1
-      println(
-        "multipart mismatch: \{value} -> \{parts.length()} parts, data=\{parts[0].data}",
-      )
     }
   }
   assert_eq(failures, 0)

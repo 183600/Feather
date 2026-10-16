@@ -157,7 +157,6 @@ test "fuzz router dispatch matches reference matcher" {
     router.add_route(meth, pattern, fn(ctx) { ctx.text(200, "ok") })
   }
   let segment_pool : Array[String] = ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "s", "x", "y", "z", "1", "a"]
-  let path_pool : Array[String] = ["/", "//", ""]
   let iterations = 3000
   for iter = 0; iter < iterations; iter = iter + 1 {
     let segments = zz_random_segments(rng, segment_pool, 4)
@@ -254,7 +253,6 @@ test "fuzz router dispatch matches reference matcher" {
           )
         }
     }
-    ignore(path_pool)
   }
 }
 

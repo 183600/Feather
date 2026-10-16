@@ -140,9 +140,8 @@ test "zz-fuzz-router" {
         @feather.RouteNotFound => None
       }
       if best < 0 {
-        if trie_path is Some(p) {
+        if trie_path is Some(_) {
           failures = failures + 1
-          println("round \{round}: \{path} expected no match, got \{p}")
         }
       } else {
         let expected = active[best]
@@ -150,9 +149,6 @@ test "zz-fuzz-router" {
           Some(p) =>
             if p != expected {
               failures = failures + 1
-              println(
-                "round \{round}: \{path} expected \{expected}, got \{p} (active=\{active.join(",")})",
-              )
             } else {
               let route = match outcome {
                 @feather.RouteFound(route) => route
@@ -164,23 +160,12 @@ test "zz-fuzz-router" {
                   Some(got) =>
                     if got != value {
                       failures = failures + 1
-                      println(
-                        "round \{round}: \{path} param \{name} expected \{value}, got \{got}",
-                      )
                     }
-                  None => {
-                    failures = failures + 1
-                    println("round \{round}: \{path} missing param \{name}")
-                  }
+                  None => failures = failures + 1
                 }
               }
             }
-          None => {
-            failures = failures + 1
-            println(
-              "round \{round}: \{path} expected \{expected}, got no match (active=\{active.join(",")})",
-            )
-          }
+          None => failures = failures + 1
         }
       }
     }

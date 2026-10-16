@@ -127,9 +127,6 @@ test "zz-fuzz-static-reference" {
     let want = zz_ref_static(mounts, path)
     if got != want {
       failures = failures + 1
-      if failures < 15 {
-        println("static mismatch: \{path} -> got \{got}, want \{want}")
-      }
     }
   }
   assert_eq(failures, 0)

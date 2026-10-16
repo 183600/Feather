@@ -53,9 +53,6 @@ test "zz-fuzz-decode-reference" {
     let want = zz_ref_decode(s.view(), true)
     if got != want {
       failures = failures + 1
-      if failures < 10 {
-        println("decode mismatch: \{s} -> got \{got}, want \{want}")
-      }
     }
   }
   assert_eq(failures, 0)
@@ -98,15 +95,9 @@ test "zz-fuzz-encode-reference" {
     let expected = expected_buffer.to_string()
     if encoded != expected {
       failures = failures + 1
-      if failures < 10 {
-        println("encode mismatch: \{s} -> got \{encoded}, want \{expected}")
-      }
     }
     if @feather.url_decode(encoded) != s {
       failures = failures + 1
-      if failures < 20 {
-        println("encode roundtrip mismatch: \{s} -> \{encoded}")
-      }
     }
   }
   assert_eq(failures, 0)

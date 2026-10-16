@@ -33,12 +33,8 @@ test "zz-date-roundtrip-fuzz" {
       Some(parsed) =>
         if parsed != t {
           failures = failures + 1
-          println("date mismatch: \{t} -> \{formatted} -> \{parsed}")
         }
-      None => {
-        failures = failures + 1
-        println("date unparsable: \{t} -> \{formatted}")
-      }
+      None => failures = failures + 1
     }
   }
   for i = 0; i < 3000; i = i + 1 {
