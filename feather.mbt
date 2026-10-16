@@ -1747,6 +1747,43 @@ fn find_view_from(
 }
 
 ///|
+fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
+  let length = view.length()
+  if after >= length {
+    return true
+  }
+  let code = view.unsafe_get(after)
+  if code == ('\r' : UInt16) || code == ('\n' : UInt16) {
+    return true
+  }
+  if code == ('-' : UInt16) {
+    return after + 1 < length && view.unsafe_get(after + 1) == ('-' : UInt16)
+  }
+  false
+}
+
+///|
+fn find_terminated_delimiter(
+  view : StringView,
+  needle : StringView,
+  start : Int32,
+) -> Int32? {
+  let needle_length = needle.length()
+  let mut search = start
+  while search <= view.length() - needle_length {
+    let index = match find_view_from(view, needle, search) {
+      Some(index) => index
+      None => return None
+    }
+    if delimiter_is_terminated(view, index + needle_length) {
+      return Some(index)
+    }
+    search = index + 1
+  }
+  None
+}
+
+///|
 fn find_view_ignore_ascii_case(
   haystack : StringView,
   needle : StringView,
@@ -1933,7 +1970,7 @@ pub fn parse_multipart(
   let crlf_delimiter = "\r\n" + delimiter
   let crlf_delimiter_view = crlf_delimiter.view()
   let view = body.view()
-  let mut pos = match find_view_from(view, delimiter_view, 0) {
+  let mut pos = match find_terminated_delimiter(view, delimiter_view, 0) {
     Some(index) => index + delimiter.length()
     None => return Some([])
   }
@@ -1950,10 +1987,10 @@ pub fn parse_multipart(
     } else if view[pos:].has_prefix("\n") {
       pos = pos + 1
     }
-    let data_end = match find_view_from(view, crlf_delimiter_view, pos) {
+    let data_end = match find_terminated_delimiter(view, crlf_delimiter_view, pos) {
       Some(index) => index
       None =>
-        match find_view_from(view, ("\n" + delimiter).view(), pos) {
+        match find_terminated_delimiter(view, ("\n" + delimiter).view(), pos) {
           Some(index) => index
           None => break
         }
@@ -2119,9 +2156,27 @@ fn write_two_digits(builder : StringBuilder, value : Int) -> Unit {
 }
 
 ///|
+fn write_year(builder : StringBuilder, year : Int64) -> Unit {
+  if year >= 0L && year < 1000L {
+    if year < 10L {
+      builder.write_char('0')
+    }
+    if year < 100L {
+      builder.write_char('0')
+    }
+    builder.write_char('0')
+  }
+  builder.write_string(year.to_string())
+}
+
+///|
 pub fn format_http_date(unix_seconds : Int64) -> String {
-  let days = unix_seconds / 86400L
-  let time_of_day = unix_seconds - days * 86400L
+  let mut days = unix_seconds / 86400L
+  let mut time_of_day = unix_seconds - days * 86400L
+  if time_of_day < 0L {
+    days = days - 1L
+    time_of_day = time_of_day + 86400L
+  }
   let (year, month, day) = civil_from_days(days)
   let weekday = ((days + 4L) % 7L + 7L) % 7L
   let hour = (time_of_day / 3600L).to_int()
@@ -2139,7 +2194,7 @@ pub fn format_http_date(unix_seconds : Int64) -> String {
   builder.write_char(' ')
   builder.write_string(months[month - 1])
   builder.write_char(' ')
-  builder.write_string(year.to_string())
+  write_year(builder, year)
   builder.write_char(' ')
   write_two_digits(builder, hour)
   builder.write_char(':')

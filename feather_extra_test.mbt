@@ -36,6 +36,38 @@ test "parse_multipart preserves utf8 payloads and empty values" {
 }
 
 ///|
+test "parse_multipart keeps boundary prefixes inside part data" {
+  let body = "--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nhello\r\n--Xtra world\r\n--X--\r\n"
+  let parts = @feather
+    .parse_multipart(body, "multipart/form-data; boundary=X")
+    .unwrap()
+  assert_eq(parts.length(), 1)
+  assert_eq(parts[0].data, "hello\r\n--Xtra world")
+}
+
+///|
+test "parse_multipart resumes after boundary prefixes in data" {
+  let body = "--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\none\r\n--Xtwo\r\n--X\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\ntwo\r\n--X--\r\n"
+  let parts = @feather
+    .parse_multipart(body, "multipart/form-data; boundary=X")
+    .unwrap()
+  assert_eq(parts.length(), 2)
+  assert_eq(parts[0].data, "one\r\n--Xtwo")
+  assert_eq(parts[1].name, "b")
+  assert_eq(parts[1].data, "two")
+}
+
+///|
+test "parse_multipart keeps boundary prefixes with lf separators" {
+  let body = "--X\nContent-Disposition: form-data; name=\"a\"\n\nhello\n--Xtra\n--X--\n"
+  let parts = @feather
+    .parse_multipart(body, "multipart/form-data; boundary=X")
+    .unwrap()
+  assert_eq(parts.length(), 1)
+  assert_eq(parts[0].data, "hello\n--Xtra")
+}
+
+///|
 test "parse_multipart returns none without a boundary" {
   assert_eq(@feather.parse_multipart("body", "text/plain"), None)
   assert_eq(@feather.parse_multipart("body", "multipart/form-data"), None)
