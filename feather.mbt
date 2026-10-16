@@ -10,6 +10,11 @@ pub(all) suberror HttpError {
 }
 
 ///|
+pub(all) suberror HttpErrorPayload {
+  HttpErrorPayload(Int32, String, Json)
+}
+
+///|
 pub(all) struct Config {
   host : String
   port : Int32
@@ -43,6 +48,9 @@ pub type Handler = (Context) -> Unit raise
 
 ///|
 pub type Middleware = (Handler) -> Handler
+
+///|
+pub type WebSocketHandler = async (Context, @websocket.Conn) -> Unit raise
 
 ///|
 pub(all) struct Route {
@@ -498,6 +506,7 @@ fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
       allowed.push(meth)
     }
   }
+  allowed.sort()
   allowed
 }
 
@@ -686,6 +695,30 @@ pub fn error_response(ctx : Context, status : Int32, message : String) -> Unit {
 }
 
 ///|
+pub fn error_response_with_payload(
+  ctx : Context,
+  status : Int32,
+  message : String,
+  payload : Json,
+) -> Unit {
+  let body : Map[String, Json] = Map([], capacity=4)
+  body.set("status", Json::number(status.to_double()))
+  body.set("error", Json::string(message))
+  match payload {
+    Json::Object(extra) =>
+      for key, value in extra {
+        body.set(key, value)
+      }
+    _ => body.set("detail", payload)
+  }
+  ctx.response.status = status
+  ctx.response.headers.set("Content-Type", "application/json; charset=utf-8")
+  ctx.response.body = Json::object(body).stringify()
+}
+
+
+
+///|
 pub fn Context::fail(
   self : Context,
   status : Int32,
@@ -693,6 +726,17 @@ pub fn Context::fail(
 ) -> Unit raise HttpError {
   ignore(self)
   raise HttpError(status, message)
+}
+
+///|
+pub fn Context::fail_with(
+  self : Context,
+  status : Int32,
+  message : String,
+  payload : Json,
+) -> Unit raise HttpErrorPayload {
+  ignore(self)
+  raise HttpErrorPayload(status, message, payload)
 }
 
 ///|
@@ -786,6 +830,15 @@ pub fn Context::json(
 }
 
 ///|
+pub fn[T : @json.ToJson] Context::json_of(
+  self : Context,
+  status : Int32,
+  value : T,
+) -> Unit {
+  self.json_value(status, @json.to_json(value))
+}
+
+///|
 pub fn Context::redirect(
   self : Context,
   status : Int32,
@@ -794,6 +847,13 @@ pub fn Context::redirect(
   self.response.status = status
   self.response.headers.set("Location", location)
   self.response.body = ""
+}
+
+///|
+pub fn Context::no_content(self : Context) -> Unit {
+  self.response.status = 204
+  self.response.body = ""
+  self.response.headers.remove("Content-Type")
 }
 
 ///|
@@ -831,6 +891,88 @@ pub fn Context::ip(self : Context) -> String {
 }
 
 ///|
+pub fn Context::cookies(self : Context) -> Map[String, String] {
+  let cookies : Map[String, String] = Map([], capacity=4)
+  for pair in self.header("Cookie").view().split(";") {
+    let pair = pair.trim()
+    if pair.is_empty() {
+      continue
+    }
+    match pair.find("=") {
+      Some(index) => {
+        let name = pair[:index].trim().to_owned()
+        if name != "" {
+          cookies.set(name, pair[index + 1:].to_owned())
+        }
+      }
+      None => ()
+    }
+  }
+  cookies
+}
+
+///|
+pub fn Context::cookie(self : Context, name : String) -> String? {
+  self.cookies().get(name)
+}
+
+///|
+pub fn Context::set_cookie(
+  self : Context,
+  name : String,
+  value : String,
+  path? : String,
+  max_age? : Int64,
+  http_only~ : Bool = false,
+  secure~ : Bool = false,
+) -> Unit {
+  let builder = StringBuilder(size_hint=name.length() + value.length() + 16)
+  builder.write_string(name)
+  builder.write_char('=')
+  builder.write_string(value)
+  match path {
+    Some(path) => {
+      builder.write_string("; Path=")
+      builder.write_string(path)
+    }
+    None => ()
+  }
+  match max_age {
+    Some(max_age) => {
+      builder.write_string("; Max-Age=")
+      builder.write_string(max_age.to_string())
+    }
+    None => ()
+  }
+  if http_only {
+    builder.write_string("; HttpOnly")
+  }
+  if secure {
+    builder.write_string("; Secure")
+  }
+  self.response.headers.set("Set-Cookie", builder.to_string())
+}
+
+///|
+pub fn Context::bearer_token(self : Context) -> String? {
+  let authorization = self.header("Authorization")
+  let view = authorization.view()
+  if starts_with_ignore_ascii_case(view, "Bearer ".view()) {
+    Some(view[7:].trim().to_owned())
+  } else {
+    None
+  }
+}
+
+///|
+pub fn Context::request_id(self : Context) -> String {
+  match self.state.get("request_id") {
+    Some(value) => value
+    None => ""
+  }
+}
+
+///|
 fn hex_digit(value : Int) -> Int {
   if value >= 48 && value <= 57 {
     value - 48
@@ -857,7 +999,7 @@ fn is_ascii_view(view : StringView) -> Bool {
 }
 
 ///|
-fn decode_url(source : StringView) -> String {
+fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
   let length = source.length()
   let mut needs_decoding = false
   let mut ascii_only = true
@@ -876,7 +1018,7 @@ fn decode_url(source : StringView) -> String {
           high_byte = true
         }
       }
-    } else if value == 43 {
+    } else if value == 43 && plus_as_space {
       needs_decoding = true
     }
     i = i + 1
@@ -900,7 +1042,7 @@ fn decode_url(source : StringView) -> String {
           }
         }
         builder.write_char('%')
-      } else if value == 43 {
+      } else if value == 43 && plus_as_space {
         builder.write_char(' ')
       } else {
         builder.write_char(value.unsafe_to_char())
@@ -923,7 +1065,7 @@ fn decode_url(source : StringView) -> String {
       } else {
         buffer.write_byte(byte)
       }
-    } else if byte == b'+' {
+    } else if byte == b'+' && plus_as_space {
       buffer.write_byte(b' ')
     } else {
       buffer.write_byte(byte)
@@ -931,6 +1073,16 @@ fn decode_url(source : StringView) -> String {
     i = i + 1
   }
   @utf8.decode_lossy(buffer.to_bytes())
+}
+
+///|
+fn decode_url(source : StringView) -> String {
+  decode_url_impl(source, true)
+}
+
+///|
+fn decode_url_path(source : StringView) -> String {
+  decode_url_impl(source, false)
 }
 
 ///|
@@ -1182,6 +1334,333 @@ pub fn Context::form(self : Context, name : String) -> String {
 }
 
 ///|
+pub fn Context::queries(self : Context) -> Map[String, String] {
+  match self.request.path.find("?") {
+    Some(index) => parse_urlencoded_view(self.request.path[index + 1:])
+    None => Map([])
+  }
+}
+
+///|
+pub fn Context::form_map(self : Context) -> Map[String, String] {
+  let content_type = self.header("Content-Type")
+  if !starts_with_ignore_ascii_case(
+    content_type.view(),
+    "application/x-www-form-urlencoded".view(),
+  ) {
+    return Map([])
+  }
+  parse_urlencoded_view(self.request.body.view())
+}
+
+///|
+pub(all) struct MultipartPart {
+  name : String
+  filename : String
+  content_type : String
+  headers : Map[String, String]
+  data : String
+}
+
+///|
+pub impl Eq for MultipartPart with fn equal(x, y) {
+  x.name == y.name &&
+  x.filename == y.filename &&
+  x.content_type == y.content_type &&
+  x.data == y.data
+}
+
+///|
+pub impl Show for MultipartPart with fn to_string(self) {
+  "@feather.MultipartPart(\{self.name}, \{self.filename}, \{self.content_type}, \{self.data})"
+}
+
+///|
+pub impl Debug for MultipartPart with fn to_repr(self) {
+  Repr::record({
+    "name": Repr::string(self.name),
+    "filename": Repr::string(self.filename),
+    "content_type": Repr::string(self.content_type),
+    "data": Repr::string(self.data),
+  })
+}
+
+///|
+pub extend MultipartPart with Eq::{not_equal, equal}
+
+///|
+pub extend MultipartPart with Show::{output, to_string}
+
+///|
+pub extend MultipartPart with Debug::{to_repr}
+
+///|
+fn find_view_from(
+  haystack : StringView,
+  needle : StringView,
+  start : Int32,
+) -> Int32? {
+  let length = needle.length()
+  if length == 0 {
+    return Some(start)
+  }
+  let last = haystack.length() - length
+  let mut i = start
+  while i <= last {
+    if haystack[i:i + length] == needle {
+      return Some(i)
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
+fn find_view_ignore_ascii_case(
+  haystack : StringView,
+  needle : StringView,
+  start : Int32,
+) -> Int32? {
+  let length = needle.length()
+  if length == 0 {
+    return Some(start)
+  }
+  let last = haystack.length() - length
+  let mut i = start
+  while i <= last {
+    if starts_with_ignore_ascii_case(haystack[i:], needle) {
+      return Some(i)
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
+fn is_parameter_boundary(value : UInt16) -> Bool {
+  value == (' ' : UInt16) ||
+  value == (';' : UInt16) ||
+  value == ('\t' : UInt16)
+}
+
+///|
+fn header_parameter(value : StringView, name : String) -> String? {
+  let mut start = 0
+  let mut result : String? = None
+  let mut done = false
+  while !done {
+    let index = match find_view_ignore_ascii_case(value, name.view(), start) {
+      Some(index) => index
+      None => {
+        done = true
+        continue
+      }
+    }
+    let after = index + name.length()
+    let at_boundary = index == 0 ||
+      is_parameter_boundary(value.unsafe_get(index - 1))
+    if at_boundary &&
+      after < value.length() &&
+      value.unsafe_get(after) == ('=' : UInt16) {
+      let mut pos = after + 1
+      while pos < value.length() && value.unsafe_get(pos) == (' ' : UInt16) {
+        pos = pos + 1
+      }
+      if pos < value.length() && value.unsafe_get(pos) == ('"' : UInt16) {
+        let quoted_start = pos + 1
+        let end = match value[quoted_start:].find("\"") {
+          Some(offset) => quoted_start + offset
+          None => value.length()
+        }
+        result = Some(value[quoted_start:end].to_owned())
+      } else {
+        let end = match value[pos:].find(";") {
+          Some(offset) => pos + offset
+          None => value.length()
+        }
+        result = Some(value[pos:end].trim().to_owned())
+      }
+      done = true
+    } else {
+      start = index + 1
+    }
+  }
+  result
+}
+
+///|
+pub fn multipart_boundary(content_type : String) -> String? {
+  match find_view_ignore_ascii_case(
+    content_type.view(),
+    "multipart/form-data".view(),
+    0,
+  ) {
+    None => None
+    Some(_) => header_parameter(content_type.view(), "boundary")
+  }
+}
+
+///|
+fn get_header_ignore_case(
+  headers : Map[String, String],
+  name : String,
+) -> String? {
+  let target = name.view()
+  for key, value in headers {
+    if key.view().equal_ignore_ascii_case(target) {
+      return Some(value)
+    }
+  }
+  None
+}
+
+///|
+fn parse_part_headers(header_text : StringView) -> Map[String, String] {
+  let headers : Map[String, String] = Map([], capacity=4)
+  for line in header_text.split("\n") {
+    let line = if line.has_suffix("\r") {
+      line[:line.length() - 1]
+    } else {
+      line
+    }
+    if line.is_empty() {
+      continue
+    }
+    match line.find(":") {
+      Some(index) => {
+        let name = line[:index].trim().to_owned()
+        let value = line[index + 1:].trim().to_owned()
+        if name != "" {
+          headers.set(name, value)
+        }
+      }
+      None => ()
+    }
+  }
+  headers
+}
+
+///|
+pub fn parse_multipart(
+  body : String,
+  content_type : String,
+) -> Array[MultipartPart]? {
+  let boundary = match multipart_boundary(content_type) {
+    Some(boundary) if boundary != "" => boundary
+    _ => return None
+  }
+  let delimiter = "--" + boundary
+  let delimiter_view = delimiter.view()
+  let crlf_delimiter = "\r\n" + delimiter
+  let view = body.view()
+  let mut pos = match find_view_from(view, delimiter_view, 0) {
+    Some(index) => index + delimiter.length()
+    None => return Some([])
+  }
+  let parts : Array[MultipartPart] = []
+  while pos <= view.length() {
+    if starts_with_ignore_ascii_case(view[pos:], "--".view()) {
+      break
+    }
+    if view[pos:].has_prefix("\r\n") {
+      pos = pos + 2
+    } else if view[pos:].has_prefix("\n") {
+      pos = pos + 1
+    }
+    let data_end = match find_view_from(view, crlf_delimiter.view(), pos) {
+      Some(index) => index
+      None =>
+        match find_view_from(view, ("\n" + delimiter).view(), pos) {
+          Some(index) => index
+          None => break
+        }
+    }
+    let header_end = match find_view_from(view, "\r\n\r\n".view(), pos) {
+      Some(index) => index
+      None =>
+        match find_view_from(view, "\n\n".view(), pos) {
+          Some(index) => index
+          None => break
+        }
+    }
+    if header_end >= data_end {
+      break
+    }
+    let separator_length = if view[header_end:header_end + 2] == "\r\n" {
+      4
+    } else {
+      2
+    }
+    if header_end + separator_length > data_end {
+      break
+    }
+    let headers = parse_part_headers(view[pos:header_end])
+    let data = view[header_end + separator_length:data_end]
+    let disposition = get_header_ignore_case(headers, "Content-Disposition")
+    let name = match disposition {
+      Some(disposition) => header_parameter(disposition.view(), "name").unwrap_or("")
+      None => ""
+    }
+    let filename = match disposition {
+      Some(disposition) =>
+        header_parameter(disposition.view(), "filename").unwrap_or("")
+      None => ""
+    }
+    let part_content_type = get_header_ignore_case(headers, "Content-Type").unwrap_or("")
+    parts.push({
+      name,
+      filename,
+      content_type: part_content_type,
+      headers,
+      data: data.to_owned(),
+    })
+    pos = data_end
+    if view[pos:].has_prefix("\r\n") {
+      pos = pos + 2
+    } else if view[pos:].has_prefix("\n") {
+      pos = pos + 1
+    }
+    pos = pos + delimiter.length()
+  }
+  Some(parts)
+}
+
+///|
+pub fn Context::multipart(self : Context) -> Array[MultipartPart] {
+  let content_type = self.header("Content-Type")
+  if !starts_with_ignore_ascii_case(
+    content_type.view(),
+    "multipart/form-data".view(),
+  ) {
+    return []
+  }
+  match parse_multipart(self.request.body, content_type) {
+    Some(parts) => parts
+    None => []
+  }
+}
+
+///|
+pub fn Context::multipart_value(self : Context, name : String) -> String {
+  for part in self.multipart() {
+    if part.filename == "" && part.name == name {
+      return part.data
+    }
+  }
+  ""
+}
+
+///|
+pub fn Context::multipart_file(self : Context, name : String) -> MultipartPart? {
+  for part in self.multipart() {
+    if part.name == name && part.filename != "" {
+      return Some(part)
+    }
+  }
+  None
+}
+
+///|
 pub fn status_text(code : Int32) -> String {
   match code {
     100 => "Continue"
@@ -1420,6 +1899,8 @@ pub struct App {
   mut chain : Handler?
   static_mounts : Array[StaticMount]
   mut no_route_handler : Handler?
+  ws_router : Router
+  ws_handlers : Map[String, WebSocketHandler]
 }
 
 ///|
@@ -1432,6 +1913,8 @@ pub fn App::new() -> App {
     chain: None,
     static_mounts: [],
     no_route_handler: None,
+    ws_router: create_router(),
+    ws_handlers: Map([]),
   }
 }
 
@@ -1506,6 +1989,38 @@ pub fn App::fallback(self : App, handler : Handler) -> App {
 ///|
 pub fn App::group(self : App, prefix : String) -> RouteGroup {
   self.router.group(prefix)
+}
+
+///|
+pub fn App::websocket(
+  self : App,
+  path : String,
+  handler : WebSocketHandler,
+) -> App {
+  let clean_path = clean_route_path(path)
+  self.ws_router.add_route("GET", clean_path, fn(_ctx) { () })
+  self.ws_handlers.set(clean_path, handler)
+  self
+}
+
+///|
+pub fn App::has_websocket(self : App, path : String) -> Bool {
+  self.ws_router.route("GET", path) is RouteFound(_)
+}
+
+///|
+pub fn App::resolve_websocket(
+  self : App,
+  path : String,
+) -> (WebSocketHandler, Map[String, String])? {
+  match self.ws_router.route("GET", path) {
+    RouteFound(route) =>
+      match self.ws_handlers.get(route.path) {
+        Some(handler) => Some((handler, route.params))
+        None => None
+      }
+    _ => None
+  }
 }
 
 ///|
@@ -1617,6 +2132,14 @@ pub fn App::static_files(
 }
 
 ///|
+pub fn App::has_route(self : App, meth : String, path : String) -> Bool {
+  match self.router.route(meth, path) {
+    RouteFound(_) => true
+    _ => false
+  }
+}
+
+///|
 pub fn App::static_file_for(self : App, path : String) -> String? {
   if self.static_mounts.length() == 0 {
     return None
@@ -1653,11 +2176,12 @@ pub fn App::static_file_for(self : App, path : String) -> String? {
       } else {
         path_view[prefix_length + 1:]
       }
-      let clean = match clean_relative_path(relative) {
+      let decoded = decode_url_path(relative)
+      let clean = match clean_relative_path(decoded.view()) {
         Some(clean) => clean
         None => return None
       }
-      if clean.is_empty() || relative.has_suffix("/") {
+      if clean.is_empty() || decoded.has_suffix("/") {
         Some(join_fs_path(join_fs_path(mount.root, clean), mount.index))
       } else {
         Some(join_fs_path(mount.root, clean))
@@ -1699,6 +2223,8 @@ pub fn App::respond(self : App, request : Request) -> Response {
   let ctx = Context::new(request)
   self.handle(ctx) catch {
     HttpError(status, message) => error_response(ctx, status, message)
+    HttpErrorPayload(status, message, payload) =>
+      error_response_with_payload(ctx, status, message, payload)
     err => internal_error(ctx, "\{err}")
   }
   ctx.response
@@ -1710,6 +2236,8 @@ pub fn middleware_recover() -> Middleware {
     fn(ctx) {
       next(ctx) catch {
         HttpError(status, message) => error_response(ctx, status, message)
+        HttpErrorPayload(status, message, payload) =>
+          error_response_with_payload(ctx, status, message, payload)
         err => internal_error(ctx, "\{err}")
       }
     }
@@ -1722,6 +2250,8 @@ pub fn middleware_error_handler() -> Middleware {
     fn(ctx) {
       next(ctx) catch {
         HttpError(status, message) => error_response(ctx, status, message)
+        HttpErrorPayload(status, message, payload) =>
+          error_response_with_payload(ctx, status, message, payload)
         err => error_response(ctx, 500, "\{err}")
       }
     }
@@ -1734,6 +2264,46 @@ pub fn middleware_logger(log~ : (String) -> Unit = println) -> Middleware {
     fn(ctx) raise {
       next(ctx)
       log("[\{ctx.response.status}] \{ctx.request.method} \{ctx.request.path}")
+    }
+  }
+}
+
+///|
+pub fn middleware_request_id(header~ : String = "X-Request-Id") -> Middleware {
+  let counter = Ref(0)
+  fn(next) {
+    fn(ctx) raise {
+      let existing = ctx.header(header)
+      let id = if existing != "" {
+        existing
+      } else {
+        match ctx.response.headers.get(header) {
+          Some(value) => value
+          None => {
+            counter.val = counter.val + 1
+            "feather-" + counter.val.to_string()
+          }
+        }
+      }
+      ctx.response.headers.set(header, id)
+      ctx.state.set("request_id", id)
+      next(ctx)
+    }
+  }
+}
+
+///|
+pub fn middleware_secure_headers(
+  content_type_options~ : String = "nosniff",
+  frame_options~ : String = "DENY",
+  referrer_policy~ : String = "no-referrer",
+) -> Middleware {
+  fn(next) {
+    fn(ctx) raise {
+      ctx.response.headers.set("X-Content-Type-Options", content_type_options)
+      ctx.response.headers.set("X-Frame-Options", frame_options)
+      ctx.response.headers.set("Referrer-Policy", referrer_policy)
+      next(ctx)
     }
   }
 }
@@ -1774,6 +2344,8 @@ pub fn create_feather(config : Config) -> Feather {
       chain: None,
       static_mounts: [],
       no_route_handler: None,
+      ws_router: create_router(),
+      ws_handlers: Map([]),
     },
   }
 }
@@ -1811,6 +2383,87 @@ pub fn Feather::post(
   handler : Handler,
 ) -> Feather {
   self.route("POST", path, handler)
+}
+
+///|
+pub fn Feather::put(
+  self : Feather,
+  path : String,
+  handler : Handler,
+) -> Feather {
+  self.route("PUT", path, handler)
+}
+
+///|
+pub fn Feather::patch(
+  self : Feather,
+  path : String,
+  handler : Handler,
+) -> Feather {
+  self.route("PATCH", path, handler)
+}
+
+///|
+pub fn Feather::delete(
+  self : Feather,
+  path : String,
+  handler : Handler,
+) -> Feather {
+  self.route("DELETE", path, handler)
+}
+
+///|
+pub fn Feather::head(
+  self : Feather,
+  path : String,
+  handler : Handler,
+) -> Feather {
+  self.route("HEAD", path, handler)
+}
+
+///|
+pub fn Feather::options(
+  self : Feather,
+  path : String,
+  handler : Handler,
+) -> Feather {
+  self.route("OPTIONS", path, handler)
+}
+
+///|
+pub fn Feather::all(self : Feather, path : String, handler : Handler) -> Feather {
+  for meth in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+    ignore(self.route(meth, path, handler))
+  }
+  self
+}
+
+///|
+pub fn Feather::fallback(self : Feather, handler : Handler) -> Feather {
+  ignore(self.app.fallback(handler))
+  self
+}
+
+///|
+pub fn Feather::max_body_size(self : Feather, size : Int32) -> Feather {
+  ignore(self.app.max_body_size(size))
+  self
+}
+
+///|
+pub fn Feather::request_timeout(self : Feather, millis : Int32) -> Feather {
+  ignore(self.app.request_timeout(millis))
+  self
+}
+
+///|
+pub fn Feather::websocket(
+  self : Feather,
+  path : String,
+  handler : WebSocketHandler,
+) -> Feather {
+  ignore(self.app.websocket(path, handler))
+  self
 }
 
 ///|

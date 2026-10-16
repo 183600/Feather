@@ -4,9 +4,11 @@ import {
   "moonbitlang/async",
   "moonbitlang/async/io",
   "moonbitlang/async/fs",
+  "moonbitlang/async/websocket",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/buffer",
   "moonbitlang/core/json",
+  "moonbitlang/core/ref",
 }
 
 import {
@@ -14,4 +16,5 @@ import {
   "moonbitlang/async/http",
   "moonbitlang/async/socket",
   "moonbitlang/async/fs",
+  "moonbitlang/async/websocket",
 } for "test"

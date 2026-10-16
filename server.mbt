@@ -70,9 +70,16 @@ async fn send_response(
   response : Response,
   head : Bool,
 ) -> Unit {
-  let headers : @http.Headers = Map([], capacity=response.headers.length())
+  let headers : @http.Headers = Map([], capacity=response.headers.length() + 1)
   for name, value in response.headers {
     headers.set(@http.CaseInsensitiveString(name), value)
+  }
+  let content_length_header = @http.CaseInsensitiveString("Content-Length")
+  if !response.body.is_empty() && !headers.contains(content_length_header) {
+    headers.set(
+      content_length_header,
+      @utf8.encode(response.body).length().to_string(),
+    )
   }
   conn.send_response(
     response.status,
@@ -122,11 +129,15 @@ async fn serve_static_file(
     send_simple(conn, 404, "404 Not Found", head)
     return
   }
+  let size = file.size() catch {
+    _ => 0L
+  }
   conn.send_response(
     200,
     "OK",
     extra_headers=Map([
       (@http.CaseInsensitiveString("Content-Type"), mime_type_for(file_path)),
+      (@http.CaseInsensitiveString("Content-Length"), size.to_string()),
     ]),
   )
   if !head {
@@ -147,9 +158,45 @@ async fn build_response(
   ctx.state.set("remote_addr", conn.client_addr().to_string())
   app.handle(ctx) catch {
     HttpError(status, message) => error_response(ctx, status, message)
+    HttpErrorPayload(status, message, payload) =>
+      error_response_with_payload(ctx, status, message, payload)
     err => internal_error(ctx, "\{err}")
   }
   ctx.response
+}
+
+///|
+async fn handle_websocket(
+  app : App,
+  request : @http.Request,
+  body : &@io.Reader,
+  conn : @http.ServerConnection,
+  handler : WebSocketHandler,
+  params : Map[String, String],
+) -> Unit {
+  let req = request_from_http(request, body, app.max_body_size) catch {
+    PayloadTooLarge => {
+      send_simple(conn, 413, "413 Payload Too Large", false)
+      return
+    }
+    _ => {
+      send_simple(conn, 500, "500 Internal Server Error", false)
+      return
+    }
+  }
+  let socket = @websocket.from_http_server(request, conn) catch {
+    _ => return
+  }
+  defer conn.close()
+  defer socket.close()
+  let ctx = Context::new(req)
+  ctx.state.set("remote_addr", conn.client_addr().to_string())
+  for name, value in params {
+    ctx.state.set(PARAM_PREFIX + name, value)
+  }
+  handler(ctx, socket) catch {
+    _ => ()
+  }
 }
 
 ///|
@@ -160,12 +207,25 @@ async fn handle_request(
   conn : @http.ServerConnection,
 ) -> Unit {
   let head = request.meth is @http.Head
-  if head || request.meth is @http.Get {
-    match app.static_file_for(request.path) {
-      Some(file_path) => {
-        serve_static_file(conn, file_path, head)
+  if request.meth is @http.Get {
+    match app.resolve_websocket(request.path) {
+      Some((handler, params)) => {
+        handle_websocket(app, request, body, conn, handler, params)
         return
       }
+      None => ()
+    }
+  }
+  if head || request.meth is @http.Get {
+    match app.static_file_for(request.path) {
+      Some(file_path) =>
+        if !app.has_route(
+          request_method_to_string(request.meth),
+          request.path,
+        ) {
+          serve_static_file(conn, file_path, head)
+          return
+        }
       None => ()
     }
   }
