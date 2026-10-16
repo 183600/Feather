@@ -422,6 +422,27 @@ pub fn Router::route_name(self : Router, name : String) -> NamedRoute? {
 }
 
 ///|
+fn encode_wildcard_path(value : String) -> String {
+  let view = value.view()
+  let length = view.length()
+  let builder = StringBuilder(size_hint=length)
+  let mut start = 0
+  let mut i = 0
+  while i < length {
+    if view.unsafe_get(i) == ('/' : UInt16) {
+      builder.write_string(url_encode(view[start:i].to_owned()))
+      builder.write_char('/')
+      start = i + 1
+    }
+    i = i + 1
+  }
+  if start < length {
+    builder.write_string(url_encode(view[start:].to_owned()))
+  }
+  builder.to_string()
+}
+
+///|
 pub fn Router::url_for(
   self : Router,
   name : String,
@@ -453,7 +474,7 @@ pub fn Router::url_for(
       }
     } else if segment.has_prefix("*") {
       match values.get_from_string(segment[1:]) {
-        Some(value) => builder.write_string(value)
+        Some(value) => builder.write_string(encode_wildcard_path(value))
         None => return None
       }
     } else {

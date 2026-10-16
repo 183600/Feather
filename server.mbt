@@ -160,12 +160,14 @@ async fn handle_request(
   conn : @http.ServerConnection,
 ) -> Unit {
   let head = request.meth is @http.Head
-  match app.static_file_for(request.path) {
-    Some(file_path) => {
-      serve_static_file(conn, file_path, head)
-      return
+  if head || request.meth is @http.Get {
+    match app.static_file_for(request.path) {
+      Some(file_path) => {
+        serve_static_file(conn, file_path, head)
+        return
+      }
+      None => ()
     }
-    None => ()
   }
   let response = if app.timeout > 0 {
     @async.with_timeout(app.timeout, () => {
