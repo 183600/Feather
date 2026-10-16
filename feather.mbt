@@ -399,7 +399,7 @@ pub fn Router::add_route(
       is_static = false
       let name = segment[1:].to_owned()
       route_wildcard_name = name
-      route_wildcard_key = PARAM_PREFIX + name
+      route_wildcard_key = if name == "" { "" } else { PARAM_PREFIX + name }
       pattern_kinds.push(2)
       let child = match node.wildcard_child {
         Some(child) => child
