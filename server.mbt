@@ -443,7 +443,11 @@ async fn build_response(
       error_response_with_payload(ctx, status, message, payload)
     err => internal_error(ctx, "\{err}")
   }
-  (ctx.response, ctx.file_response())
+  let file = ctx.file_response()
+  if file is None && app.compress_enabled {
+    compress_response(request, ctx.response, app.compress_min_size)
+  }
+  (ctx.response, file)
 }
 
 ///|

@@ -1,0 +1,343 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "cto-new/feather"
+
+import {
+  "moonbitlang/async/http",
+  "moonbitlang/async/socket",
+  "moonbitlang/async/websocket",
+  "moonbitlang/core/debug",
+  "moonbitlang/core/json",
+}
+
+// Values
+pub const DEFAULT_MAX_BODY_SIZE : Int = 1000
+
+pub const PARAM_PREFIX : String = "param:"
+
+pub fn apply_middleware(Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn compose_middleware(Array[(Context) -> Unit]) -> ((Context) -> Unit raise)?
+
+pub fn create_context() -> Context
+
+pub fn create_feather(Config) -> Feather
+
+pub fn create_router() -> Router
+
+pub fn create_server(Config) -> Config
+
+pub fn error_response(Context, Int, String) -> Unit
+
+pub fn error_response_with_payload(Context, Int, String, Json) -> Unit
+
+pub fn format_http_date(Int64) -> String
+
+pub fn internal_error(Context, String) -> Unit
+
+pub fn json_object(Map[String, String]) -> Json
+
+pub fn method_not_allowed(Context, Array[String]) -> Unit
+
+pub fn middleware_cors(allow_origin? : String, allow_methods? : String, allow_headers? : String, expose_headers? : String, allow_credentials? : Bool, max_age? : Int) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_error_handler() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_logger(log? : (String) -> Unit, with_duration? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_recover() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_request_id(header? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_secure_headers(content_type_options? : String, frame_options? : String, referrer_policy? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn mime_type_for(String) -> String
+
+pub fn multipart_boundary(String) -> String?
+
+pub fn not_found(Context) -> Unit
+
+pub fn parse_byte_range(String, Int64) -> ByteRange
+
+pub fn parse_http_date(String) -> Int64?
+
+pub fn parse_multipart(String, String) -> Array[MultipartPart]?
+
+pub fn parse_urlencoded(String) -> Map[String, String]
+
+pub fn status_text(Int) -> String
+
+pub fn url_decode(String) -> String
+
+pub fn url_encode(String) -> String
+
+// Errors
+pub(all) suberror HttpError {
+  HttpError(Int, String)
+}
+
+pub(all) suberror HttpErrorPayload {
+  HttpErrorPayload(Int, String, Json)
+}
+
+pub suberror PayloadTooLarge
+
+// Types and methods
+pub struct App {
+  router : Router
+  middlewares : Array[((Context) -> Unit raise) -> (Context) -> Unit raise]
+  mut max_body_size : Int
+  mut timeout : Int
+  mut chain : ((Context) -> Unit raise)?
+  static_mounts : Array[StaticMount]
+  mut no_route_handler : ((Context) -> Unit raise)?
+  ws_router : Router
+  ws_handlers : Map[String, async (Context, @websocket.Conn) -> Unit]
+}
+pub fn App::all(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::delete(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::fallback(Self, (Context) -> Unit raise) -> Self
+pub fn App::get(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::group(Self, String) -> RouteGroup
+pub fn App::handle(Self, Context) -> Unit raise
+pub fn App::has_route(Self, String, String) -> Bool
+pub fn App::has_websocket(Self, String) -> Bool
+pub fn App::head(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::max_body_size(Self, Int) -> Self
+pub fn App::new() -> Self
+pub fn App::options(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::patch(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::post(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::put(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::request_timeout(Self, Int) -> Self
+pub fn App::resolve_websocket(Self, String) -> (async (Context, @websocket.Conn) -> Unit, Map[String, String])?
+pub fn App::respond(Self, Request) -> Response
+pub fn App::route(Self, String, String, (Context) -> Unit raise) -> Self
+pub fn App::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
+pub async fn App::serve(Self, @socket.Addr) -> Unit
+pub async fn App::serve_with(Self, @http.Server, max_connections? : Int) -> Unit
+pub fn App::static_cache_control_for(Self, String) -> String
+pub fn App::static_file_for(Self, String) -> String?
+pub fn App::static_files(Self, String, String, index? : String, max_age? : Int) -> Self
+pub fn App::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
+pub fn App::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
+pub fn App::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
+
+pub(all) enum ByteRange {
+  ByteRangeFull
+  ByteRangeSpec(Int64, Int64)
+  ByteRangeInvalid
+}
+
+pub(all) struct Config {
+  host : String
+  port : Int
+  timeout : Int
+}
+
+pub(all) struct Context {
+  request : Request
+  response : Response
+  state : Map[String, String]
+  json_state : Map[String, Json]
+  cleanups : Array[() -> Unit]
+  mut file : FileResponse?
+}
+pub fn Context::add_cookie(Self, String, String, path? : String, max_age? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> Unit
+pub fn Context::bearer_token(Self) -> String?
+pub fn Context::bytes(Self, Int, Bytes, content_type? : String) -> Unit
+pub fn Context::clear_cookie(Self, String, path? : String) -> Unit
+pub fn Context::cookie(Self, String) -> String?
+pub fn Context::cookies(Self) -> Map[String, String]
+pub fn Context::defer_cleanup(Self, () -> Unit) -> Unit
+pub fn Context::fail(Self, Int, String) -> Unit raise HttpError
+pub fn Context::fail_with(Self, Int, String, Json) -> Unit raise HttpErrorPayload
+pub fn Context::file(Self, Int, String, content_type? : String, download_name? : String) -> Unit
+pub fn Context::file_response(Self) -> FileResponse?
+pub fn Context::form(Self, String) -> String
+pub fn Context::form_map(Self) -> Map[String, String]
+pub fn Context::forwarded_ip(Self) -> String
+pub fn Context::fresh(Self, String) -> Bool
+pub fn Context::get(Self, String) -> String
+pub fn Context::get_json(Self, String) -> Json?
+pub fn Context::get_method(Self) -> String
+pub fn Context::get_path(Self) -> String
+pub fn Context::header(Self, String) -> String
+pub fn Context::html(Self, Int, String) -> Unit
+pub fn Context::ip(Self) -> String
+pub fn Context::json(Self, Int, Map[String, String]) -> Unit
+pub fn[T : @json.FromJson] Context::json_as(Self) -> T raise HttpError
+pub fn Context::json_body(Self) -> Json raise HttpError
+pub fn[T : ToJson] Context::json_of(Self, Int, T) -> Unit
+pub fn Context::json_value(Self, Int, Json) -> Unit
+pub fn Context::multipart(Self) -> Array[MultipartPart]
+pub fn Context::multipart_file(Self, String) -> MultipartPart?
+pub fn Context::multipart_value(Self, String) -> String
+pub fn Context::new(Request) -> Self
+pub fn Context::no_content(Self) -> Unit
+pub fn Context::not_modified(Self, etag? : String, last_modified? : String) -> Unit
+pub fn Context::param(Self, String) -> String
+pub fn Context::param_bool(Self, String) -> Bool?
+pub fn Context::param_int(Self, String) -> Int?
+pub fn Context::params(Self) -> Map[String, String]
+pub fn Context::queries(Self) -> Map[String, String]
+pub fn Context::query(Self, String) -> String
+pub fn Context::query_bool(Self, String) -> Bool?
+pub fn Context::query_int(Self, String) -> Int?
+pub fn Context::query_values(Self, String) -> Array[String]
+pub fn Context::redirect(Self, Int, String) -> Unit
+pub fn Context::request_id(Self) -> String
+pub fn Context::set(Self, String, String) -> Unit
+pub fn Context::set_cookie(Self, String, String, path? : String, max_age? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> Unit
+pub fn Context::set_header(Self, String, String) -> Unit
+pub fn Context::set_json(Self, String, Json) -> Unit
+pub fn Context::status(Self, Int) -> Unit
+pub fn Context::text(Self, Int, String) -> Unit
+
+pub(all) struct Feather {
+  config : Config
+  app : App
+}
+pub fn Feather::all(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::delete(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::fallback(Self, (Context) -> Unit raise) -> Self
+pub fn Feather::get(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::group(Self, String) -> RouteGroup
+pub fn Feather::handle(Self, Request) -> Response
+pub fn Feather::head(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::listen_address(Self) -> String
+pub fn Feather::max_body_size(Self, Int) -> Self
+pub fn Feather::options(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::patch(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::post(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::put(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::request_timeout(Self, Int) -> Self
+pub fn Feather::route(Self, String, String, (Context) -> Unit raise) -> Self
+pub fn Feather::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
+pub async fn Feather::serve(Self) -> Unit
+pub async fn Feather::serve_with(Self, @http.Server) -> Unit
+pub fn Feather::static_files(Self, String, String, index? : String, max_age? : Int) -> Self
+pub fn Feather::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
+pub fn Feather::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
+pub fn Feather::validate_body_size(Self, String) -> Bool
+pub fn Feather::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
+
+pub(all) struct FileResponse {
+  path : String
+  content_type : String
+}
+
+pub(all) struct MultipartPart {
+  name : String
+  filename : String
+  content_type : String
+  headers : Map[String, String]
+  data : String
+}
+pub fn MultipartPart::equal(Self, Self) -> Bool
+pub fn MultipartPart::not_equal(Self, Self) -> Bool
+pub fn MultipartPart::output(Self, &Logger) -> Unit
+pub fn MultipartPart::to_repr(Self) -> @debug.Repr
+pub fn MultipartPart::to_string(Self) -> String
+pub impl Eq for MultipartPart
+pub impl Show for MultipartPart
+pub impl @debug.Debug for MultipartPart
+
+pub(all) struct NamedRoute {
+  method : String
+  path : String
+}
+
+pub(all) struct Request {
+  method : String
+  path : String
+  headers : Map[String, String]
+  body : String
+}
+
+pub(all) struct Response {
+  mut status : Int
+  headers : Map[String, String]
+  mut body : String
+  mut data : Bytes?
+  cookies : Array[@http.Cookie]
+}
+
+pub(all) struct Route {
+  path : String
+  method : String
+  params : Map[String, String]
+  wildcard : String
+  wildcard_name : String
+  handler : ((Context) -> Unit raise)?
+}
+
+pub struct RouteGroup {
+  router : Router
+  prefix : String
+  middlewares : Array[((Context) -> Unit raise) -> (Context) -> Unit raise]
+}
+pub fn RouteGroup::all(Self, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::delete(Self, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::get(Self, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::group(Self, String) -> Self
+pub fn RouteGroup::head(Self, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::options(Self, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::patch(Self, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::post(Self, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::put(Self, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::route(Self, String, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
+pub fn RouteGroup::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
+
+pub struct RouteNode {
+  mut handler : ((Context) -> Unit raise)?
+  mut route_path : String
+  mut static_children : Map[String, RouteNode]?
+  mut param_child : RouteNode?
+  mut wildcard_child : RouteNode?
+  mut has_dynamic : Bool
+  mut param_names : Array[String]
+  mut param_keys : Array[String]
+  mut pattern_kinds : Array[Int]
+  mut route_wildcard_name : String
+  mut route_wildcard_key : String
+  mut exact_cache : Map[String, RouteNode]?
+}
+
+pub(all) enum RouteOutcome {
+  RouteFound(Route)
+  RouteMethodNotAllowed(Array[String])
+  RouteNotFound
+}
+
+pub(all) struct Router {
+  routes : Array[Route]
+  trees : Map[String, RouteNode]
+  named : Map[String, NamedRoute]
+}
+pub fn Router::add_named_route(Self, String, String, String, (Context) -> Unit raise) -> Unit
+pub fn Router::add_route(Self, String, String, (Context) -> Unit raise) -> Unit
+pub fn Router::dispatch(Self, Context) -> Unit raise
+pub fn Router::dispatch_with(Self, Context, ((Context) -> Unit raise)?) -> Unit raise
+pub fn Router::group(Self, String) -> RouteGroup
+pub fn Router::matching(Self, String, String) -> Route?
+pub fn Router::route(Self, String, String) -> RouteOutcome
+pub fn Router::route_name(Self, String) -> NamedRoute?
+pub fn Router::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
+
+pub(all) struct StaticMount {
+  url_prefix : String
+  root : String
+  index : String
+  max_age : Int
+}
+
+// Type aliases
+pub type Handler = (Context) -> Unit raise
+
+pub type Middleware = ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub type WebSocketHandler = async (Context, @websocket.Conn) -> Unit
+
+// Traits

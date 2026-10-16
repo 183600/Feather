@@ -1100,6 +1100,60 @@ pub fn Context::header(self : Context, key : String) -> String {
 }
 
 ///|
+/// The host name from the `Host` header, without the port.
+pub fn Context::host(self : Context) -> String {
+  let authority = trim_ascii_space(self.header("Host").view()).to_owned()
+  if authority == "" {
+    return ""
+  }
+  let view = authority.view()
+  if view.unsafe_get(0) == ('[' : UInt16) {
+    match view.find("]") {
+      Some(index) => return view[:index + 1].to_owned()
+      None => return authority
+    }
+  }
+  match view.find(":") {
+    Some(index) => view[:index].to_owned()
+    None => authority
+  }
+}
+
+///|
+/// The URL scheme of the request, honoring `X-Forwarded-Proto` when present.
+pub fn Context::protocol(self : Context) -> String {
+  let forwarded = trim_ascii_space(self.header("X-Forwarded-Proto").view())
+  if forwarded != "" {
+    let value = match forwarded.find(",") {
+      Some(index) => trim_ascii_space(forwarded[:index])
+      None => forwarded
+    }
+    if !value.is_empty() {
+      return value.to_owned()
+    }
+  }
+  "http"
+}
+
+///|
+/// Whether the request is considered to arrive over HTTPS.
+pub fn Context::is_secure(self : Context) -> Bool {
+  self.protocol().view().equal_ignore_ascii_case("https".view())
+}
+
+///|
+/// The full URL of the request, for example `https://example.com/users/1?q=x`.
+pub fn Context::full_url(self : Context) -> String {
+  let scheme = self.protocol()
+  let authority = trim_ascii_space(self.header("Host").view()).to_owned()
+  let host = if authority != "" { authority } else { self.host() }
+  if host == "" {
+    return self.request.path
+  }
+  scheme + "://" + host + self.request.path
+}
+
+///|
 pub fn Context::ip(self : Context) -> String {
   match self.state.get("remote_addr") {
     Some(value) => value
@@ -1319,6 +1373,27 @@ pub fn Context::bearer_token(self : Context) -> String? {
     Some(trim_ascii_space(view[7:]).to_owned())
   } else {
     None
+  }
+}
+
+///|
+/// Parse an `Authorization: Basic ...` header into a `(username, password)`
+/// pair. Returns `None` when the header is missing or malformed.
+pub fn Context::basic_auth(self : Context) -> (String, String)? {
+  let authorization = self.header("Authorization")
+  let view = authorization.view()
+  if !starts_with_ignore_ascii_case(view, "Basic ".view()) {
+    return None
+  }
+  let encoded = trim_ascii_space(view[6:])
+  let decoded = match base64_decode(encoded.to_owned()) {
+    Some(decoded) => @utf8.decode_lossy(decoded)
+    None => return None
+  }
+  match decoded.find(":") {
+    Some(index) =>
+      Some((decoded[:index].to_owned(), decoded[index + 1:].to_owned()))
+    None => Some((decoded, ""))
   }
 }
 
@@ -1725,6 +1800,133 @@ pub fn url_encode(source : String) -> String {
     i = i + 1
   }
   builder.to_string()
+}
+
+///|
+let base64_alphabet : String = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+///|
+fn base64_value(value : UInt16) -> Int {
+  let code = value.to_int()
+  if code >= 65 && code <= 90 {
+    code - 65
+  } else if code >= 97 && code <= 122 {
+    code - 71
+  } else if code >= 48 && code <= 57 {
+    code + 4
+  } else if code == 43 {
+    62
+  } else if code == 47 {
+    63
+  } else {
+    -1
+  }
+}
+
+///|
+/// Encode bytes with the standard base64 alphabet, including padding.
+pub fn base64_encode(data : Bytes) -> String {
+  let length = data.length()
+  if length == 0 {
+    return ""
+  }
+  let builder = StringBuilder(size_hint=(length + 2) / 3 * 4)
+  let mut i = 0
+  while i + 3 <= length {
+    let value = (data[i].to_int() << 16) |
+      (data[i + 1].to_int() << 8) |
+      data[i + 2].to_int()
+    builder.write_char(base64_alphabet[(value >> 18) & 63].unsafe_to_char())
+    builder.write_char(base64_alphabet[(value >> 12) & 63].unsafe_to_char())
+    builder.write_char(base64_alphabet[(value >> 6) & 63].unsafe_to_char())
+    builder.write_char(base64_alphabet[value & 63].unsafe_to_char())
+    i = i + 3
+  }
+  let remaining = length - i
+  if remaining == 1 {
+    let value = data[i].to_int() << 16
+    builder.write_char(base64_alphabet[(value >> 18) & 63].unsafe_to_char())
+    builder.write_char(base64_alphabet[(value >> 12) & 63].unsafe_to_char())
+    builder.write_string("==")
+  } else if remaining == 2 {
+    let value = (data[i].to_int() << 16) | (data[i + 1].to_int() << 8)
+    builder.write_char(base64_alphabet[(value >> 18) & 63].unsafe_to_char())
+    builder.write_char(base64_alphabet[(value >> 12) & 63].unsafe_to_char())
+    builder.write_char(base64_alphabet[(value >> 6) & 63].unsafe_to_char())
+    builder.write_char('=')
+  }
+  builder.to_string()
+}
+
+///|
+/// Decode standard base64 text. Returns `None` for malformed input.
+///
+/// Padding may be omitted, but a stray `=` in the middle of the text is
+/// rejected.
+pub fn base64_decode(text : String) -> Bytes? {
+  let view = text.view()
+  let length = view.length()
+  if length == 0 {
+    return Some(b"")
+  }
+  if length % 4 == 1 {
+    return None
+  }
+  let buffer = @buffer.Buffer::Buffer(size_hint=(length / 4 + 1) * 3)
+  let mut i = 0
+  while i < length {
+    let remaining = length - i
+    let first = base64_value(view.unsafe_get(i))
+    let second = if remaining >= 2 {
+      base64_value(view.unsafe_get(i + 1))
+    } else {
+      -1
+    }
+    if first < 0 || second < 0 {
+      return None
+    }
+    buffer.write_byte(((first << 2) | (second >> 4)).to_byte())
+    if remaining <= 2 {
+      return Some(buffer.to_bytes())
+    }
+    let third_raw = view.unsafe_get(i + 2)
+    if remaining == 3 {
+      if third_raw == ('=' : UInt16) {
+        return None
+      }
+      let third = base64_value(third_raw)
+      if third < 0 {
+        return None
+      }
+      buffer.write_byte((((second & 15) << 4) | (third >> 2)).to_byte())
+      return Some(buffer.to_bytes())
+    }
+    if third_raw == ('=' : UInt16) {
+      if view.unsafe_get(i + 3) != ('=' : UInt16) || remaining != 4 {
+        return None
+      }
+      return Some(buffer.to_bytes())
+    }
+    let third = base64_value(third_raw)
+    if third < 0 {
+      return None
+    }
+    buffer.write_byte((((second & 15) << 4) | (third >> 2)).to_byte())
+    let fourth_raw = view.unsafe_get(i + 3)
+    if fourth_raw == ('=' : UInt16) {
+      if remaining != 4 {
+        return None
+      }
+      return Some(buffer.to_bytes())
+    }
+    let fourth = base64_value(fourth_raw)
+    if fourth < 0 {
+      return None
+    }
+    buffer.write_byte((((third & 3) << 6) | fourth).to_byte())
+    i = i + 4
+  }
+  Some(buffer.to_bytes())
 }
 
 ///|
@@ -3073,6 +3275,8 @@ pub struct App {
   mut no_route_handler : Handler?
   ws_router : Router
   ws_handlers : Map[String, WebSocketHandler]
+  mut compress_enabled : Bool
+  mut compress_min_size : Int32
 }
 
 ///|
@@ -3087,6 +3291,8 @@ pub fn App::new() -> App {
     no_route_handler: None,
     ws_router: create_router(),
     ws_handlers: Map([]),
+    compress_enabled: false,
+    compress_min_size: 1024,
   }
 }
 
@@ -3306,6 +3512,51 @@ pub fn App::static_files(
     index,
     max_age,
   })
+  self
+}
+
+///|
+/// Mount another application under `prefix`, keeping its routes, middleware,
+/// static mounts, named routes and websocket handlers.
+///
+/// The mounted application's fallback, request timeout, body limit and
+/// compression settings are not carried over; the parent application governs
+/// those. Returns the parent so calls can be chained.
+pub fn App::mount(self : App, prefix : String, child : App) -> App {
+  let base = normalize_prefix(prefix)
+  for route in child.router.routes {
+    match route.handler {
+      Some(handler) => {
+        let wrapped = apply_middleware(child.middlewares, handler)
+        self.router.add_route(route.method, join_paths(base, route.path), wrapped)
+      }
+      None => ()
+    }
+  }
+  for name, named in child.router.named {
+    self.router.named.set(name, {
+      method: named.method,
+      path: join_paths(base, named.path),
+    })
+  }
+  for mount in child.static_mounts {
+    self.static_mounts.push({
+      url_prefix: if mount.url_prefix == "" {
+        base
+      } else {
+        join_paths(base, mount.url_prefix)
+      },
+      root: mount.root,
+      index: mount.index,
+      max_age: mount.max_age,
+    })
+  }
+  for path, handler in child.ws_handlers {
+    let mounted = join_paths(base, path)
+    self.ws_router.add_route("GET", mounted, fn(_ctx) { () })
+    self.ws_handlers.set(mounted, handler)
+  }
+  self.chain = None
   self
 }
 
@@ -3600,6 +3851,94 @@ pub fn middleware_cors(
 }
 
 ///|
+fn basic_auth_challenge(realm : String) -> String {
+  let clean = strip_control_characters(realm)
+  let view = clean.view()
+  let length = view.length()
+  let builder = StringBuilder(size_hint=length + 24)
+  builder.write_string("Basic realm=\"")
+  let mut i = 0
+  while i < length {
+    let code = view.unsafe_get(i).to_int()
+    if code == 34 || code == 92 {
+      builder.write_char('\\')
+    }
+    builder.write_char(code.unsafe_to_char())
+    i = i + 1
+  }
+  builder.write_char('"')
+  builder.to_string()
+}
+
+///|
+fn constant_time_equal(left : String, right : String) -> Bool {
+  let left_bytes = @utf8.encode(left)
+  let right_bytes = @utf8.encode(right)
+  let mut difference = left_bytes.length() ^ right_bytes.length()
+  let length = if left_bytes.length() > right_bytes.length() {
+    left_bytes.length()
+  } else {
+    right_bytes.length()
+  }
+  for i = 0; i < length; i = i + 1 {
+    let a = if i < left_bytes.length() { left_bytes[i].to_int() } else { 0 }
+    let b = if i < right_bytes.length() { right_bytes[i].to_int() } else { 0 }
+    difference = difference | (a ^ b)
+  }
+  difference == 0
+}
+
+///|
+fn basic_auth_middleware(
+  check : (String, String) -> Bool,
+  realm : String,
+) -> Middleware {
+  fn(next) {
+    fn(ctx) raise {
+      let authorized = match ctx.basic_auth() {
+        Some((username, password)) => check(username, password)
+        None => false
+      }
+      if authorized {
+        next(ctx)
+      } else {
+        ctx.file = None
+        ctx.response.status = 401
+        ctx.response.headers.set("WWW-Authenticate", basic_auth_challenge(realm))
+        ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
+        ctx.response.data = None
+        ctx.response.body = "401 Unauthorized"
+      }
+    }
+  }
+}
+
+///|
+/// Middleware that challenges requests with HTTP Basic authentication and
+/// accepts credentials listed in `accounts`.
+pub fn middleware_basic_auth(
+  accounts : Map[String, String],
+  realm~ : String = "Restricted",
+) -> Middleware {
+  basic_auth_middleware(fn(username, password) {
+    match accounts.get(username) {
+      Some(expected) => constant_time_equal(password, expected)
+      None => false
+    }
+  }, realm)
+}
+
+///|
+/// Middleware that challenges requests with HTTP Basic authentication and
+/// accepts credentials approved by `check`.
+pub fn middleware_basic_auth_with(
+  check : (String, String) -> Bool,
+  realm~ : String = "Restricted",
+) -> Middleware {
+  basic_auth_middleware(check, realm)
+}
+
+///|
 pub(all) struct Feather {
   config : Config
   app : App
@@ -3619,6 +3958,8 @@ pub fn create_feather(config : Config) -> Feather {
       no_route_handler: None,
       ws_router: create_router(),
       ws_handlers: Map([]),
+      compress_enabled: false,
+      compress_min_size: 1024,
     },
   }
 }
@@ -3736,6 +4077,12 @@ pub fn Feather::websocket(
   handler : WebSocketHandler,
 ) -> Feather {
   ignore(self.app.websocket(path, handler))
+  self
+}
+
+///|
+pub fn Feather::mount(self : Feather, prefix : String, child : Feather) -> Feather {
+  ignore(self.app.mount(prefix, child.app))
   self
 }
 
