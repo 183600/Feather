@@ -48,6 +48,7 @@ pub struct RouteNode {
   mut param_name : String
   mut wildcard_child : RouteNode?
   mut wildcard_name : String
+  mut has_dynamic : Bool
 }
 
 pub(all) struct Router {
@@ -69,11 +70,12 @@ fn RouteNode::new() -> RouteNode {
   {
     handler: None,
     route_path: "",
-    static_children: Map([]),
+    static_children: Map([], capacity=2),
     param_child: None,
     param_name: "",
     wildcard_child: None,
     wildcard_name: "",
+    has_dynamic: false,
   }
 }
 
@@ -84,8 +86,8 @@ pub fn create_router() -> Router {
 pub fn Context::new(request : Request) -> Context {
   {
     request,
-    response: { status: 200, headers: Map([]), body: "" },
-    state: Map([]),
+    response: { status: 200, headers: Map([], capacity=4), body: "" },
+    state: Map([], capacity=4),
   }
 }
 
@@ -112,10 +114,10 @@ pub fn apply_middleware(
   handler
 }
 
-fn split_query(path : String) -> (String, String) {
+fn clean_path_view(path : String) -> StringView {
   match path.find("?") {
-    Some(index) => (path[:index].to_owned(), path[index + 1:].to_owned())
-    None => (path, "")
+    Some(index) => path[:index]
+    None => path.view()
   }
 }
 
@@ -130,8 +132,8 @@ fn join_segments(segments : Array[StringView], start : Int) -> String {
   builder.to_string()
 }
 
-fn split_segments(path : String) -> Array[StringView] {
-  let segments : Array[StringView] = []
+fn split_segments(path : StringView) -> Array[StringView] {
+  let segments : Array[StringView] = Array(capacity=4)
   for segment in path.split("/") {
     if !(segment.is_empty()) {
       segments.push(segment)
@@ -205,13 +207,33 @@ fn match_node(
   }
 }
 
+fn match_static_node(
+  node : RouteNode,
+  segments : Array[StringView],
+  index : Int,
+) -> RouteNode? {
+  if index == segments.length() {
+    if node.handler is Some(_) {
+      return Some(node)
+    }
+    return None
+  }
+  match node.static_children.get_from_string(segments[index]) {
+    Some(child) => match_static_node(child, segments, index + 1)
+    None => None
+  }
+}
+
 pub fn Router::add_route(
   self : Router,
   meth : String,
   path : String,
   handler : Handler,
 ) -> Unit {
-  let (clean_path, _) = split_query(path)
+  let clean_path = match path.find("?") {
+    Some(index) => path[:index].to_owned()
+    None => path
+  }
   let method_key = meth
   let mut node = match self.trees.get(method_key) {
     Some(root) => root
@@ -221,6 +243,7 @@ pub fn Router::add_route(
       root
     }
   }
+  let ancestors : Array[RouteNode] = [node]
   for segment in split_segments(clean_path) {
     if segment.has_prefix(":") {
       let child = match node.param_child {
@@ -232,6 +255,9 @@ pub fn Router::add_route(
         }
       }
       node.param_name = segment[1:].to_owned()
+      for ancestor in ancestors {
+        ancestor.has_dynamic = true
+      }
       node = child
     } else if segment.has_prefix("*") {
       let child = match node.wildcard_child {
@@ -243,6 +269,9 @@ pub fn Router::add_route(
         }
       }
       node.wildcard_name = segment[1:].to_owned()
+      for ancestor in ancestors {
+        ancestor.has_dynamic = true
+      }
       node = child
       break
     } else {
@@ -257,6 +286,7 @@ pub fn Router::add_route(
       }
       node = child
     }
+    ancestors.push(node)
   }
   node.handler = Some(handler)
   node.route_path = clean_path
@@ -270,11 +300,17 @@ pub fn Router::add_route(
   })
 }
 
-fn Router::allowed_methods(self : Router, path : String) -> Array[String] {
+fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
   let allowed : Array[String] = []
+  let segments = split_segments(path)
   for meth, root in self.trees {
-    let captures : Array[(String, String)] = []
-    if match_node(root, split_segments(path), 0, captures) is Some(_) {
+    let matched = if root.has_dynamic {
+      let captures : Array[(String, String)] = []
+      match_node(root, segments, 0, captures) is Some(_)
+    } else {
+      match_static_node(root, segments, 0) is Some(_)
+    }
+    if matched {
       allowed.push(meth)
     }
   }
@@ -286,7 +322,7 @@ pub fn Router::route(
   meth : String,
   path : String,
 ) -> RouteOutcome {
-  let (clean_path, _) = split_query(path)
+  let clean_path = clean_path_view(path)
   let method_key = meth
   let root = match self.trees.get(method_key) {
     Some(root) => Some(root)
@@ -299,33 +335,71 @@ pub fn Router::route(
   }
   match root {
     Some(root) => {
-      let captures : Array[(String, String)] = []
-      match match_node(root, split_segments(clean_path), 0, captures) {
-        Some(result) => {
-          let params : Map[String, String] = Map([])
-          for capture in captures {
-            params.set(capture.0, capture.1)
-          }
-          if result.wildcard_name != "" {
-            params.set(result.wildcard_name, result.wildcard_value)
-          }
-          RouteFound({
-            path: result.route_path,
-            method: method_key,
-            params,
-            wildcard: result.wildcard_value,
-            wildcard_name: result.wildcard_name,
-            handler: result.handler,
-          })
+      let segments = split_segments(clean_path)
+      if !(root.has_dynamic) {
+        match match_static_node(root, segments, 0) {
+          Some(node) =>
+            found_route(
+              node.route_path,
+              method_key,
+              Map([], capacity=0),
+              "",
+              "",
+              node.handler,
+            )
+          None => self.dispatch_miss(clean_path)
         }
-        None => self.dispatch_miss(clean_path)
+      } else {
+        let captures : Array[(String, String)] = []
+        match match_node(root, segments, 0, captures) {
+          Some(result) => {
+            let extra = if result.wildcard_name != "" { 1 } else { 0 }
+            let params : Map[String, String] = Map(
+              [],
+              capacity=captures.length() + extra,
+            )
+            for capture in captures {
+              params.set(capture.0, capture.1)
+            }
+            if result.wildcard_name != "" {
+              params.set(result.wildcard_name, result.wildcard_value)
+            }
+            found_route(
+              result.route_path,
+              method_key,
+              params,
+              result.wildcard_value,
+              result.wildcard_name,
+              result.handler,
+            )
+          }
+          None => self.dispatch_miss(clean_path)
+        }
       }
     }
     None => self.dispatch_miss(clean_path)
   }
 }
 
-fn Router::dispatch_miss(self : Router, path : String) -> RouteOutcome {
+fn found_route(
+  route_path : String,
+  method_key : String,
+  params : Map[String, String],
+  wildcard : String,
+  wildcard_name : String,
+  handler : Handler?,
+) -> RouteOutcome {
+  RouteFound({
+    path: route_path,
+    method: method_key,
+    params,
+    wildcard,
+    wildcard_name,
+    handler,
+  })
+}
+
+fn Router::dispatch_miss(self : Router, path : StringView) -> RouteOutcome {
   let allowed = self.allowed_methods(path)
   if allowed.length() > 0 {
     RouteMethodNotAllowed(allowed)
@@ -343,7 +417,7 @@ pub fn Router::matching(
     return Some({
       path,
       method: meth,
-      params: Map([]),
+      params: Map([], capacity=0),
       wildcard: "",
       wildcard_name: "",
       handler: None,
@@ -430,7 +504,7 @@ pub fn Context::html(self : Context, status : Int, body : String) -> Unit {
 }
 
 pub fn json_object(data : Map[String, String]) -> Json {
-  let object : Map[String, Json] = Map([])
+  let object : Map[String, Json] = Map([], capacity=data.length())
   for key, value in data {
     object.set(key, Json::string(value))
   }
@@ -488,9 +562,12 @@ fn hex_digit(byte : Byte) -> Int {
   }
 }
 
-pub fn url_decode(source : String) -> String {
+fn decode_url(source : StringView) -> String {
+  if !(source.contains("%")) && !(source.contains("+")) {
+    return source.to_owned()
+  }
   let bytes = @utf8.encode(source)
-  let buffer = @buffer.Buffer::Buffer()
+  let buffer = @buffer.Buffer::Buffer(size_hint=bytes.length())
   let mut i = 0
   while i < bytes.length() {
     let byte = bytes[i]
@@ -513,28 +590,59 @@ pub fn url_decode(source : String) -> String {
   @utf8.decode_lossy(buffer.to_bytes())
 }
 
-pub fn parse_urlencoded(source : String) -> Map[String, String] {
-  let result : Map[String, String] = Map([])
+pub fn url_decode(source : String) -> String {
+  decode_url(source)
+}
+
+fn parse_urlencoded_view(source : StringView) -> Map[String, String] {
+  let result : Map[String, String] = Map([], capacity=4)
   for pair in source.split("&") {
     if pair.is_empty() {
       continue
     }
     match pair.find("=") {
       Some(index) => {
-        let key = url_decode(pair[:index].to_owned())
-        let value = url_decode(pair[index + 1:].to_owned())
+        let key = decode_url(pair[:index])
+        let value = decode_url(pair[index + 1:])
         result.set(key, value)
       }
-      None => result.set(url_decode(pair.to_owned()), "")
+      None => result.set(decode_url(pair), "")
     }
   }
   result
 }
 
-pub fn Context::query(self : Context, name : String) -> String {
-  let (_, query) = split_query(self.request.path)
-  match parse_urlencoded(query).get(name) {
+pub fn parse_urlencoded(source : String) -> Map[String, String] {
+  parse_urlencoded_view(source)
+}
+
+fn query_param(source : StringView, name : String) -> String {
+  let mut found : String? = None
+  for pair in source.split("&") {
+    if pair.is_empty() {
+      continue
+    }
+    match pair.find("=") {
+      Some(index) =>
+        if decode_url(pair[:index]) == name {
+          found = Some(decode_url(pair[index + 1:]))
+        }
+      None =>
+        if decode_url(pair) == name {
+          found = Some("")
+        }
+    }
+  }
+  match found {
     Some(value) => value
+    None => ""
+  }
+}
+
+pub fn Context::query(self : Context, name : String) -> String {
+  let path = self.request.path
+  match path.find("?") {
+    Some(index) => query_param(path[index + 1:], name)
     None => ""
   }
 }
@@ -544,10 +652,7 @@ pub fn Context::form(self : Context, name : String) -> String {
   if !(content_type.has_prefix("application/x-www-form-urlencoded")) {
     return ""
   }
-  match parse_urlencoded(self.request.body).get(name) {
-    Some(value) => value
-    None => ""
-  }
+  query_param(self.request.body.view(), name)
 }
 
 pub fn status_text(code : Int) -> String {
@@ -592,6 +697,7 @@ pub struct App {
   middlewares : Array[Middleware]
   mut max_body_size : Int
   mut timeout : Int
+  mut chain : Handler?
 }
 
 pub fn App::new() -> App {
@@ -600,11 +706,13 @@ pub fn App::new() -> App {
     middlewares: [],
     max_body_size: DEFAULT_MAX_BODY_SIZE,
     timeout: 0,
+    chain: None,
   }
 }
 
 pub fn App::use(self : App, middleware : Middleware) -> App {
   self.middlewares.push(middleware)
+  self.chain = None
   self
 }
 
@@ -652,8 +760,16 @@ pub fn App::request_timeout(self : App, millis : Int) -> App {
 }
 
 pub fn App::handle(self : App, ctx : Context) -> Unit raise {
-  let terminal : Handler = fn(ctx) raise { self.router.dispatch(ctx) }
-  apply_middleware(self.middlewares, terminal)(ctx)
+  match self.chain {
+    Some(chain) => chain(ctx)
+    None => {
+      let router = self.router
+      let terminal : Handler = fn(ctx) raise { router.dispatch(ctx) }
+      let chain = apply_middleware(self.middlewares, terminal)
+      self.chain = Some(chain)
+      chain(ctx)
+    }
+  }
 }
 
 pub fn App::respond(self : App, request : Request) -> Response {
@@ -714,6 +830,7 @@ pub fn create_feather(config : Config) -> Feather {
       middlewares: [],
       max_body_size: DEFAULT_MAX_BODY_SIZE,
       timeout: config.timeout,
+      chain: None,
     },
   }
 }

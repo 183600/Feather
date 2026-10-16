@@ -1,7 +1,19 @@
 pub suberror PayloadTooLarge
 
+fn bytes_are_ascii(bytes : BytesView) -> Bool {
+  let mut i = 0
+  let len = bytes.length()
+  while i < len {
+    if bytes[i].to_int() >= 128 {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
 async fn read_body(reader : &@io.Reader, limit : Int) -> String raise {
-  let builder = StringBuilder()
+  let buffer = @buffer.Buffer::Buffer(size_hint=limit.min(4096).max(0))
   let mut total = 0
   let mut done = false
   while !(done) {
@@ -12,11 +24,15 @@ async fn read_body(reader : &@io.Reader, limit : Int) -> String raise {
         if total > limit {
           raise PayloadTooLarge
         }
-        builder.write_string(@utf8.decode_lossy(chunk))
+        if bytes_are_ascii(chunk) {
+          buffer.write_bytes(chunk)
+        } else {
+          buffer.write_string_utf8(@utf8.decode_lossy(chunk))
+        }
       }
     }
   }
-  builder.to_string()
+  @utf8.decode_lossy(buffer.to_bytes())
 }
 
 fn request_method_to_string(meth : @http.RequestMethod) -> String {
@@ -38,7 +54,10 @@ async fn request_from_http(
   body : &@io.Reader,
   max_body_size : Int,
 ) -> Request raise {
-  let headers : Map[String, String] = Map([])
+  let headers : Map[String, String] = Map(
+    [],
+    capacity=request.headers.length(),
+  )
   for name, value in request.headers {
     headers.set(name.to_string(), value)
   }
@@ -55,7 +74,7 @@ async fn send_response(
   response : Response,
   head : Bool,
 ) -> Unit {
-  let headers : @http.Headers = Map([])
+  let headers : @http.Headers = Map([], capacity=response.headers.length())
   for name, value in response.headers {
     headers.set(@http.CaseInsensitiveString(name), value)
   }
