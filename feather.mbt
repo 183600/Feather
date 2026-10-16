@@ -213,10 +213,15 @@ fn skip_slashes(path : StringView, pos : Int32) -> Int32 {
 
 ///|
 fn segment_end(path : StringView, start : Int32) -> Int32 {
-  match path[start:].find("/") {
-    Some(offset) => start + offset
-    None => path.length()
+  let length = path.length()
+  let mut i = start
+  while i < length {
+    if path.unsafe_get(i) == ('/' : UInt16) {
+      return i
+    }
+    i = i + 1
   }
+  length
 }
 
 ///|
@@ -962,13 +967,13 @@ pub fn Context::forwarded_ip(self : Context) -> String {
   let forwarded = self.header("X-Forwarded-For")
   if forwarded != "" {
     return match forwarded.find(",") {
-      Some(index) => forwarded[:index].trim().to_owned()
-      None => forwarded.trim().to_owned()
+      Some(index) => trim_ascii_space(forwarded[:index]).to_owned()
+      None => trim_ascii_space(forwarded).to_owned()
     }
   }
   let real_ip = self.header("X-Real-IP")
   if real_ip != "" {
-    return real_ip.trim().to_owned()
+    return trim_ascii_space(real_ip.view()).to_owned()
   }
   self.ip()
 }
@@ -976,20 +981,30 @@ pub fn Context::forwarded_ip(self : Context) -> String {
 ///|
 pub fn Context::cookies(self : Context) -> Map[String, String] {
   let cookies : Map[String, String] = Map([], capacity=4)
-  for pair in self.header("Cookie").view().split(";") {
-    let pair = pair.trim()
-    if pair.is_empty() {
-      continue
+  let header = self.header("Cookie").view()
+  let length = header.length()
+  let mut pos = 0
+  while pos <= length {
+    let mut end = pos
+    while end < length && header.unsafe_get(end) != (';' : UInt16) {
+      end = end + 1
     }
-    match pair.find("=") {
-      Some(index) => {
-        let name = pair[:index].trim().to_owned()
-        if name != "" {
-          cookies.set(name, pair[index + 1:].to_owned())
+    let pair = trim_ascii_space(header[pos:end])
+    if !pair.is_empty() {
+      match pair.find("=") {
+        Some(index) => {
+          let name = trim_ascii_space(pair[:index]).to_owned()
+          if name != "" {
+            cookies.set(name, pair[index + 1:].to_owned())
+          }
         }
+        None => ()
       }
-      None => ()
     }
+    if end >= length {
+      break
+    }
+    pos = end + 1
   }
   cookies
 }
@@ -1111,7 +1126,7 @@ pub fn Context::bearer_token(self : Context) -> String? {
   let authorization = self.header("Authorization")
   let view = authorization.view()
   if starts_with_ignore_ascii_case(view, "Bearer ".view()) {
-    Some(view[7:].trim().to_owned())
+    Some(trim_ascii_space(view[7:]).to_owned())
   } else {
     None
   }
@@ -1126,6 +1141,34 @@ pub fn Context::request_id(self : Context) -> String {
 }
 
 ///|
+fn trim_ascii_space(view : StringView) -> StringView {
+  let length = view.length()
+  let mut start = 0
+  while start < length {
+    let code = view.unsafe_get(start)
+    if code != (' ' : UInt16) &&
+      code != ('\t' : UInt16) &&
+      code != ('\n' : UInt16) &&
+      code != ('\r' : UInt16) {
+      break
+    }
+    start = start + 1
+  }
+  let mut end = length
+  while end > start {
+    let code = view.unsafe_get(end - 1)
+    if code != (' ' : UInt16) &&
+      code != ('\t' : UInt16) &&
+      code != ('\n' : UInt16) &&
+      code != ('\r' : UInt16) {
+      break
+    }
+    end = end - 1
+  }
+  view[start:end]
+}
+
+///|
 fn hex_digit(value : Int) -> Int {
   if value >= 48 && value <= 57 {
     value - 48
@@ -1136,19 +1179,6 @@ fn hex_digit(value : Int) -> Int {
   } else {
     -1
   }
-}
-
-///|
-fn is_ascii_view(view : StringView) -> Bool {
-  let length = view.length()
-  let mut i = 0
-  while i < length {
-    if view.unsafe_get(i).to_int() > 127 {
-      return false
-    }
-    i = i + 1
-  }
-  true
 }
 
 ///|
@@ -1214,26 +1244,47 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
     }
     return builder.to_string()
   }
-  let bytes = @utf8.encode(source)
-  let buffer = @buffer.Buffer::Buffer(size_hint=bytes.length())
+  let buffer = @buffer.Buffer::Buffer(size_hint=length)
   let mut i = 0
-  while i < bytes.length() {
-    let byte = bytes[i]
-    if byte == b'%' && i + 2 < bytes.length() {
-      let high = hex_digit(bytes[i + 1].to_int())
-      let low = hex_digit(bytes[i + 2].to_int())
-      if high >= 0 && low >= 0 {
-        buffer.write_byte((high * 16 + low).to_byte())
-        i = i + 2
+  if ascii_only {
+    while i < length {
+      let code = source.unsafe_get(i).to_int()
+      if code == 37 && i + 2 < length {
+        let high = hex_digit(source.unsafe_get(i + 1).to_int())
+        let low = hex_digit(source.unsafe_get(i + 2).to_int())
+        if high >= 0 && low >= 0 {
+          buffer.write_byte((high * 16 + low).to_byte())
+          i = i + 3
+          continue
+        }
+        buffer.write_byte(code.to_byte())
+      } else if code == 43 && plus_as_space {
+        buffer.write_byte(b' ')
+      } else {
+        buffer.write_byte(code.to_byte())
+      }
+      i = i + 1
+    }
+  } else {
+    let bytes = @utf8.encode(source)
+    while i < bytes.length() {
+      let byte = bytes[i]
+      if byte == b'%' && i + 2 < bytes.length() {
+        let high = hex_digit(bytes[i + 1].to_int())
+        let low = hex_digit(bytes[i + 2].to_int())
+        if high >= 0 && low >= 0 {
+          buffer.write_byte((high * 16 + low).to_byte())
+          i = i + 2
+        } else {
+          buffer.write_byte(byte)
+        }
+      } else if byte == b'+' && plus_as_space {
+        buffer.write_byte(b' ')
       } else {
         buffer.write_byte(byte)
       }
-    } else if byte == b'+' && plus_as_space {
-      buffer.write_byte(b' ')
-    } else {
-      buffer.write_byte(byte)
+      i = i + 1
     }
-    i = i + 1
   }
   @utf8.decode_lossy(buffer.to_bytes())
 }
@@ -1265,6 +1316,13 @@ fn is_url_unreserved(value : Int32) -> Bool {
 }
 
 ///|
+fn write_percent_byte(builder : StringBuilder, hex : String, value : Int) -> Unit {
+  builder.write_char('%')
+  builder.write_char(hex[value / 16].unsafe_to_char())
+  builder.write_char(hex[value % 16].unsafe_to_char())
+}
+
+///|
 pub fn url_encode(source : String) -> String {
   let hex = "0123456789ABCDEF"
   let view = source.view()
@@ -1276,34 +1334,42 @@ pub fn url_encode(source : String) -> String {
   if start == length {
     return source
   }
-  if is_ascii_view(view) {
-    let builder = StringBuilder(size_hint=length)
-    builder.write_stringview(view[:start])
-    let mut i = start
-    while i < length {
-      let value = view.unsafe_get(i).to_int()
-      if is_url_unreserved(value) {
-        builder.write_char(value.unsafe_to_char())
+  let builder = StringBuilder(size_hint=length + 8)
+  builder.write_stringview(view[:start])
+  let mut i = start
+  while i < length {
+    let code = view.unsafe_get(i).to_int()
+    if code < 0x80 {
+      if is_url_unreserved(code) {
+        builder.write_char(code.unsafe_to_char())
       } else {
-        builder.write_char('%')
-        builder.write_char(hex[value / 16].unsafe_to_char())
-        builder.write_char(hex[value % 16].unsafe_to_char())
+        write_percent_byte(builder, hex, code)
       }
-      i = i + 1
-    }
-    return builder.to_string()
-  }
-  let bytes = @utf8.encode(source)
-  let builder = StringBuilder(size_hint=bytes.length())
-  for byte in bytes {
-    let value = byte.to_int()
-    if is_url_unreserved(value) {
-      builder.write_char(value.unsafe_to_char())
+    } else if code < 0x800 {
+      write_percent_byte(builder, hex, 0xC0 | (code >> 6))
+      write_percent_byte(builder, hex, 0x80 | (code & 0x3F))
+    } else if code >= 0xD800 && code <= 0xDBFF {
+      if i + 1 < length {
+        let low = view.unsafe_get(i + 1).to_int()
+        if low >= 0xDC00 && low <= 0xDFFF {
+          let scalar = ((code - 0xD800) << 10) + (low - 0xDC00) + 0x10000
+          write_percent_byte(builder, hex, 0xF0 | (scalar >> 18))
+          write_percent_byte(builder, hex, 0x80 | ((scalar >> 12) & 0x3F))
+          write_percent_byte(builder, hex, 0x80 | ((scalar >> 6) & 0x3F))
+          write_percent_byte(builder, hex, 0x80 | (scalar & 0x3F))
+          i = i + 2
+          continue
+        }
+      }
+      abort("invalid surrogate pair")
+    } else if code >= 0xDC00 && code <= 0xDFFF {
+      abort("invalid surrogate pair")
     } else {
-      builder.write_char('%')
-      builder.write_char(hex[value / 16].unsafe_to_char())
-      builder.write_char(hex[value % 16].unsafe_to_char())
+      write_percent_byte(builder, hex, 0xE0 | (code >> 12))
+      write_percent_byte(builder, hex, 0x80 | ((code >> 6) & 0x3F))
+      write_percent_byte(builder, hex, 0x80 | (code & 0x3F))
     }
+    i = i + 1
   }
   builder.to_string()
 }
@@ -1470,30 +1536,67 @@ pub fn parse_urlencoded(source : String) -> Map[String, String] {
 }
 
 ///|
-fn encoded_key_matches(key : StringView, name : String) -> Bool {
-  if key == name.view() {
-    return true
+fn query_key_matches(
+  source : StringView,
+  start : Int,
+  end : Int,
+  name : StringView,
+) -> Bool {
+  let name_length = name.length()
+  if end - start == name_length {
+    let mut i = start
+    let mut j = 0
+    let mut equal = true
+    while j < name_length {
+      if source.unsafe_get(i) != name.unsafe_get(j) {
+        equal = false
+        break
+      }
+      i = i + 1
+      j = j + 1
+    }
+    if equal {
+      return true
+    }
   }
+  let key = source[start:end]
   if !key.contains("%") && !key.contains("+") {
     return false
   }
-  decode_url(key) == name
+  name.equal_to_string(decode_url(key))
 }
 
 ///|
 fn query_param(source : StringView, name : String) -> String {
+  let name_view = name.view()
   let mut found : StringView? = None
-  for pair in source.split("&") {
-    if pair.is_empty() {
-      continue
+  let length = source.length()
+  let mut pos = 0
+  while pos < length {
+    let pair_start = pos
+    let mut eq = -1
+    let mut end = pos
+    while end < length {
+      let code = source.unsafe_get(end)
+      if code == ('&' : UInt16) {
+        break
+      }
+      if code == ('=' : UInt16) && eq < 0 {
+        eq = end
+      }
+      end = end + 1
     }
-    match pair.find("=") {
-      Some(index) =>
-        if encoded_key_matches(pair[:index], name) {
-          found = Some(pair[index + 1:])
+    if end > pair_start {
+      let key_end = if eq >= 0 { eq } else { end }
+      if query_key_matches(source, pair_start, key_end, name_view) {
+        if eq >= 0 {
+          found = Some(source[eq + 1:end])
+        } else {
+          found = Some("")
         }
-      None => if encoded_key_matches(pair, name) { found = Some("") }
+      }
     }
+    pos = end + 1
   }
   match found {
     Some(value) => decode_url(value)
@@ -1535,18 +1638,35 @@ pub fn Context::query_values(self : Context, name : String) -> Array[String] {
   let values : Array[String] = []
   match self.request.path.find("?") {
     Some(index) => {
-      let source = self.request.path[index + 1:]
-      for pair in source.view().split("&") {
-        if pair.is_empty() {
-          continue
+      let name_view = name.view()
+      let source = self.request.path[index + 1:].view()
+      let length = source.length()
+      let mut pos = 0
+      while pos < length {
+        let pair_start = pos
+        let mut eq = -1
+        let mut end = pos
+        while end < length {
+          let code = source.unsafe_get(end)
+          if code == ('&' : UInt16) {
+            break
+          }
+          if code == ('=' : UInt16) && eq < 0 {
+            eq = end
+          }
+          end = end + 1
         }
-        match pair.find("=") {
-          Some(split) =>
-            if encoded_key_matches(pair[:split], name) {
-              values.push(decode_url(pair[split + 1:]))
+        if end > pair_start {
+          let key_end = if eq >= 0 { eq } else { end }
+          if query_key_matches(source, pair_start, key_end, name_view) {
+            if eq >= 0 {
+              values.push(decode_url(source[eq + 1:end]))
+            } else {
+              values.push("")
             }
-          None => if encoded_key_matches(pair, name) { values.push("") }
+          }
         }
+        pos = end + 1
       }
     }
     None => ()
@@ -1651,9 +1771,27 @@ fn find_view_ignore_ascii_case(
     } else {
       value
     }
-    if lower_value == lower_first &&
-      starts_with_ignore_ascii_case(haystack[i:], needle) {
-      return Some(i)
+    if lower_value == lower_first {
+      let mut j = 1
+      let mut matched = true
+      while j < length {
+        let mut left = haystack.unsafe_get(i + j).to_int()
+        let mut right = needle.unsafe_get(j).to_int()
+        if left >= 65 && left <= 90 {
+          left = left + 32
+        }
+        if right >= 65 && right <= 90 {
+          right = right + 32
+        }
+        if left != right {
+          matched = false
+          break
+        }
+        j = j + 1
+      }
+      if matched {
+        return Some(i)
+      }
     }
     i = i + 1
   }
@@ -1669,40 +1807,43 @@ fn is_parameter_boundary(value : UInt16) -> Bool {
 
 ///|
 fn header_parameter(value : StringView, name : String) -> String? {
+  let target = name.view()
+  let name_length = name.length()
+  let length = value.length()
   let mut start = 0
   let mut result : String? = None
   let mut done = false
   while !done {
-    let index = match find_view_ignore_ascii_case(value, name.view(), start) {
+    let index = match find_view_ignore_ascii_case(value, target, start) {
       Some(index) => index
       None => {
         done = true
         continue
       }
     }
-    let after = index + name.length()
+    let after = index + name_length
     let at_boundary = index == 0 ||
       is_parameter_boundary(value.unsafe_get(index - 1))
     if at_boundary &&
-      after < value.length() &&
+      after < length &&
       value.unsafe_get(after) == ('=' : UInt16) {
       let mut pos = after + 1
-      while pos < value.length() && value.unsafe_get(pos) == (' ' : UInt16) {
+      while pos < length && value.unsafe_get(pos) == (' ' : UInt16) {
         pos = pos + 1
       }
-      if pos < value.length() && value.unsafe_get(pos) == ('"' : UInt16) {
+      if pos < length && value.unsafe_get(pos) == ('"' : UInt16) {
         let quoted_start = pos + 1
-        let end = match value[quoted_start:].find("\"") {
-          Some(offset) => quoted_start + offset
-          None => value.length()
+        let mut end = quoted_start
+        while end < length && value.unsafe_get(end) != ('"' : UInt16) {
+          end = end + 1
         }
         result = Some(value[quoted_start:end].to_owned())
       } else {
-        let end = match value[pos:].find(";") {
-          Some(offset) => pos + offset
-          None => value.length()
+        let mut end = pos
+        while end < length && value.unsafe_get(end) != (';' : UInt16) {
+          end = end + 1
         }
-        result = Some(value[pos:end].trim().to_owned())
+        result = Some(trim_ascii_space(value[pos:end]).to_owned())
       }
       done = true
     } else {
@@ -1745,25 +1886,35 @@ fn get_header_ignore_case(
 ///|
 fn parse_part_headers(header_text : StringView) -> Map[String, String] {
   let headers : Map[String, String] = Map([], capacity=4)
-  for line in header_text.split("\n") {
-    let line = if line.has_suffix("\r") {
-      line[:line.length() - 1]
+  let length = header_text.length()
+  let mut pos = 0
+  while pos <= length {
+    let mut end = pos
+    while end < length && header_text.unsafe_get(end) != ('\n' : UInt16) {
+      end = end + 1
+    }
+    let line = if end > pos &&
+      header_text.unsafe_get(end - 1) == ('\r' : UInt16) {
+      header_text[pos:end - 1]
     } else {
-      line
+      header_text[pos:end]
     }
-    if line.is_empty() {
-      continue
-    }
-    match line.find(":") {
-      Some(index) => {
-        let name = line[:index].trim().to_owned()
-        let value = line[index + 1:].trim().to_owned()
-        if name != "" {
-          headers.set(name, value)
+    if !line.is_empty() {
+      match line.find(":") {
+        Some(index) => {
+          let name = trim_ascii_space(line[:index]).to_owned()
+          let value = trim_ascii_space(line[index + 1:]).to_owned()
+          if name != "" {
+            headers.set(name, value)
+          }
         }
+        None => ()
       }
-      None => ()
     }
+    if end >= length {
+      break
+    }
+    pos = end + 1
   }
   headers
 }
@@ -1780,12 +1931,16 @@ pub fn parse_multipart(
   let delimiter = "--" + boundary
   let delimiter_view = delimiter.view()
   let crlf_delimiter = "\r\n" + delimiter
+  let crlf_delimiter_view = crlf_delimiter.view()
   let view = body.view()
   let mut pos = match find_view_from(view, delimiter_view, 0) {
     Some(index) => index + delimiter.length()
     None => return Some([])
   }
-  let parts : Array[MultipartPart] = []
+  let estimate = body.length() / (crlf_delimiter.length() + 8)
+  let parts : Array[MultipartPart] = Array(
+    capacity=if estimate > 64 { 64 } else { estimate + 1 },
+  )
   while pos <= view.length() {
     if starts_with_ignore_ascii_case(view[pos:], "--".view()) {
       break
@@ -1795,7 +1950,7 @@ pub fn parse_multipart(
     } else if view[pos:].has_prefix("\n") {
       pos = pos + 1
     }
-    let data_end = match find_view_from(view, crlf_delimiter.view(), pos) {
+    let data_end = match find_view_from(view, crlf_delimiter_view, pos) {
       Some(index) => index
       None =>
         match find_view_from(view, ("\n" + delimiter).view(), pos) {
@@ -2098,7 +2253,7 @@ pub(all) enum ByteRange {
 ///|
 fn etag_header_matches(value : StringView, etag : String) -> Bool {
   for token in value.split(",") {
-    let token = token.trim()
+    let token = trim_ascii_space(token)
     if token == "*" || token == etag.view() {
       return true
     }
@@ -2144,11 +2299,11 @@ pub fn Context::not_modified(
 
 ///|
 pub fn parse_byte_range(value : String, total : Int64) -> ByteRange {
-  let view = value.view().trim()
+  let view = trim_ascii_space(value.view())
   if !starts_with_ignore_ascii_case(view, "bytes=".view()) {
     return ByteRangeFull
   }
-  let spec = view[6:].trim()
+  let spec = trim_ascii_space(view[6:])
   if spec.contains(",") {
     return ByteRangeFull
   }
@@ -2156,8 +2311,8 @@ pub fn parse_byte_range(value : String, total : Int64) -> ByteRange {
     Some(index) => index
     None => return ByteRangeFull
   }
-  let start_text = spec[:dash].trim()
-  let end_text = spec[dash + 1:].trim()
+  let start_text = trim_ascii_space(spec[:dash])
+  let end_text = trim_ascii_space(spec[dash + 1:])
   if start_text.is_empty() {
     let suffix = match parse_decimal(end_text) {
       Some(suffix) => suffix.to_int64()

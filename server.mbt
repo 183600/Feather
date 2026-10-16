@@ -2,6 +2,66 @@
 pub suberror PayloadTooLarge
 
 ///|
+let header_if_none_match : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "If-None-Match",
+)
+
+///|
+let header_if_modified_since : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "If-Modified-Since",
+)
+
+///|
+let header_if_range : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "If-Range",
+)
+
+///|
+let header_range : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Range",
+)
+
+///|
+let header_content_type : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Content-Type",
+)
+
+///|
+let header_content_length : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Content-Length",
+)
+
+///|
+let header_content_range : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Content-Range",
+)
+
+///|
+let header_accept_ranges : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Accept-Ranges",
+)
+
+///|
+let header_etag : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "ETag",
+)
+
+///|
+let header_last_modified : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Last-Modified",
+)
+
+///|
+let header_cache_control : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Cache-Control",
+)
+
+///|
+let header_set_cookie : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Set-Cookie",
+)
+
+///|
 async fn read_body(reader : &@io.Reader, limit : Int32) -> String {
   let first = match reader.read_some(max_len=8192) {
     None => return ""
@@ -92,12 +152,11 @@ async fn send_response(
       }
   }
   let has_body = body_bytes.length() > 0
-  let content_length_header = @http.CaseInsensitiveString("Content-Length")
-  if has_body && !headers.contains(content_length_header) {
-    headers.set(content_length_header, body_bytes.length().to_string())
+  if has_body && !headers.contains(header_content_length) {
+    headers.set(header_content_length, body_bytes.length().to_string())
   }
   if response.cookies.length() > 0 {
-    headers.remove(@http.CaseInsensitiveString("Set-Cookie"))
+    headers.remove(header_set_cookie)
   }
   conn.send_response(
     response.status,
@@ -211,17 +270,13 @@ async fn serve_static_file(
     mtime_nanos.to_string() +
     "\""
   let last_modified = format_http_date(mtime_secs)
-  let etag_key = @http.CaseInsensitiveString("ETag")
-  let last_modified_key = @http.CaseInsensitiveString("Last-Modified")
-  let cache_control_key = @http.CaseInsensitiveString("Cache-Control")
-  let not_modified = match (
-    request.headers.get(@http.CaseInsensitiveString("If-None-Match"))
-  ) {
+  let etag_key = header_etag
+  let last_modified_key = header_last_modified
+  let cache_control_key = header_cache_control
+  let not_modified = match request.headers.get(header_if_none_match) {
     Some(value) => etag_header_matches(value.view(), etag)
     None =>
-      match request.headers.get(
-        @http.CaseInsensitiveString("If-Modified-Since"),
-      ) {
+      match request.headers.get(header_if_modified_since) {
         Some(value) =>
           match parse_http_date(value) {
             Some(since) => mtime_secs > 0L && mtime_secs <= since
@@ -242,9 +297,7 @@ async fn serve_static_file(
     conn.end_response()
     return
   }
-  let range_allowed = match request.headers.get(
-    @http.CaseInsensitiveString("If-Range"),
-  ) {
+  let range_allowed = match request.headers.get(header_if_range) {
     Some(value) =>
       value == etag ||
       (match parse_http_date(value) {
@@ -253,9 +306,7 @@ async fn serve_static_file(
       })
     None => true
   }
-  let range = match request.headers.get(
-    @http.CaseInsensitiveString("Range"),
-  ) {
+  let range = match request.headers.get(header_range) {
     Some(value) =>
       if range_allowed {
         parse_byte_range(value, size)
@@ -264,10 +315,10 @@ async fn serve_static_file(
       }
     None => ByteRangeFull
   }
-  let content_type_key = @http.CaseInsensitiveString("Content-Type")
-  let content_length_key = @http.CaseInsensitiveString("Content-Length")
-  let content_range_key = @http.CaseInsensitiveString("Content-Range")
-  let accept_ranges_key = @http.CaseInsensitiveString("Accept-Ranges")
+  let content_type_key = header_content_type
+  let content_length_key = header_content_length
+  let content_range_key = header_content_range
+  let accept_ranges_key = header_accept_ranges
   match range {
     ByteRangeInvalid => {
       conn.send_response(
