@@ -1,5 +1,3 @@
-// Router behavior regression tests
-
 ///|
 test "probe static beats param" {
   let router = create_router()

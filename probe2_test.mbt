@@ -1,5 +1,3 @@
-// Router backtracking and request parsing regression tests
-
 ///|
 test "probe backtrack param to wildcard" {
   let router = create_router()

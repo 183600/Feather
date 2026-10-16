@@ -1,5 +1,3 @@
-// Additional regression tests for Feather.
-
 ///|
 test "Context redirect and html helpers" {
   let ctx = create_context()

@@ -1,5 +1,3 @@
-// Tests for Feather features: URL helpers, error model, route groups, static files.
-
 ///|
 test "url_encode keeps unreserved characters" {
   assert_eq(@feather.url_encode("abcXYZ012-._~"), "abcXYZ012-._~")
