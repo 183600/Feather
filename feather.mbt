@@ -100,6 +100,8 @@ pub(all) struct Router {
   routes : Array[Route]
   trees : Map[String, RouteNode]
   named : Map[String, NamedRoute]
+  dynamic_caches : Map[String, Map[String, (RouteNode, Int32)]]
+  miss_caches : Map[String, Map[String, Array[String]]]
 }
 
 ///|
@@ -134,7 +136,13 @@ fn RouteNode::new() -> RouteNode {
 
 ///|
 pub fn create_router() -> Router {
-  { routes: [], trees: Map([]), named: Map([]), }
+  {
+    routes: [],
+    trees: Map([]),
+    named: Map([]),
+    dynamic_caches: Map([]),
+    miss_caches: Map([]),
+  }
 }
 
 ///|
@@ -453,6 +461,8 @@ pub fn Router::add_route(
       }
     }
   }
+  self.dynamic_caches.remove(method_key)
+  self.miss_caches.clear()
   self.routes.push({
     path: clean_path,
     method: method_key,
@@ -632,8 +642,30 @@ fn Router::find_node_raw(
       None => None
     }
   } else {
+    match self.dynamic_caches.get(tree_key) {
+      Some(cache) =>
+        match cache.get_from_string(clean_path) {
+          Some(hit) => return Some(hit)
+          None => ()
+        }
+      None => ()
+    }
     match match_dynamic_node(root, clean_path, 0) {
-      Some(outcome) => Some((outcome.node, outcome.wildcard_start))
+      Some(outcome) => {
+        let hit = (outcome.node, outcome.wildcard_start)
+        let cache = match self.dynamic_caches.get(tree_key) {
+          Some(cache) => cache
+          None => {
+            let cache : Map[String, (RouteNode, Int32)] = Map([], capacity=32)
+            self.dynamic_caches.set(tree_key, cache)
+            cache
+          }
+        }
+        if cache.length() < 128 {
+          cache.set(clean_path.to_owned(), hit)
+        }
+        Some(hit)
+      }
       None => None
     }
   }
@@ -697,6 +729,38 @@ priv enum DispatchMatch {
 }
 
 ///|
+fn Router::find_miss_cache(
+  self : Router,
+  meth : String,
+  clean_path : StringView,
+) -> Array[String]? {
+  match self.miss_caches.get(meth) {
+    Some(cache) => cache.get_from_string(clean_path)
+    None => None
+  }
+}
+
+///|
+fn Router::remember_miss(
+  self : Router,
+  meth : String,
+  clean_path : StringView,
+  allowed : Array[String],
+) -> Unit {
+  let cache = match self.miss_caches.get(meth) {
+    Some(cache) => cache
+    None => {
+      let cache : Map[String, Array[String]] = Map([], capacity=16)
+      self.miss_caches.set(meth, cache)
+      cache
+    }
+  }
+  if cache.length() < 128 {
+    cache.set(clean_path.to_owned(), allowed)
+  }
+}
+
+///|
 fn Router::match_dispatch(
   self : Router,
   meth : String,
@@ -705,24 +769,28 @@ fn Router::match_dispatch(
   match self.find_node_raw(meth, clean_path) {
     Some(hit) => DispatchFound(hit.0)
     None =>
-      if meth == "HEAD" {
-        match self.find_node_raw("GET", clean_path) {
-          Some(hit) => DispatchFound(hit.0)
-          None => {
-            let allowed = self.allowed_methods(clean_path)
-            if allowed.length() > 0 {
-              DispatchMethods(allowed)
-            } else {
-              DispatchMissing
-            }
+      match self.find_miss_cache(meth, clean_path) {
+        Some(allowed) =>
+          if allowed.length() > 0 {
+            DispatchMethods(allowed)
+          } else {
+            DispatchMissing
           }
-        }
-      } else {
-        let allowed = self.allowed_methods(clean_path)
-        if allowed.length() > 0 {
-          DispatchMethods(allowed)
-        } else {
-          DispatchMissing
+        None => {
+          let allowed = if meth == "HEAD" {
+            match self.find_node_raw("GET", clean_path) {
+              Some(hit) => return DispatchFound(hit.0)
+              None => self.allowed_methods(clean_path)
+            }
+          } else {
+            self.allowed_methods(clean_path)
+          }
+          self.remember_miss(meth, clean_path, allowed)
+          if allowed.length() > 0 {
+            DispatchMethods(allowed)
+          } else {
+            DispatchMissing
+          }
         }
       }
   }
@@ -1190,14 +1258,16 @@ pub fn Context::cookies(self : Context) -> Map[String, String] {
     }
     let pair = trim_ascii_space(header[pos:end])
     if !pair.is_empty() {
-      match pair.find("=") {
-        Some(index) => {
-          let name = trim_ascii_space(pair[:index]).to_owned()
-          if name != "" {
-            cookies.set(name, pair[index + 1:].to_owned())
-          }
+      let pair_length = pair.length()
+      let mut eq = 0
+      while eq < pair_length && pair.unsafe_get(eq) != ('=' : UInt16) {
+        eq = eq + 1
+      }
+      if eq < pair_length {
+        let name = owned_trimmed(pair[:eq])
+        if name != "" {
+          cookies.set(name, pair[eq + 1:].to_owned())
         }
-        None => ()
       }
     }
     if end >= length {
@@ -1565,6 +1635,35 @@ pub fn Context::file_response(self : Context) -> FileResponse? {
 }
 
 ///|
+fn owned_trimmed(view : StringView) -> String {
+  let length = view.length()
+  let mut start = 0
+  while start < length {
+    let code = view.unsafe_get(start)
+    if code != (' ' : UInt16) &&
+      code != ('\t' : UInt16) &&
+      code != ('\n' : UInt16) &&
+      code != ('\r' : UInt16) {
+      break
+    }
+    start = start + 1
+  }
+  let mut end = length
+  while end > start {
+    let code = view.unsafe_get(end - 1)
+    if code != (' ' : UInt16) &&
+      code != ('\t' : UInt16) &&
+      code != ('\n' : UInt16) &&
+      code != ('\r' : UInt16) {
+      break
+    }
+    end = end - 1
+  }
+  let offset = view.start_offset()
+  view.data().unsafe_substring(start=offset + start, end=offset + end)
+}
+
+///|
 fn trim_ascii_space(view : StringView) -> StringView {
   let length = view.length()
   let mut start = 0
@@ -1740,15 +1839,23 @@ fn is_url_unreserved(value : Int32) -> Bool {
 }
 
 ///|
-fn write_percent_byte(builder : StringBuilder, hex : String, value : Int) -> Unit {
-  builder.write_char('%')
-  builder.write_char(hex[value / 16].unsafe_to_char())
-  builder.write_char(hex[value % 16].unsafe_to_char())
+fn percent_hex_byte(value : Int) -> Byte {
+  if value < 10 {
+    (b'0'.to_int() + value).to_byte()
+  } else {
+    (b'A'.to_int() + (value - 10)).to_byte()
+  }
+}
+
+///|
+fn write_percent_byte(buffer : @buffer.Buffer, value : Int) -> Unit {
+  buffer.write_byte(b'%')
+  buffer.write_byte(percent_hex_byte(value / 16))
+  buffer.write_byte(percent_hex_byte(value % 16))
 }
 
 ///|
 pub fn url_encode(source : String) -> String {
-  let hex = "0123456789ABCDEF"
   let view = source.view()
   let length = view.length()
   let mut start = 0
@@ -1758,48 +1865,52 @@ pub fn url_encode(source : String) -> String {
   if start == length {
     return source
   }
-  let builder = StringBuilder(size_hint=length + 8)
-  builder.write_stringview(view[:start])
+  let buffer = @buffer.Buffer::Buffer(size_hint=length + 8)
+  let mut p = 0
+  while p < start {
+    buffer.write_byte(view.unsafe_get(p).to_int().to_byte())
+    p = p + 1
+  }
   let mut i = start
   while i < length {
     let code = view.unsafe_get(i).to_int()
     if code < 0x80 {
       if is_url_unreserved(code) {
-        builder.write_char(code.unsafe_to_char())
+        buffer.write_byte(code.to_byte())
       } else {
-        write_percent_byte(builder, hex, code)
+        write_percent_byte(buffer, code)
       }
     } else if code < 0x800 {
-      write_percent_byte(builder, hex, 0xC0 | (code >> 6))
-      write_percent_byte(builder, hex, 0x80 | (code & 0x3F))
+      write_percent_byte(buffer, 0xC0 | (code >> 6))
+      write_percent_byte(buffer, 0x80 | (code & 0x3F))
     } else if code >= 0xD800 && code <= 0xDBFF {
       if i + 1 < length {
         let low = view.unsafe_get(i + 1).to_int()
         if low >= 0xDC00 && low <= 0xDFFF {
           let scalar = ((code - 0xD800) << 10) + (low - 0xDC00) + 0x10000
-          write_percent_byte(builder, hex, 0xF0 | (scalar >> 18))
-          write_percent_byte(builder, hex, 0x80 | ((scalar >> 12) & 0x3F))
-          write_percent_byte(builder, hex, 0x80 | ((scalar >> 6) & 0x3F))
-          write_percent_byte(builder, hex, 0x80 | (scalar & 0x3F))
+          write_percent_byte(buffer, 0xF0 | (scalar >> 18))
+          write_percent_byte(buffer, 0x80 | ((scalar >> 12) & 0x3F))
+          write_percent_byte(buffer, 0x80 | ((scalar >> 6) & 0x3F))
+          write_percent_byte(buffer, 0x80 | (scalar & 0x3F))
           i = i + 2
           continue
         }
       }
-      write_percent_byte(builder, hex, 0xEF)
-      write_percent_byte(builder, hex, 0xBF)
-      write_percent_byte(builder, hex, 0xBD)
+      write_percent_byte(buffer, 0xEF)
+      write_percent_byte(buffer, 0xBF)
+      write_percent_byte(buffer, 0xBD)
     } else if code >= 0xDC00 && code <= 0xDFFF {
-      write_percent_byte(builder, hex, 0xEF)
-      write_percent_byte(builder, hex, 0xBF)
-      write_percent_byte(builder, hex, 0xBD)
+      write_percent_byte(buffer, 0xEF)
+      write_percent_byte(buffer, 0xBF)
+      write_percent_byte(buffer, 0xBD)
     } else {
-      write_percent_byte(builder, hex, 0xE0 | (code >> 12))
-      write_percent_byte(builder, hex, 0x80 | ((code >> 6) & 0x3F))
-      write_percent_byte(builder, hex, 0x80 | (code & 0x3F))
+      write_percent_byte(buffer, 0xE0 | (code >> 12))
+      write_percent_byte(buffer, 0x80 | ((code >> 6) & 0x3F))
+      write_percent_byte(buffer, 0x80 | (code & 0x3F))
     }
     i = i + 1
   }
-  builder.to_string()
+  @utf8.decode_lossy(buffer.to_bytes())
 }
 
 ///|
@@ -1971,98 +2082,83 @@ fn starts_with_ignore_ascii_case(
 }
 
 ///|
+let mime_table : Map[String, String] = Map([
+  ("html", "text/html; charset=utf-8"),
+  ("htm", "text/html; charset=utf-8"),
+  ("css", "text/css; charset=utf-8"),
+  ("js", "text/javascript; charset=utf-8"),
+  ("mjs", "text/javascript; charset=utf-8"),
+  ("json", "application/json; charset=utf-8"),
+  ("map", "application/json; charset=utf-8"),
+  ("webmanifest", "application/manifest+json; charset=utf-8"),
+  ("yaml", "application/yaml; charset=utf-8"),
+  ("yml", "application/yaml; charset=utf-8"),
+  ("toml", "application/toml; charset=utf-8"),
+  ("txt", "text/plain; charset=utf-8"),
+  ("text", "text/plain; charset=utf-8"),
+  ("log", "text/plain; charset=utf-8"),
+  ("md", "text/markdown; charset=utf-8"),
+  ("markdown", "text/markdown; charset=utf-8"),
+  ("csv", "text/csv; charset=utf-8"),
+  ("xml", "application/xml"),
+  ("svg", "image/svg+xml"),
+  ("png", "image/png"),
+  ("jpg", "image/jpeg"),
+  ("jpeg", "image/jpeg"),
+  ("gif", "image/gif"),
+  ("webp", "image/webp"),
+  ("avif", "image/avif"),
+  ("bmp", "image/bmp"),
+  ("ico", "image/x-icon"),
+  ("wasm", "application/wasm"),
+  ("pdf", "application/pdf"),
+  ("zip", "application/zip"),
+  ("gz", "application/gzip"),
+  ("mp3", "audio/mpeg"),
+  ("wav", "audio/wav"),
+  ("ogg", "audio/ogg"),
+  ("mp4", "video/mp4"),
+  ("webm", "video/webm"),
+  ("mov", "video/quicktime"),
+  ("woff", "font/woff"),
+  ("woff2", "font/woff2"),
+  ("ttf", "font/ttf"),
+  ("otf", "font/otf"),
+])
+
+///|
 fn mime_for_extension(extension : StringView) -> String {
-  if extension == "html" || extension == "htm" {
-    "text/html; charset=utf-8"
-  } else if extension == "css" {
-    "text/css; charset=utf-8"
-  } else if extension == "js" || extension == "mjs" {
-    "text/javascript; charset=utf-8"
-  } else if extension == "json" || extension == "map" {
-    "application/json; charset=utf-8"
-  } else if extension == "webmanifest" {
-    "application/manifest+json; charset=utf-8"
-  } else if extension == "yaml" || extension == "yml" {
-    "application/yaml; charset=utf-8"
-  } else if extension == "toml" {
-    "application/toml; charset=utf-8"
-  } else if extension == "txt" || extension == "text" || extension == "log" {
-    "text/plain; charset=utf-8"
-  } else if extension == "md" || extension == "markdown" {
-    "text/markdown; charset=utf-8"
-  } else if extension == "csv" {
-    "text/csv; charset=utf-8"
-  } else if extension == "xml" {
-    "application/xml"
-  } else if extension == "svg" {
-    "image/svg+xml"
-  } else if extension == "png" {
-    "image/png"
-  } else if extension == "jpg" || extension == "jpeg" {
-    "image/jpeg"
-  } else if extension == "gif" {
-    "image/gif"
-  } else if extension == "webp" {
-    "image/webp"
-  } else if extension == "avif" {
-    "image/avif"
-  } else if extension == "bmp" {
-    "image/bmp"
-  } else if extension == "ico" {
-    "image/x-icon"
-  } else if extension == "wasm" {
-    "application/wasm"
-  } else if extension == "pdf" {
-    "application/pdf"
-  } else if extension == "zip" {
-    "application/zip"
-  } else if extension == "gz" {
-    "application/gzip"
-  } else if extension == "mp3" {
-    "audio/mpeg"
-  } else if extension == "wav" {
-    "audio/wav"
-  } else if extension == "ogg" {
-    "audio/ogg"
-  } else if extension == "mp4" {
-    "video/mp4"
-  } else if extension == "webm" {
-    "video/webm"
-  } else if extension == "mov" {
-    "video/quicktime"
-  } else if extension == "woff" {
-    "font/woff"
-  } else if extension == "woff2" {
-    "font/woff2"
-  } else if extension == "ttf" {
-    "font/ttf"
-  } else if extension == "otf" {
-    "font/otf"
-  } else {
-    "application/octet-stream"
+  match mime_table.get_from_string(extension) {
+    Some(value) => value
+    None => "application/octet-stream"
   }
 }
 
 ///|
 pub fn mime_type_for(path : String) -> String {
   let view = path.view()
-  let last_slash = match view.rev_find("/") {
-    Some(index) => index
-    None => -1
+  let mut dot = -1
+  let mut i = view.length() - 1
+  while i >= 0 {
+    let code = view.unsafe_get(i)
+    if code == ('.' : UInt16) {
+      dot = i
+      break
+    }
+    if code == ('/' : UInt16) {
+      break
+    }
+    i = i - 1
   }
-  match view.rev_find(".") {
-    Some(index) =>
-      if index > last_slash {
-        let extension = view[index + 1:]
-        if has_ascii_upper(extension) {
-          mime_for_extension(extension.to_lower().view())
-        } else {
-          mime_for_extension(extension)
-        }
-      } else {
-        mime_for_extension("")
-      }
-    None => mime_for_extension("")
+  if dot >= 0 {
+    let extension = view[dot + 1:]
+    if has_ascii_upper(extension) {
+      mime_for_extension(extension.to_lower().view())
+    } else {
+      mime_for_extension(extension)
+    }
+  } else {
+    mime_for_extension("")
   }
 }
 
@@ -2479,8 +2575,14 @@ fn get_header_ignore_case(
 }
 
 ///|
-fn parse_part_headers(header_text : StringView) -> Map[String, String] {
+fn parse_part_headers(
+  header_text : StringView,
+) -> (Map[String, String], String?, Int, String?, Int) {
   let headers : Map[String, String] = Map([], capacity=4)
+  let mut disposition : String? = None
+  let mut disposition_matches = 0
+  let mut content_type : String? = None
+  let mut content_type_matches = 0
   let length = header_text.length()
   let mut pos = 0
   while pos <= length {
@@ -2503,10 +2605,17 @@ fn parse_part_headers(header_text : StringView) -> Map[String, String] {
       end
     }
     if line_end > pos && colon >= 0 && colon < line_end {
-      let name = trim_ascii_space(header_text[pos:colon]).to_owned()
-      let value = trim_ascii_space(header_text[colon + 1:line_end]).to_owned()
+      let name = owned_trimmed(header_text[pos:colon])
+      let value = owned_trimmed(header_text[colon + 1:line_end])
       if name != "" {
         headers.set(name, value)
+        if name.view().equal_ignore_ascii_case("Content-Disposition".view()) {
+          disposition = Some(value)
+          disposition_matches = disposition_matches + 1
+        } else if name.view().equal_ignore_ascii_case("Content-Type".view()) {
+          content_type = Some(value)
+          content_type_matches = content_type_matches + 1
+        }
       }
     }
     if end >= length {
@@ -2514,7 +2623,13 @@ fn parse_part_headers(header_text : StringView) -> Map[String, String] {
     }
     pos = end + 1
   }
-  headers
+  (
+    headers,
+    disposition,
+    disposition_matches,
+    content_type,
+    content_type_matches,
+  )
 }
 
 ///|
@@ -2592,9 +2707,21 @@ pub fn parse_multipart(
     if header_end + separator_length > data_end {
       break
     }
-    let headers = parse_part_headers(view[pos:header_end])
+    let (
+      headers,
+      tracked_disposition,
+      disposition_matches,
+      tracked_content_type,
+      content_type_matches,
+    ) = parse_part_headers(view[pos:header_end])
     let data = view[header_end + separator_length:data_end]
-    let disposition = get_header_ignore_case(headers, "Content-Disposition")
+    let disposition = if disposition_matches == 1 {
+      tracked_disposition
+    } else if disposition_matches == 0 {
+      None
+    } else {
+      get_header_ignore_case(headers, "Content-Disposition")
+    }
     let name = match disposition {
       Some(disposition) => header_parameter(disposition.view(), "name").unwrap_or("")
       None => ""
@@ -2604,7 +2731,13 @@ pub fn parse_multipart(
         header_parameter(disposition.view(), "filename").unwrap_or("")
       None => ""
     }
-    let part_content_type = get_header_ignore_case(headers, "Content-Type").unwrap_or("")
+    let part_content_type = if content_type_matches == 1 {
+      tracked_content_type.unwrap_or("")
+    } else if content_type_matches == 0 {
+      ""
+    } else {
+      get_header_ignore_case(headers, "Content-Type").unwrap_or("")
+    }
     parts.push({
       name,
       filename,
@@ -2734,6 +2867,24 @@ fn days_from_civil(year : Int64, month : Int, day : Int) -> Int64 {
 
 ///|
 fn civil_from_days(days : Int64) -> (Int64, Int, Int) {
+  if days < -1000000000L || days > 1000000000L {
+    return civil_from_days_wide(days)
+  }
+  let z = days.to_int() + 719468
+  let era = (if z >= 0 { z } else { z - 146096 }) / 146097
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let y = yoe + era * 400
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let day = doy - (153 * mp + 2) / 5 + 1
+  let month = if mp < 10 { mp + 3 } else { mp - 9 }
+  let year = if month <= 2 { y + 1 } else { y }
+  (year.to_int64(), month, day)
+}
+
+///|
+fn civil_from_days_wide(days : Int64) -> (Int64, Int, Int) {
   let z = days + 719468L
   let era = (if z >= 0 { z } else { z - 146096L }) / 146097L
   let doe = z - era * 146097L
@@ -2760,24 +2911,32 @@ let http_months : Array[String] = [
 
 ///|
 fn write_two_digits(builder : StringBuilder, value : Int) -> Unit {
-  if value < 10 {
+  if value >= 0 && value < 100 {
+    if value < 10 {
+      builder.write_char('0')
+    } else {
+      builder.write_char((48 + value / 10).unsafe_to_char())
+    }
+    builder.write_char((48 + value % 10).unsafe_to_char())
+  } else if value < 10 {
     builder.write_char('0')
+    builder.write_string(value.to_string())
+  } else {
+    builder.write_string(value.to_string())
   }
-  builder.write_string(value.to_string())
 }
 
 ///|
 fn write_year(builder : StringBuilder, year : Int64) -> Unit {
-  if year >= 0L && year < 1000L {
-    if year < 10L {
-      builder.write_char('0')
-    }
-    if year < 100L {
-      builder.write_char('0')
-    }
-    builder.write_char('0')
+  if year >= 0L && year < 10000L {
+    let value = year.to_int()
+    builder.write_char((48 + value / 1000).unsafe_to_char())
+    builder.write_char((48 + value / 100 % 10).unsafe_to_char())
+    builder.write_char((48 + value / 10 % 10).unsafe_to_char())
+    builder.write_char((48 + value % 10).unsafe_to_char())
+  } else {
+    builder.write_string(year.to_string())
   }
-  builder.write_string(year.to_string())
 }
 
 ///|
@@ -2790,9 +2949,19 @@ pub fn format_http_date(unix_seconds : Int64) -> String {
   }
   let (year, month, day) = civil_from_days(days)
   let weekday = ((days + 4L) % 7L + 7L) % 7L
-  let hour = (time_of_day / 3600L).to_int()
-  let minute = ((time_of_day % 3600L) / 60L).to_int()
-  let second = (time_of_day % 60L).to_int()
+  let mut hour = 0
+  let mut minute = 0
+  let mut second = 0
+  if time_of_day >= 0L && time_of_day < 86400L {
+    let tod = time_of_day.to_int()
+    hour = tod / 3600
+    minute = tod % 3600 / 60
+    second = tod % 60
+  } else {
+    hour = (time_of_day / 3600L).to_int()
+    minute = ((time_of_day % 3600L) / 60L).to_int()
+    second = (time_of_day % 60L).to_int()
+  }
   let builder = StringBuilder(size_hint=29)
   builder.write_string(http_weekdays[weekday.to_int()])
   builder.write_string(", ")
