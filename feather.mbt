@@ -511,54 +511,72 @@ fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
 }
 
 ///|
-fn Router::match_in_tree(
+priv enum RouteMatch {
+  MatchFound(RouteNode, Map[String, String]?, String)
+  MatchMethods(Array[String])
+  MatchMissing
+}
+
+///|
+fn Router::find_node(
   self : Router,
   tree_key : String,
-  method_key : String,
   clean_path : StringView,
-) -> RouteOutcome? {
+) -> (RouteNode, Map[String, String]?, String)? {
   let root = match self.trees.get(tree_key) {
     Some(root) => root
     None => return None
   }
   if !root.has_dynamic {
     match match_static_node(root, clean_path, 0) {
-      Some(node) =>
-        Some(
-          found_route(
-            node.route_path,
-            method_key,
-            Map([], capacity=0),
-            "",
-            "",
-            node.handler,
-          ),
-        )
+      Some(node) => Some((node, None, ""))
       None => None
     }
   } else {
     match match_dynamic_node(root, clean_path, 0) {
       Some(outcome) => {
         let node = outcome.node
-        let (params, wildcard_value) = if outcome.wildcard_start < 0 &&
-          node.param_names.length() == 0 {
-          (Map([], capacity=0), "")
+        if outcome.wildcard_start < 0 && node.param_names.length() == 0 {
+          Some((node, None, ""))
         } else {
-          extract_route_params(node, clean_path)
+          let (params, wildcard_value) = extract_route_params(node, clean_path)
+          Some((node, Some(params), wildcard_value))
         }
-        Some(
-          found_route(
-            node.route_path,
-            method_key,
-            params,
-            wildcard_value,
-            node.route_wildcard_name,
-            node.handler,
-          ),
-        )
       }
       None => None
     }
+  }
+}
+
+///|
+fn Router::match_route(
+  self : Router,
+  meth : String,
+  clean_path : StringView,
+) -> RouteMatch {
+  match self.find_node(meth, clean_path) {
+    Some(hit) => MatchFound(hit.0, hit.1, hit.2)
+    None =>
+      if meth == "HEAD" {
+        match self.find_node("GET", clean_path) {
+          Some(hit) => MatchFound(hit.0, hit.1, hit.2)
+          None => {
+            let allowed = self.allowed_methods(clean_path)
+            if allowed.length() > 0 {
+              MatchMethods(allowed)
+            } else {
+              MatchMissing
+            }
+          }
+        }
+      } else {
+        let allowed = self.allowed_methods(clean_path)
+        if allowed.length() > 0 {
+          MatchMethods(allowed)
+        } else {
+          MatchMissing
+        }
+      }
   }
 }
 
@@ -569,47 +587,21 @@ pub fn Router::route(
   path : String,
 ) -> RouteOutcome {
   let clean_path = clean_path_view(path)
-  let method_key = meth
-  match self.match_in_tree(method_key, method_key, clean_path) {
-    Some(outcome) => outcome
-    None =>
-      if method_key == "HEAD" {
-        match self.match_in_tree("GET", method_key, clean_path) {
-          Some(outcome) => outcome
-          None => self.dispatch_miss(clean_path)
-        }
-      } else {
-        self.dispatch_miss(clean_path)
-      }
-  }
-}
-
-///|
-fn found_route(
-  route_path : String,
-  method_key : String,
-  params : Map[String, String],
-  wildcard : String,
-  wildcard_name : String,
-  handler : Handler?,
-) -> RouteOutcome {
-  RouteFound({
-    path: route_path,
-    method: method_key,
-    params,
-    wildcard,
-    wildcard_name,
-    handler,
-  })
-}
-
-///|
-fn Router::dispatch_miss(self : Router, path : StringView) -> RouteOutcome {
-  let allowed = self.allowed_methods(path)
-  if allowed.length() > 0 {
-    RouteMethodNotAllowed(allowed)
-  } else {
-    RouteNotFound
+  match self.match_route(meth, clean_path) {
+    MatchFound(node, params, wildcard) =>
+      RouteFound({
+        path: node.route_path,
+        method: meth,
+        params: match params {
+          Some(params) => params
+          None => Map([], capacity=0)
+        },
+        wildcard,
+        wildcard_name: node.route_wildcard_name,
+        handler: node.handler,
+      })
+    MatchMethods(methods) => RouteMethodNotAllowed(methods)
+    MatchMissing => RouteNotFound
   }
 }
 
@@ -642,18 +634,23 @@ pub fn Router::dispatch_with(
   ctx : Context,
   fallback : Handler?,
 ) -> Unit raise {
-  match self.route(ctx.request.method, ctx.request.path) {
-    RouteFound(route) => {
-      for name, value in route.params {
-        ctx.state.set(PARAM_PREFIX + name, value)
+  let clean_path = clean_path_view(ctx.request.path)
+  match self.match_route(ctx.request.method, clean_path) {
+    MatchFound(node, params, _) => {
+      match params {
+        Some(params) =>
+          for name, value in params {
+            ctx.state.set(PARAM_PREFIX + name, value)
+          }
+        None => ()
       }
-      match route.handler {
+      match node.handler {
         Some(handler) => handler(ctx)
         None => not_found(ctx)
       }
     }
-    RouteMethodNotAllowed(methods) => method_not_allowed(ctx, methods)
-    RouteNotFound =>
+    MatchMethods(methods) => method_not_allowed(ctx, methods)
+    MatchMissing =>
       match fallback {
         Some(handler) => handler(ctx)
         None => not_found(ctx)
@@ -1042,12 +1039,22 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
           }
         }
         builder.write_char('%')
+        i = i + 1
       } else if value == 43 && plus_as_space {
         builder.write_char(' ')
+        i = i + 1
       } else {
-        builder.write_char(value.unsafe_to_char())
+        let run_start = i
+        i = i + 1
+        while i < length {
+          let next = source.unsafe_get(i).to_int()
+          if next == 37 || (next == 43 && plus_as_space) {
+            break
+          }
+          i = i + 1
+        }
+        builder.write_stringview(source[run_start:i])
       }
-      i = i + 1
     }
     return builder.to_string()
   }
@@ -1105,10 +1112,18 @@ fn is_url_unreserved(value : Int32) -> Bool {
 pub fn url_encode(source : String) -> String {
   let hex = "0123456789ABCDEF"
   let view = source.view()
+  let length = view.length()
+  let mut start = 0
+  while start < length && is_url_unreserved(view.unsafe_get(start).to_int()) {
+    start = start + 1
+  }
+  if start == length {
+    return source
+  }
   if is_ascii_view(view) {
-    let length = view.length()
     let builder = StringBuilder(size_hint=length)
-    let mut i = 0
+    builder.write_stringview(view[:start])
+    let mut i = start
     while i < length {
       let value = view.unsafe_get(i).to_int()
       if is_url_unreserved(value) {
@@ -1284,11 +1299,13 @@ pub fn parse_urlencoded(source : String) -> Map[String, String] {
 
 ///|
 fn encoded_key_matches(key : StringView, name : String) -> Bool {
-  if !key.contains("%") && !key.contains("+") {
-    key == name.view()
-  } else {
-    decode_url(key) == name
+  if key == name.view() {
+    return true
   }
+  if !key.contains("%") && !key.contains("+") {
+    return false
+  }
+  decode_url(key) == name
 }
 
 ///|
@@ -1337,7 +1354,7 @@ pub fn Context::form(self : Context, name : String) -> String {
 pub fn Context::queries(self : Context) -> Map[String, String] {
   match self.request.path.find("?") {
     Some(index) => parse_urlencoded_view(self.request.path[index + 1:])
-    None => Map([])
+    None => Map([], capacity=0)
   }
 }
 
@@ -1348,7 +1365,7 @@ pub fn Context::form_map(self : Context) -> Map[String, String] {
     content_type.view(),
     "application/x-www-form-urlencoded".view(),
   ) {
-    return Map([])
+    return Map([], capacity=0)
   }
   parse_urlencoded_view(self.request.body.view())
 }
@@ -1404,15 +1421,13 @@ fn find_view_from(
   if length == 0 {
     return Some(start)
   }
-  let last = haystack.length() - length
-  let mut i = start
-  while i <= last {
-    if haystack[i:i + length] == needle {
-      return Some(i)
-    }
-    i = i + 1
+  if start > haystack.length() - length {
+    return None
   }
-  None
+  match haystack[start:].find(needle) {
+    Some(offset) => Some(start + offset)
+    None => None
+  }
 }
 
 ///|
@@ -1426,9 +1441,22 @@ fn find_view_ignore_ascii_case(
     return Some(start)
   }
   let last = haystack.length() - length
+  let first = needle.unsafe_get(0).to_int()
+  let lower_first = if first >= 65 && first <= 90 {
+    first + 32
+  } else {
+    first
+  }
   let mut i = start
   while i <= last {
-    if starts_with_ignore_ascii_case(haystack[i:], needle) {
+    let value = haystack.unsafe_get(i).to_int()
+    let lower_value = if value >= 65 && value <= 90 {
+      value + 32
+    } else {
+      value
+    }
+    if lower_value == lower_first &&
+      starts_with_ignore_ascii_case(haystack[i:], needle) {
       return Some(i)
     }
     i = i + 1
@@ -1505,6 +1533,10 @@ fn get_header_ignore_case(
   headers : Map[String, String],
   name : String,
 ) -> String? {
+  match headers.get(name) {
+    Some(value) => return Some(value)
+    None => ()
+  }
   let target = name.view()
   for key, value in headers {
     if key.view().equal_ignore_ascii_case(target) {
@@ -2013,6 +2045,9 @@ pub fn App::resolve_websocket(
   self : App,
   path : String,
 ) -> (WebSocketHandler, Map[String, String])? {
+  if self.ws_handlers.is_empty() {
+    return None
+  }
   match self.ws_router.route("GET", path) {
     RouteFound(route) =>
       match self.ws_handlers.get(route.path) {

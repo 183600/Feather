@@ -3,31 +3,39 @@ pub suberror PayloadTooLarge
 
 ///|
 async fn read_body(reader : &@io.Reader, limit : Int32) -> String {
-  let mut buffer : @buffer.Buffer? = None
-  let mut total = 0
-  let mut done = false
-  while !done {
-    match reader.read_some(max_len=8192) {
-      None => done = true
-      Some(chunk) => {
-        total = total + chunk.length()
-        if total > limit {
-          raise PayloadTooLarge
-        }
-        match buffer {
-          Some(buffer) => buffer.write_bytes(chunk)
-          None => {
-            let created = @buffer.Buffer::Buffer(size_hint=total)
-            created.write_bytes(chunk)
-            buffer = Some(created)
+  let first = match reader.read_some(max_len=8192) {
+    None => return ""
+    Some(chunk) => chunk
+  }
+  let first_length = first.length()
+  if first_length > limit {
+    raise PayloadTooLarge
+  }
+  match reader.read_some(max_len=8192) {
+    None => @utf8.decode_lossy(first)
+    Some(second) => {
+      let mut total = first_length + second.length()
+      if total > limit {
+        raise PayloadTooLarge
+      }
+      let buffer = @buffer.Buffer::Buffer(size_hint=total)
+      buffer.write_bytes(first)
+      buffer.write_bytes(second)
+      let mut done = false
+      while !done {
+        match reader.read_some(max_len=8192) {
+          None => done = true
+          Some(chunk) => {
+            total = total + chunk.length()
+            if total > limit {
+              raise PayloadTooLarge
+            }
+            buffer.write_bytes(chunk)
           }
         }
       }
+      @utf8.decode_lossy(buffer.to_bytes())
     }
-  }
-  match buffer {
-    Some(buffer) => @utf8.decode_lossy(buffer.to_bytes())
-    None => ""
   }
 }
 
@@ -74,20 +82,19 @@ async fn send_response(
   for name, value in response.headers {
     headers.set(@http.CaseInsensitiveString(name), value)
   }
+  let has_body = !response.body.is_empty()
+  let body_bytes = if has_body { @utf8.encode(response.body) } else { b"" }
   let content_length_header = @http.CaseInsensitiveString("Content-Length")
-  if !response.body.is_empty() && !headers.contains(content_length_header) {
-    headers.set(
-      content_length_header,
-      @utf8.encode(response.body).length().to_string(),
-    )
+  if has_body && !headers.contains(content_length_header) {
+    headers.set(content_length_header, body_bytes.length().to_string())
   }
   conn.send_response(
     response.status,
     status_text(response.status),
     extra_headers=headers,
   )
-  if !head && !response.body.is_empty() {
-    conn.write_string(response.body)
+  if !head && has_body {
+    conn.write(body_bytes)
   }
   conn.end_response()
 }
@@ -219,10 +226,7 @@ async fn handle_request(
   if head || request.meth is @http.Get {
     match app.static_file_for(request.path) {
       Some(file_path) =>
-        if !app.has_route(
-          request_method_to_string(request.meth),
-          request.path,
-        ) {
+        if !app.has_route(if head { "HEAD" } else { "GET" }, request.path) {
           serve_static_file(conn, file_path, head)
           return
         }

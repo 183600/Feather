@@ -17,4 +17,5 @@ import {
   "moonbitlang/async/socket",
   "moonbitlang/async/fs",
   "moonbitlang/async/websocket",
+  "moonbitlang/core/bench",
 } for "test"
