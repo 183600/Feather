@@ -1266,7 +1266,15 @@ pub fn Context::cookies(self : Context) -> Map[String, String] {
       if eq < pair_length {
         let name = owned_trimmed(pair[:eq])
         if name != "" {
-          cookies.set(name, pair[eq + 1:].to_owned())
+          let raw_value = pair[eq + 1:]
+          let value = if raw_value.length() >= 2 &&
+            raw_value.unsafe_get(0) == ('"' : UInt16) &&
+            raw_value.unsafe_get(raw_value.length() - 1) == ('"' : UInt16) {
+            raw_value[1:raw_value.length() - 1].to_owned()
+          } else {
+            raw_value.to_owned()
+          }
+          cookies.set(name, value)
         }
       }
     }
@@ -2285,44 +2293,65 @@ pub fn Context::queries(self : Context) -> Map[String, String] {
 }
 
 ///|
-pub fn Context::query_values(self : Context, name : String) -> Array[String] {
+fn collect_values(source : StringView, name : String) -> Array[String] {
   let values : Array[String] = []
-  match self.request.path.find("?") {
-    Some(index) => {
-      let name_view = name.view()
-      let source = self.request.path[index + 1:].view()
-      let length = source.length()
-      let mut pos = 0
-      while pos < length {
-        let pair_start = pos
-        let mut eq = -1
-        let mut end = pos
-        while end < length {
-          let code = source.unsafe_get(end)
-          if code == ('&' : UInt16) {
-            break
-          }
-          if code == ('=' : UInt16) && eq < 0 {
-            eq = end
-          }
-          end = end + 1
+  let name_view = name.view()
+  let length = source.length()
+  let mut pos = 0
+  while pos < length {
+    let pair_start = pos
+    let mut eq = -1
+    let mut end = pos
+    while end < length {
+      let code = source.unsafe_get(end)
+      if code == ('&' : UInt16) {
+        break
+      }
+      if code == ('=' : UInt16) && eq < 0 {
+        eq = end
+      }
+      end = end + 1
+    }
+    if end > pair_start {
+      let key_end = if eq >= 0 { eq } else { end }
+      if query_key_matches(source, pair_start, key_end, name_view) {
+        if eq >= 0 {
+          values.push(decode_url(source[eq + 1:end]))
+        } else {
+          values.push("")
         }
-        if end > pair_start {
-          let key_end = if eq >= 0 { eq } else { end }
-          if query_key_matches(source, pair_start, key_end, name_view) {
-            if eq >= 0 {
-              values.push(decode_url(source[eq + 1:end]))
-            } else {
-              values.push("")
-            }
-          }
-        }
-        pos = end + 1
       }
     }
-    None => ()
+    pos = end + 1
   }
   values
+}
+
+///|
+/// Collect every value of a possibly repeated query parameter, in the order
+/// they appear in the query string.
+pub fn Context::query_values(self : Context, name : String) -> Array[String] {
+  match self.request.path.find("?") {
+    Some(index) => collect_values(self.request.path[index + 1:].view(), name)
+    None => []
+  }
+}
+
+///|
+/// Collect every value of a possibly repeated url-encoded form field, in the
+/// order they appear in the request body.
+///
+/// Returns an empty array when the body is not
+/// `application/x-www-form-urlencoded`.
+pub fn Context::form_values(self : Context, name : String) -> Array[String] {
+  let content_type = self.header("Content-Type")
+  if !starts_with_ignore_ascii_case(
+    content_type.view(),
+    "application/x-www-form-urlencoded".view(),
+  ) {
+    return []
+  }
+  collect_values(self.request.body.view(), name)
 }
 
 ///|

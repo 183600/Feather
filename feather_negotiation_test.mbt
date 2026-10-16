@@ -128,3 +128,50 @@ test "preferred_type skips rejected offers" {
     None,
   )
 }
+
+///|
+fn encoding_ctx(accept_encoding : String) -> @feather.Context {
+  @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: if accept_encoding == "" {
+      Map([])
+    } else {
+      Map([("Accept-Encoding", accept_encoding)])
+    },
+    body: "",
+  })
+}
+
+///|
+test "accepts_encoding treats a missing header as accepting everything" {
+  assert_true(encoding_ctx("").accepts_encoding("gzip"))
+  assert_true(encoding_ctx("").accepts_encoding("br"))
+  assert_true(encoding_ctx("gzip, identity").accepts_encoding("gzip"))
+  assert_true(encoding_ctx("gzip, identity").accepts_encoding("identity"))
+}
+
+///|
+test "accepts_encoding rejects codings that are not listed" {
+  assert_false(encoding_ctx("identity").accepts_encoding("gzip"))
+  assert_false(encoding_ctx("gzip;q=0").accepts_encoding("gzip"))
+  assert_true(encoding_ctx("gzip;q=0.5").accepts_encoding("gzip"))
+  assert_true(encoding_ctx("*").accepts_encoding("br"))
+  assert_false(encoding_ctx("*;q=0").accepts_encoding("br"))
+  assert_true(encoding_ctx("*;q=0, br;q=0.5").accepts_encoding("br"))
+  assert_true(encoding_ctx("GZIP").accepts_encoding("gzip"))
+}
+
+///|
+test "preferred_encoding picks the best coding and honors server order" {
+  let ctx = encoding_ctx("br;q=0.9, gzip;q=0.8")
+  assert_eq(ctx.preferred_encoding(["gzip", "br"]), Some("br"))
+  assert_eq(ctx.preferred_encoding(["deflate"]), None)
+  let tied = encoding_ctx("gzip, br")
+  assert_eq(tied.preferred_encoding(["gzip", "br"]), Some("gzip"))
+  assert_eq(encoding_ctx("").preferred_encoding([]), None)
+  assert_eq(
+    encoding_ctx("gzip;q=0, *;q=0.5").preferred_encoding(["gzip", "deflate"]),
+    Some("deflate"),
+  )
+}

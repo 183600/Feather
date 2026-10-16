@@ -16,6 +16,10 @@ pub const PARAM_PREFIX : String = "param:"
 
 pub fn apply_middleware(Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> (Context) -> Unit raise
 
+pub fn base64_decode(String) -> Bytes?
+
+pub fn base64_encode(Bytes) -> String
+
 pub fn compose_middleware(Array[(Context) -> Unit]) -> ((Context) -> Unit raise)?
 
 pub fn create_context() -> Context
@@ -37,6 +41,10 @@ pub fn internal_error(Context, String) -> Unit
 pub fn json_object(Map[String, String]) -> Json
 
 pub fn method_not_allowed(Context, Array[String]) -> Unit
+
+pub fn middleware_basic_auth(Map[String, String], realm? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_basic_auth_with((String, String) -> Bool, realm? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_cors(allow_origin? : String, allow_methods? : String, allow_headers? : String, expose_headers? : String, allow_credentials? : Bool, max_age? : Int) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
@@ -92,8 +100,11 @@ pub struct App {
   mut no_route_handler : ((Context) -> Unit raise)?
   ws_router : Router
   ws_handlers : Map[String, async (Context, @websocket.Conn) -> Unit]
+  mut compress_enabled : Bool
+  mut compress_min_size : Int
 }
 pub fn App::all(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::compress(Self, min_size? : Int) -> Self
 pub fn App::delete(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::fallback(Self, (Context) -> Unit raise) -> Self
 pub fn App::get(Self, String, (Context) -> Unit raise) -> Self
@@ -103,6 +114,7 @@ pub fn App::has_route(Self, String, String) -> Bool
 pub fn App::has_websocket(Self, String) -> Bool
 pub fn App::head(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::max_body_size(Self, Int) -> Self
+pub fn App::mount(Self, String, Self) -> Self
 pub fn App::new() -> Self
 pub fn App::options(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::patch(Self, String, (Context) -> Unit raise) -> Self
@@ -142,7 +154,10 @@ pub(all) struct Context {
   cleanups : Array[() -> Unit]
   mut file : FileResponse?
 }
+pub fn Context::accepts(Self, String) -> Bool
+pub fn Context::accepts_encoding(Self, String) -> Bool
 pub fn Context::add_cookie(Self, String, String, path? : String, max_age? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> Unit
+pub fn Context::basic_auth(Self) -> (String, String)?
 pub fn Context::bearer_token(Self) -> String?
 pub fn Context::bytes(Self, Int, Bytes, content_type? : String) -> Unit
 pub fn Context::clear_cookie(Self, String, path? : String) -> Unit
@@ -155,15 +170,19 @@ pub fn Context::file(Self, Int, String, content_type? : String, download_name? :
 pub fn Context::file_response(Self) -> FileResponse?
 pub fn Context::form(Self, String) -> String
 pub fn Context::form_map(Self) -> Map[String, String]
+pub fn Context::form_values(Self, String) -> Array[String]
 pub fn Context::forwarded_ip(Self) -> String
 pub fn Context::fresh(Self, String) -> Bool
+pub fn Context::full_url(Self) -> String
 pub fn Context::get(Self, String) -> String
 pub fn Context::get_json(Self, String) -> Json?
 pub fn Context::get_method(Self) -> String
 pub fn Context::get_path(Self) -> String
 pub fn Context::header(Self, String) -> String
+pub fn Context::host(Self) -> String
 pub fn Context::html(Self, Int, String) -> Unit
 pub fn Context::ip(Self) -> String
+pub fn Context::is_secure(Self) -> Bool
 pub fn Context::json(Self, Int, Map[String, String]) -> Unit
 pub fn[T : @json.FromJson] Context::json_as(Self) -> T raise HttpError
 pub fn Context::json_body(Self) -> Json raise HttpError
@@ -179,6 +198,9 @@ pub fn Context::param(Self, String) -> String
 pub fn Context::param_bool(Self, String) -> Bool?
 pub fn Context::param_int(Self, String) -> Int?
 pub fn Context::params(Self) -> Map[String, String]
+pub fn Context::preferred_encoding(Self, ArrayView[String]) -> String?
+pub fn Context::preferred_type(Self, ArrayView[String]) -> String?
+pub fn Context::protocol(Self) -> String
 pub fn Context::queries(Self) -> Map[String, String]
 pub fn Context::query(Self, String) -> String
 pub fn Context::query_bool(Self, String) -> Bool?
@@ -198,6 +220,7 @@ pub(all) struct Feather {
   app : App
 }
 pub fn Feather::all(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::compress(Self, min_size? : Int) -> Self
 pub fn Feather::delete(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::fallback(Self, (Context) -> Unit raise) -> Self
 pub fn Feather::get(Self, String, (Context) -> Unit raise) -> Self
@@ -206,6 +229,7 @@ pub fn Feather::handle(Self, Request) -> Response
 pub fn Feather::head(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::listen_address(Self) -> String
 pub fn Feather::max_body_size(Self, Int) -> Self
+pub fn Feather::mount(Self, String, Self) -> Self
 pub fn Feather::options(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::patch(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::post(Self, String, (Context) -> Unit raise) -> Self
@@ -214,7 +238,7 @@ pub fn Feather::request_timeout(Self, Int) -> Self
 pub fn Feather::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn Feather::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
 pub async fn Feather::serve(Self) -> Unit
-pub async fn Feather::serve_with(Self, @http.Server) -> Unit
+pub async fn Feather::serve_with(Self, @http.Server, max_connections? : Int) -> Unit
 pub fn Feather::static_files(Self, String, String, index? : String, max_age? : Int) -> Self
 pub fn Feather::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn Feather::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
@@ -315,6 +339,8 @@ pub(all) struct Router {
   routes : Array[Route]
   trees : Map[String, RouteNode]
   named : Map[String, NamedRoute]
+  dynamic_caches : Map[String, Map[String, (RouteNode, Int)]]
+  miss_caches : Map[String, Map[String, Array[String]]]
 }
 pub fn Router::add_named_route(Self, String, String, String, (Context) -> Unit raise) -> Unit
 pub fn Router::add_route(Self, String, String, (Context) -> Unit raise) -> Unit

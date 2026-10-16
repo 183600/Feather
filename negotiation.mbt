@@ -163,3 +163,109 @@ pub fn Context::preferred_type(
   }
   best
 }
+
+///|
+/// Quality value (in thousandths) assigned to `coding` by an
+/// `Accept-Encoding` header.
+///
+/// A missing header accepts every coding. An empty header value is treated
+/// like a missing header. When the header is present but neither `coding` nor
+/// `*` is listed, the coding is not acceptable and `0` is returned.
+fn accept_encoding_quality(header : StringView, coding : StringView) -> Int {
+  if trim_ascii_space(header).is_empty() {
+    return 1000
+  }
+  let length = header.length()
+  let mut pos = 0
+  let mut exact_q = -1
+  let mut star_q = -1
+  while pos < length {
+    let mut end = pos
+    while end < length {
+      let code = header.unsafe_get(end)
+      if code == (';' : UInt16) || code == (',' : UInt16) {
+        break
+      }
+      end = end + 1
+    }
+    let token = trim_ascii_space(header[pos:end])
+    let mut quality = 1000
+    let mut scan = end
+    while scan < length && header.unsafe_get(scan) == (';' : UInt16) {
+      scan = scan + 1
+      let parameter_start = scan
+      while scan < length {
+        let code = header.unsafe_get(scan)
+        if code == (';' : UInt16) || code == (',' : UInt16) {
+          break
+        }
+        scan = scan + 1
+      }
+      let parameter = trim_ascii_space(header[parameter_start:scan])
+      if parameter.length() >= 2 &&
+        (parameter.unsafe_get(0) == ('q' : UInt16) ||
+          parameter.unsafe_get(0) == ('Q' : UInt16)) {
+        let mut marker = 1
+        while marker < parameter.length() &&
+          parameter.unsafe_get(marker) == (' ' : UInt16) {
+          marker = marker + 1
+        }
+        if marker < parameter.length() &&
+          parameter.unsafe_get(marker) == ('=' : UInt16) {
+          quality = parse_quality(trim_ascii_space(parameter[marker + 1:]))
+        }
+      }
+    }
+    if token.equal_ignore_ascii_case(coding) {
+      exact_q = quality
+    } else if token == "*" {
+      star_q = quality
+    }
+    pos = scan
+    if pos < length && header.unsafe_get(pos) == (',' : UInt16) {
+      pos = pos + 1
+    }
+  }
+  if exact_q >= 0 {
+    exact_q
+  } else if star_q >= 0 {
+    star_q
+  } else {
+    0
+  }
+}
+
+///|
+/// Check whether the request's `Accept-Encoding` header allows `encoding`.
+///
+/// A missing or empty header accepts every encoding; `q=0` entries reject the
+/// matched encoding, and an encoding that is neither listed nor matched by
+/// `*` is not acceptable.
+pub fn Context::accepts_encoding(self : Context, encoding : String) -> Bool {
+  accept_encoding_quality(self.header("Accept-Encoding").view(), encoding.view()) >
+  0
+}
+
+///|
+/// Pick the most preferred content coding from `offers` according to the
+/// request's `Accept-Encoding` header.
+///
+/// Returns `None` when the client rejects every offer. Ties keep the order of
+/// `offers`, so the server can express its own preference. Use the special
+/// `"identity"` offer to represent an unencoded representation.
+pub fn Context::preferred_encoding(
+  self : Context,
+  offers : ArrayView[String],
+) -> String? {
+  let header = self.header("Accept-Encoding").view()
+  let mut best : String? = None
+  let mut best_q = 0
+  for offer in offers {
+    let quality = accept_encoding_quality(header, offer.view())
+    if quality > best_q {
+      best_q = quality
+      best = Some(offer)
+    }
+  }
+  best
+}

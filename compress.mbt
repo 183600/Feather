@@ -51,61 +51,13 @@ fn parse_quality(value : StringView) -> Int {
 /// Check whether `Accept-Encoding` allows the `gzip` coding.
 ///
 /// A coding is allowed when its quality value is positive, or when it is not
-/// mentioned but `*` has a positive quality value.
+/// mentioned but `*` has a positive quality value. An empty header allows
+/// nothing, matching the caller which only consults a present header.
 fn accept_encoding_allows_gzip(header : StringView) -> Bool {
-  let length = header.length()
-  let mut pos = 0
-  let mut gzip_q = -1
-  let mut star_q = -1
-  while pos < length {
-    let mut end = pos
-    while end < length {
-      let code = header.unsafe_get(end)
-      if code == (';' : UInt16) || code == (',' : UInt16) {
-        break
-      }
-      end = end + 1
-    }
-    let token = trim_ascii_space(header[pos:end])
-    let mut quality = 1000
-    let mut scan = end
-    while scan < length && header.unsafe_get(scan) == (';' : UInt16) {
-      scan = scan + 1
-      let parameter_start = scan
-      while scan < length {
-        let code = header.unsafe_get(scan)
-        if code == (';' : UInt16) || code == (',' : UInt16) {
-          break
-        }
-        scan = scan + 1
-      }
-      let parameter = trim_ascii_space(header[parameter_start:scan])
-      if parameter.length() >= 2 &&
-        (parameter.unsafe_get(0) == ('q' : UInt16) ||
-          parameter.unsafe_get(0) == ('Q' : UInt16)) {
-        let mut marker = 1
-        while marker < parameter.length() &&
-          parameter.unsafe_get(marker) == (' ' : UInt16) {
-          marker = marker + 1
-        }
-        if marker < parameter.length() &&
-          parameter.unsafe_get(marker) == ('=' : UInt16) {
-          quality = parse_quality(trim_ascii_space(parameter[marker + 1:]))
-        }
-      }
-    }
-    if token.equal_ignore_ascii_case("gzip".view()) {
-      gzip_q = quality
-    } else if token == "*" {
-      star_q = quality
-    }
-    pos = scan
-    if pos < length && header.unsafe_get(pos) == (',' : UInt16) {
-      pos = pos + 1
-    }
+  if trim_ascii_space(header).is_empty() {
+    return false
   }
-  let effective = if gzip_q >= 0 { gzip_q } else { star_q }
-  effective > 0
+  accept_encoding_quality(header, "gzip".view()) > 0
 }
 
 ///|

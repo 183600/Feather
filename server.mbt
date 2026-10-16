@@ -62,9 +62,39 @@ let header_set_cookie : @http.CaseInsensitiveString = @http.CaseInsensitiveStrin
 )
 
 ///|
-async fn read_body(reader : &@io.Reader, limit : Int32) -> String {
+let header_date : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Date",
+)
+
+///|
+let header_content_encoding : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Content-Encoding",
+)
+
+///|
+/// Raised when a request body declares a content coding but cannot be decoded.
+priv suberror MalformedRequestBody
+
+///|
+/// Send a response, stamping the mandatory `Date` header (RFC 7231 §7.1.1.2)
+/// when the handler did not already provide one.
+async fn send_with_date(
+  conn : @http.ServerConnection,
+  code : Int32,
+  reason : String,
+  headers : @http.Headers,
+  cookies? : Array[@http.Cookie],
+) -> Unit {
+  if !headers.contains(header_date) {
+    headers.set(header_date, format_http_date(@async.now() / 1000L))
+  }
+  conn.send_response(code, reason, extra_headers=headers, cookies?)
+}
+
+///|
+async fn read_body_bytes(reader : &@io.Reader, limit : Int32) -> Bytes {
   let first = match reader.read_some(max_len=8192) {
-    None => return ""
+    None => return b""
     Some(chunk) => chunk
   }
   let first_length = first.length()
@@ -72,7 +102,7 @@ async fn read_body(reader : &@io.Reader, limit : Int32) -> String {
     raise PayloadTooLarge
   }
   match reader.read_some(max_len=8192) {
-    None => @utf8.decode_lossy(first)
+    None => first
     Some(second) => {
       let mut total = first_length + second.length()
       if total > limit {
@@ -94,9 +124,47 @@ async fn read_body(reader : &@io.Reader, limit : Int32) -> String {
           }
         }
       }
-      @utf8.decode_lossy(buffer.to_bytes())
+      buffer.to_bytes()
     }
   }
+}
+
+///|
+async fn read_body(reader : &@io.Reader, limit : Int32) -> String {
+  @utf8.decode_lossy(read_body_bytes(reader, limit))
+}
+
+///|
+/// Decode a gzip-compressed request body.
+///
+/// The decompressed size is bounded by `limit` so a small compressed payload
+/// cannot expand without bound; a corrupt stream raises
+/// `MalformedRequestBody`.
+async fn decode_gzip_body(data : Bytes, limit : Int32) -> Bytes {
+  let reader = @io.MemoryReader(async fn(writer) {
+    writer.write(data)
+  })
+  defer reader.close()
+  let decoder = @gzip.Decoder::Decoder(reader)
+  let buffer = @buffer.Buffer::Buffer(size_hint=data.length())
+  let mut total = 0
+  let mut done = false
+  while !done {
+    let chunk = decoder.read_some(max_len=8192) catch {
+      _ => raise MalformedRequestBody
+    }
+    match chunk {
+      None => done = true
+      Some(chunk) => {
+        total = total + chunk.length()
+        if total > limit {
+          raise PayloadTooLarge
+        }
+        buffer.write_bytes(chunk)
+      }
+    }
+  }
+  buffer.to_bytes()
 }
 
 ///|
@@ -120,15 +188,94 @@ async fn request_from_http(
   body : &@io.Reader,
   max_body_size : Int32,
 ) -> Request {
+  let gzip_encoded = match request.headers.get(header_content_encoding) {
+    Some(value) =>
+      trim_ascii_space(value.view()).equal_ignore_ascii_case("gzip".view())
+    None => false
+  }
   let headers : Map[String, String] = Map([], capacity=request.headers.length())
   for name, value in request.headers {
-    headers.set(name.to_string(), value)
+    let text = name.to_string()
+    let stale_length = gzip_encoded &&
+      (text.view().equal_ignore_ascii_case("content-encoding".view()) ||
+        text.view().equal_ignore_ascii_case("content-length".view()))
+    if !stale_length {
+      headers.set(text, value)
+    }
+  }
+  let body_text = if gzip_encoded {
+    @utf8.decode_lossy(
+      decode_gzip_body(read_body_bytes(body, max_body_size), max_body_size),
+    )
+  } else {
+    read_body(body, max_body_size)
   }
   {
     method: request_method_to_string(request.meth),
     path: request.path,
     headers,
-    body: read_body(body, max_body_size),
+    body: body_text,
+  }
+}
+
+///|
+/// Build the `ETag` and `Last-Modified` validators for a file from its size
+/// and modification time.
+fn file_validators(
+  size : Int64,
+  mtime_secs : Int64,
+  mtime_nanos : Int,
+) -> (String, String) {
+  let etag = "\"" +
+    size.to_string() +
+    "-" +
+    mtime_secs.to_string() +
+    "-" +
+    mtime_nanos.to_string() +
+    "\""
+  (etag, format_http_date(mtime_secs))
+}
+
+///|
+/// Whether the request's conditional headers allow answering `304 Not Modified`
+/// for a representation identified by `etag` / `mtime_secs`.
+///
+/// `If-None-Match` takes precedence over `If-Modified-Since`.
+fn conditional_not_modified(
+  request : @http.Request,
+  etag : String,
+  mtime_secs : Int64,
+) -> Bool {
+  match request.headers.get(header_if_none_match) {
+    Some(value) => etag_header_matches(value.view(), etag)
+    None =>
+      match request.headers.get(header_if_modified_since) {
+        Some(value) =>
+          match parse_http_date(value) {
+            Some(since) => mtime_secs > 0L && mtime_secs <= since
+            None => false
+          }
+        None => false
+      }
+  }
+}
+
+///|
+/// Whether an `If-Range` condition still matches the representation, in which
+/// case a `Range` request may be served partially.
+fn if_range_allows(
+  request : @http.Request,
+  etag : String,
+  mtime_secs : Int64,
+) -> Bool {
+  match request.headers.get(header_if_range) {
+    Some(value) =>
+      value == etag ||
+      (match parse_http_date(value) {
+        Some(since) => mtime_secs > 0L && mtime_secs <= since
+        None => false
+      })
+    None => true
   }
 }
 
@@ -138,6 +285,7 @@ async fn send_file_response(
   response : Response,
   file : FileResponse,
   head : Bool,
+  request : @http.Request,
 ) -> Unit {
   let handle = @fs.open(file.path, mode=@fs.ReadOnly) catch {
     _ => {
@@ -156,27 +304,109 @@ async fn send_file_response(
       return
     }
   }
-  let headers : @http.Headers = Map([], capacity=response.headers.length() + 2)
+  let mtime = handle.mtime() catch {
+    _ => (0L, 0)
+  }
+  let (mtime_secs, mtime_nanos) = mtime
+  let (etag, last_modified) = file_validators(size, mtime_secs, mtime_nanos)
+  let headers : @http.Headers = Map([], capacity=response.headers.length() + 4)
   for name, value in response.headers {
     headers.set(@http.CaseInsensitiveString(name), value)
   }
   if !headers.contains(header_content_type) {
     headers.set(header_content_type, file.content_type)
   }
-  if !headers.contains(header_content_length) {
-    headers.set(header_content_length, size.to_string())
+  if !headers.contains(header_etag) {
+    headers.set(header_etag, etag)
+  }
+  if !headers.contains(header_last_modified) {
+    headers.set(header_last_modified, last_modified)
   }
   if response.cookies.length() > 0 {
     headers.remove(header_set_cookie)
   }
-  conn.send_response(
-    response.status,
-    status_text(response.status),
-    extra_headers=headers,
+  let effective_etag = headers.get(header_etag).unwrap_or(etag)
+  if conditional_not_modified(request, effective_etag, mtime_secs) {
+    let not_modified_headers : @http.Headers = Map([], capacity=2)
+    not_modified_headers.set(header_etag, effective_etag)
+    match headers.get(header_last_modified) {
+      Some(value) => not_modified_headers.set(header_last_modified, value)
+      None => ()
+    }
+    send_with_date(
+      conn,
+      304,
+      "Not Modified",
+      not_modified_headers,
+      cookies=response.cookies,
+    )
+    conn.end_response()
+    return
+  }
+  let mut status = response.status
+  let mut start = 0L
+  let mut length = size
+  match request.headers.get(header_range) {
+    Some(value) => {
+      if if_range_allows(request, effective_etag, mtime_secs) {
+        match parse_byte_range(value, size) {
+          ByteRangeSpec(range_start, range_end) => {
+            status = 206
+            start = range_start
+            length = range_end - range_start + 1L
+          }
+          ByteRangeInvalid => {
+            headers.remove(header_content_length)
+            headers.set(header_content_range, "bytes */" + size.to_string())
+            send_with_date(
+              conn,
+              416,
+              status_text(416),
+              headers,
+              cookies=response.cookies,
+            )
+            conn.end_response()
+            return
+          }
+          ByteRangeFull => ()
+        }
+      }
+    }
+    None => ()
+  }
+  if status == 206 {
+    headers.set(
+      header_content_range,
+      "bytes " +
+      start.to_string() +
+      "-" +
+      (start + length - 1L).to_string() +
+      "/" +
+      size.to_string(),
+    )
+  }
+  if !headers.contains(header_accept_ranges) {
+    headers.set(header_accept_ranges, "bytes")
+  }
+  let body_allowed = status != 204 && status != 304
+  if body_allowed {
+    headers.set(header_content_length, length.to_string())
+  } else {
+    headers.remove(header_content_length)
+  }
+  send_with_date(
+    conn,
+    status,
+    status_text(status),
+    headers,
     cookies=response.cookies,
   )
-  if !head && size > 0L {
-    conn.write_reader(handle)
+  if !head && body_allowed && length > 0L {
+    if start == 0L && length == size {
+      conn.write_reader(handle)
+    } else {
+      write_file_range(conn, handle, start, length)
+    }
   }
   conn.end_response()
 }
@@ -207,10 +437,11 @@ async fn send_response(
   if response.cookies.length() > 0 {
     headers.remove(header_set_cookie)
   }
-  conn.send_response(
+  send_with_date(
+    conn,
     response.status,
     status_text(response.status),
-    extra_headers=headers,
+    headers,
     cookies=response.cookies,
   )
   if !head && has_body {
@@ -226,13 +457,10 @@ async fn send_simple(
   body : String,
   head : Bool,
 ) -> Unit {
-  conn.send_response(
-    code,
-    status_text(code),
-    extra_headers=Map([
-      (@http.CaseInsensitiveString("Content-Type"), "text/plain; charset=utf-8"),
-    ]),
-  )
+  let headers : @http.Headers = Map([
+    (@http.CaseInsensitiveString("Content-Type"), "text/plain; charset=utf-8"),
+  ])
+  send_with_date(conn, code, status_text(code), headers)
   if !head {
     conn.write_string(body)
   }
@@ -293,48 +521,25 @@ async fn serve_static_file(
   defer file.close()
   if file.kind() is @fs.Directory {
     let location = append_trailing_slash(request.path)
-    conn.send_response(
-      301,
-      "Moved Permanently",
-      extra_headers=Map([
-        (@http.CaseInsensitiveString("Location"), location),
-      ]),
-    )
+    let headers : @http.Headers = Map([
+      (@http.CaseInsensitiveString("Location"), location),
+    ])
+    send_with_date(conn, 301, "Moved Permanently", headers)
     conn.end_response()
     return
   }
   let size = file.size() catch {
     _ => 0L
   }
-  let (mtime_secs, mtime_nanos) = match (file.mtime() catch {
+  let mtime = file.mtime() catch {
     _ => (0L, 0)
-  }) {
-    (secs, nanos) => (secs, nanos)
   }
-  let etag = "\"" +
-    size.to_string() +
-    "-" +
-    mtime_secs.to_string() +
-    "-" +
-    mtime_nanos.to_string() +
-    "\""
-  let last_modified = format_http_date(mtime_secs)
+  let (mtime_secs, mtime_nanos) = mtime
+  let (etag, last_modified) = file_validators(size, mtime_secs, mtime_nanos)
   let etag_key = header_etag
   let last_modified_key = header_last_modified
   let cache_control_key = header_cache_control
-  let not_modified = match request.headers.get(header_if_none_match) {
-    Some(value) => etag_header_matches(value.view(), etag)
-    None =>
-      match request.headers.get(header_if_modified_since) {
-        Some(value) =>
-          match parse_http_date(value) {
-            Some(since) => mtime_secs > 0L && mtime_secs <= since
-            None => false
-          }
-        None => false
-      }
-  }
-  if not_modified {
+  if conditional_not_modified(request, etag, mtime_secs) {
     let headers : @http.Headers = Map([
       (etag_key, etag),
       (last_modified_key, last_modified),
@@ -342,22 +547,13 @@ async fn serve_static_file(
     if cache_control != "" {
       headers.set(cache_control_key, cache_control)
     }
-    conn.send_response(304, "Not Modified", extra_headers=headers)
+    send_with_date(conn, 304, "Not Modified", headers)
     conn.end_response()
     return
   }
-  let range_allowed = match request.headers.get(header_if_range) {
-    Some(value) =>
-      value == etag ||
-      (match parse_http_date(value) {
-        Some(since) => mtime_secs > 0L && mtime_secs <= since
-        None => false
-      })
-    None => true
-  }
   let range = match request.headers.get(header_range) {
     Some(value) =>
-      if range_allowed {
+      if if_range_allows(request, etag, mtime_secs) {
         parse_byte_range(value, size)
       } else {
         ByteRangeFull
@@ -370,14 +566,11 @@ async fn serve_static_file(
   let accept_ranges_key = header_accept_ranges
   match range {
     ByteRangeInvalid => {
-      conn.send_response(
-        416,
-        "Range Not Satisfiable",
-        extra_headers=Map([
-          (content_range_key, "bytes */" + size.to_string()),
-          (accept_ranges_key, "bytes"),
-        ]),
-      )
+      let headers : @http.Headers = Map([
+        (content_range_key, "bytes */" + size.to_string()),
+        (accept_ranges_key, "bytes"),
+      ])
+      send_with_date(conn, 416, "Range Not Satisfiable", headers)
       conn.end_response()
     }
     ByteRangeSpec(start, end) => {
@@ -401,7 +594,7 @@ async fn serve_static_file(
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
       }
-      conn.send_response(206, "Partial Content", extra_headers=headers)
+      send_with_date(conn, 206, "Partial Content", headers)
       if !head {
         write_file_range(conn, file, start, length)
       }
@@ -418,7 +611,7 @@ async fn serve_static_file(
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
       }
-      conn.send_response(200, "OK", extra_headers=headers)
+      send_with_date(conn, 200, "OK", headers)
       if !head {
         conn.write_reader(file)
       }
@@ -462,6 +655,10 @@ async fn handle_websocket(
   let req = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
       send_simple(conn, 413, "413 Payload Too Large", false)
+      return
+    }
+    MalformedRequestBody => {
+      send_simple(conn, 400, "400 Bad Request", false)
       return
     }
     _ => {
@@ -529,6 +726,10 @@ async fn handle_request(
         send_simple(conn, 413, "413 Payload Too Large", head)
         return
       }
+      MalformedRequestBody => {
+        send_simple(conn, 400, "400 Bad Request", head)
+        return
+      }
       err => {
         ignore(err)
         send_simple(conn, 500, "500 Internal Server Error", head)
@@ -541,6 +742,10 @@ async fn handle_request(
         send_simple(conn, 413, "413 Payload Too Large", head)
         return
       }
+      MalformedRequestBody => {
+        send_simple(conn, 400, "400 Bad Request", head)
+        return
+      }
       err => {
         ignore(err)
         send_simple(conn, 500, "500 Internal Server Error", head)
@@ -549,7 +754,7 @@ async fn handle_request(
     }
   }
   match file {
-    Some(file) => send_file_response(conn, response, file, head)
+    Some(file) => send_file_response(conn, response, file, head, request)
     None => send_response(conn, response, head)
   }
 }
@@ -591,6 +796,10 @@ pub async fn Feather::serve(self : Feather) -> Unit {
 }
 
 ///|
-pub async fn Feather::serve_with(self : Feather, server : @http.Server) -> Unit {
-  self.app.serve_with(server)
+pub async fn Feather::serve_with(
+  self : Feather,
+  server : @http.Server,
+  max_connections? : Int32,
+) -> Unit {
+  self.app.serve_with(server, max_connections?)
 }
