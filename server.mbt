@@ -871,6 +871,49 @@ async fn handle_sse(
 }
 
 ///|
+/// Stream a chunked response for a handler registered with `App::stream`.
+///
+/// The response header is sent by the first `Stream` write (or by `close`),
+/// and the handler controls the status and headers through the handle. A
+/// handler failure (most often a client disconnect surfacing as a write error)
+/// just tears the stream down.
+async fn handle_stream(
+  app : App,
+  request : @http.Request,
+  body : &@io.Reader,
+  conn : @http.ServerConnection,
+  handler : StreamHandler,
+  params : Map[String, String],
+) -> Unit {
+  let req = request_from_http(request, body, app.max_body_size) catch {
+    PayloadTooLarge => {
+      send_simple(conn, 413, "413 Payload Too Large", false)
+      return
+    }
+    MalformedRequestBody => {
+      send_simple(conn, 400, "400 Bad Request", false)
+      return
+    }
+    _ => {
+      send_simple(conn, 500, "500 Internal Server Error", false)
+      return
+    }
+  }
+  let ctx = Context::new(req)
+  ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
+  for name, value in params {
+    ctx.state.set(PARAM_PREFIX + name, value)
+  }
+  let stream = Stream::new(conn)
+  handler(ctx, stream) catch {
+    _ => ()
+  }
+  stream.close() catch {
+    _ => conn.close()
+  }
+}
+
+///|
 async fn handle_request(
   app : App,
   request : @http.Request,
@@ -890,7 +933,14 @@ async fn handle_request(
             handle_sse(app, request, body, conn, handler, params)
             return
           }
-          None => ()
+          None =>
+            match app.resolve_stream(request.path) {
+              Some((handler, params)) => {
+                handle_stream(app, request, body, conn, handler, params)
+                return
+              }
+              None => ()
+            }
         }
     }
   }

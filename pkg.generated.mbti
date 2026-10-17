@@ -117,6 +117,8 @@ pub struct App {
   ws_handlers : Map[String, async (Context, @websocket.Conn) -> Unit]
   sse_router : Router
   sse_handlers : Map[String, async (Context, Sse) -> Unit]
+  stream_router : Router
+  stream_handlers : Map[String, async (Context, Stream) -> Unit]
   mut compress_enabled : Bool
   mut compress_min_size : Int
   mut etag_enabled : Bool
@@ -131,6 +133,7 @@ pub fn App::group(Self, String) -> RouteGroup
 pub fn App::handle(Self, Context) -> Unit raise
 pub fn App::has_route(Self, String, String) -> Bool
 pub fn App::has_sse(Self, String) -> Bool
+pub fn App::has_stream(Self, String) -> Bool
 pub fn App::has_websocket(Self, String) -> Bool
 pub fn App::head(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::max_body_size(Self, Int) -> Self
@@ -142,6 +145,7 @@ pub fn App::post(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::put(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::request_timeout(Self, Int) -> Self
 pub fn App::resolve_sse(Self, String) -> (async (Context, Sse) -> Unit, Map[String, String])?
+pub fn App::resolve_stream(Self, String) -> (async (Context, Stream) -> Unit, Map[String, String])?
 pub fn App::resolve_websocket(Self, String) -> (async (Context, @websocket.Conn) -> Unit, Map[String, String])?
 pub fn App::respond(Self, Request) -> Response
 pub fn App::route(Self, String, String, (Context) -> Unit raise) -> Self
@@ -152,6 +156,7 @@ pub fn App::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn App::static_cache_control_for(Self, String) -> String
 pub fn App::static_file_for(Self, String) -> String?
 pub fn App::static_files(Self, String, String, index? : String, max_age? : Int, precompressed? : Bool) -> Self
+pub fn App::stream(Self, String, async (Context, Stream) -> Unit) -> Self
 pub fn App::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn App::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 pub fn App::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
@@ -287,6 +292,7 @@ pub async fn Feather::serve(Self) -> Unit
 pub async fn Feather::serve_with(Self, @http.Server, max_connections? : Int) -> Unit
 pub fn Feather::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn Feather::static_files(Self, String, String, index? : String, max_age? : Int, precompressed? : Bool) -> Self
+pub fn Feather::stream(Self, String, async (Context, Stream) -> Unit) -> Self
 pub fn Feather::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn Feather::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 pub fn Feather::validate_body_size(Self, String) -> Bool
@@ -463,12 +469,31 @@ pub(all) struct StaticMount {
   precompressed : Bool
 }
 
+pub struct Stream {
+  conn : @http.ServerConnection
+  mut closed : Bool
+  mut started : Bool
+  mut status : Int
+  headers : Map[String, String]
+}
+pub async fn Stream::close(Self) -> Unit
+pub async fn Stream::flush(Self) -> Unit
+pub fn Stream::is_closed(Self) -> Bool
+pub fn Stream::is_started(Self) -> Bool
+pub fn Stream::set_header(Self, String, String) -> Unit
+pub fn Stream::set_status(Self, Int) -> Unit
+pub async fn Stream::write(Self, String) -> Unit
+pub async fn Stream::write_bytes(Self, Bytes) -> Unit
+pub async fn[T : ToJson] Stream::write_json(Self, T) -> Unit
+
 // Type aliases
 pub type Handler = (Context) -> Unit raise
 
 pub type Middleware = ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub type SseHandler = async (Context, Sse) -> Unit
+
+pub type StreamHandler = async (Context, Stream) -> Unit
 
 pub type WebSocketHandler = async (Context, @websocket.Conn) -> Unit
 

@@ -145,7 +145,7 @@ priv struct AcceptEntry {
 /// rules mirror `accept_quality_for`, which keeps its allocation-free fused
 /// scan for the single-offer case.
 fn parse_accept_entries(header : StringView) -> Array[AcceptEntry] {
-  let entries : Array[AcceptEntry] = Array::new(capacity=8)
+  let entries : Array[AcceptEntry] = Array(capacity=8)
   let length = header.length()
   let mut pos = 0
   while pos < length {

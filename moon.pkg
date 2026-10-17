@@ -10,7 +10,6 @@ import {
   "moonbitlang/core/buffer",
   "moonbitlang/core/json",
   "moonbitlang/core/random",
-  "moonbitlang/core/ref",
 }
 
 import {
@@ -20,5 +19,4 @@ import {
   "moonbitlang/async/fs",
   "moonbitlang/async/gzip",
   "moonbitlang/async/websocket",
-  "moonbitlang/core/bench",
 } for "test"

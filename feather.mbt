@@ -68,6 +68,9 @@ pub type WebSocketHandler = async (Context, @websocket.Conn) -> Unit raise
 pub type SseHandler = async (Context, Sse) -> Unit raise
 
 ///|
+pub type StreamHandler = async (Context, Stream) -> Unit raise
+
+///|
 pub(all) struct Route {
   path : String
   method : String
@@ -4391,6 +4394,8 @@ pub struct App {
   ws_handlers : Map[String, WebSocketHandler]
   sse_router : Router
   sse_handlers : Map[String, SseHandler]
+  stream_router : Router
+  stream_handlers : Map[String, StreamHandler]
   mut compress_enabled : Bool
   mut compress_min_size : Int32
   mut etag_enabled : Bool
@@ -4412,6 +4417,8 @@ fn App::fresh(timeout : Int32) -> App {
     ws_handlers: Map([]),
     sse_router: create_router(),
     sse_handlers: Map([]),
+    stream_router: create_router(),
+    stream_handlers: Map([]),
     compress_enabled: false,
     compress_min_size: 1024,
     etag_enabled: false,
@@ -4571,6 +4578,51 @@ pub fn App::resolve_websocket(
 }
 
 ///|
+/// Register a chunked streaming handler for `GET path`.
+///
+/// The handler runs while the response is being written and receives a
+/// `Stream` it can push chunks into with `Stream::write` /
+/// `Stream::write_bytes` / `Stream::write_json`. Unlike `App::get` handlers,
+/// nothing is buffered up front: the header is sent on the first write, so
+/// responses are delivered incrementally. Server-sent events remain the better
+/// fit for one-way event feeds (`App::sse`); streaming is the general escape
+/// hatch, for example for generated downloads or proxying.
+///
+/// Streams are long-lived, so they are not subject to `App::request_timeout`,
+/// and application middleware registered with `App::use` does not run for
+/// them, mirroring `App::websocket` and `App::sse`. Path parameters are
+/// available through `Context::param`.
+pub fn App::stream(self : App, path : String, handler : StreamHandler) -> App {
+  let clean_path = clean_route_path(path)
+  self.stream_router.add_route("GET", clean_path, fn(_ctx) { () })
+  self.stream_handlers.set(clean_path, handler)
+  self
+}
+
+///|
+pub fn App::has_stream(self : App, path : String) -> Bool {
+  self.stream_router.route("GET", path) is RouteFound(_)
+}
+
+///|
+pub fn App::resolve_stream(
+  self : App,
+  path : String,
+) -> (StreamHandler, Map[String, String])? {
+  if self.stream_handlers.is_empty() {
+    return None
+  }
+  match self.stream_router.route("GET", path) {
+    RouteFound(route) =>
+      match self.stream_handlers.get(route.path) {
+        Some(handler) => Some((handler, route.params))
+        None => None
+      }
+    _ => None
+  }
+}
+
+///|
 pub fn App::route_named(
   self : App,
   name : String,
@@ -4691,7 +4743,8 @@ pub fn App::static_files(
 
 ///|
 /// Mount another application under `prefix`, keeping its routes, middleware,
-/// static mounts, named routes and websocket handlers.
+/// static mounts, named routes, websocket, server-sent events and streaming
+/// handlers.
 ///
 /// The mounted application's fallback, request timeout, body limit and
 /// compression settings are not carried over; the parent application governs
@@ -4735,6 +4788,11 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
     let mounted = join_paths(base, path)
     self.sse_router.add_route("GET", mounted, fn(_ctx) { () })
     self.sse_handlers.set(mounted, handler)
+  }
+  for path, handler in child.stream_handlers {
+    let mounted = join_paths(base, path)
+    self.stream_router.add_route("GET", mounted, fn(_ctx) { () })
+    self.stream_handlers.set(mounted, handler)
   }
   self.chain = None
   self
@@ -5389,6 +5447,16 @@ pub fn Feather::mount(self : Feather, prefix : String, child : Feather) -> Feath
 ///|
 pub fn Feather::sse(self : Feather, path : String, handler : SseHandler) -> Feather {
   ignore(self.app.sse(path, handler))
+  self
+}
+
+///|
+pub fn Feather::stream(
+  self : Feather,
+  path : String,
+  handler : StreamHandler,
+) -> Feather {
+  ignore(self.app.stream(path, handler))
   self
 }
 
