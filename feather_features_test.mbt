@@ -534,6 +534,28 @@ async test "server answers head requests for static files" {
 }
 
 ///|
+async test "server ignores ranges for head requests on static files" {
+  let dir = @fs.tmpdir(prefix="feather-static-head-range")
+  @fs.write_file(dir + "/data.json", "{\"ok\":true}")
+  let app = @feather.App::new().static_files("/assets", dir)
+  with_server(app, client => {
+    client.request(
+      @http.RequestMethod::Head,
+      "/assets/data.json",
+      extra_headers=Map([(@http.CaseInsensitiveString("Range"), "bytes=0-1")]),
+    )
+    let response = client.end_request()
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Length")),
+      Some("11"),
+    )
+    assert_eq(client.read_all().text(), "")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
 async test "server ignores query strings for static files" {
   let dir = @fs.tmpdir(prefix="feather-static")
   @fs.write_file(dir + "/app.css", "body { color: red; }")

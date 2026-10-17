@@ -2884,15 +2884,21 @@ fn find_header_end(view : StringView, start : Int32) -> Int32? {
 ///|
 fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
   let length = view.length()
-  if after >= length {
+  let mut index = after
+  while index < length &&
+    (view.unsafe_get(index) == (' ' : UInt16) ||
+      view.unsafe_get(index) == ('\t' : UInt16)) {
+    index = index + 1
+  }
+  if index >= length {
     return true
   }
-  let code = view.unsafe_get(after)
+  let code = view.unsafe_get(index)
   if code == ('\r' : UInt16) || code == ('\n' : UInt16) {
     return true
   }
   if code == ('-' : UInt16) {
-    return after + 1 < length && view.unsafe_get(after + 1) == ('-' : UInt16)
+    return index + 1 < length && view.unsafe_get(index + 1) == ('-' : UInt16)
   }
   false
 }
@@ -3153,12 +3159,18 @@ fn parse_part_headers(
 ///|
 fn skip_line_break(view : StringView, pos : Int32) -> Int32 {
   let length = view.length()
-  if pos + 1 < length &&
-    view.unsafe_get(pos) == ('\r' : UInt16) &&
-    view.unsafe_get(pos + 1) == ('\n' : UInt16) {
-    pos + 2
-  } else if pos < length && view.unsafe_get(pos) == ('\n' : UInt16) {
-    pos + 1
+  let mut index = pos
+  while index < length &&
+    (view.unsafe_get(index) == (' ' : UInt16) ||
+      view.unsafe_get(index) == ('\t' : UInt16)) {
+    index = index + 1
+  }
+  if index + 1 < length &&
+    view.unsafe_get(index) == ('\r' : UInt16) &&
+    view.unsafe_get(index + 1) == ('\n' : UInt16) {
+    index + 2
+  } else if index < length && view.unsafe_get(index) == ('\n' : UInt16) {
+    index + 1
   } else {
     pos
   }
@@ -3762,19 +3774,30 @@ fn etag_header_matches(value : StringView, etag : String) -> Bool {
   } else {
     etag_view
   }
-  for token in value.split(",") {
-    let token = trim_ascii_space(token)
-    if token == "*" {
-      return true
+  let length = value.length()
+  let mut start = 0
+  let mut i = 0
+  let mut in_quotes = false
+  while i <= length {
+    if i == length ||
+      (value.unsafe_get(i) == (',' : UInt16) && !in_quotes) {
+      let token = trim_ascii_space(value[start:i])
+      if token == "*" {
+        return true
+      }
+      let token_opaque = if token.has_prefix("W/") {
+        token[2:]
+      } else {
+        token
+      }
+      if token_opaque == etag_opaque {
+        return true
+      }
+      start = i + 1
+    } else if value.unsafe_get(i) == ('"' : UInt16) {
+      in_quotes = !in_quotes
     }
-    let token_opaque = if token.has_prefix("W/") {
-      token[2:]
-    } else {
-      token
-    }
-    if token_opaque == etag_opaque {
-      return true
-    }
+    i = i + 1
   }
   false
 }

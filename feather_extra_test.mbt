@@ -68,6 +68,25 @@ test "parse_multipart keeps boundary prefixes with lf separators" {
 }
 
 ///|
+test "parse_multipart accepts transport padding after delimiters" {
+  let body = "--X \t\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--X \t\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\n2\r\n--X-- \t\r\n"
+  let parts = @feather
+    .parse_multipart(body, "multipart/form-data; boundary=X")
+    .unwrap()
+  assert_eq(parts.length(), 2)
+  assert_eq(parts[0].name, "a")
+  assert_eq(parts[0].data, "1")
+  assert_eq(parts[1].name, "b")
+  assert_eq(parts[1].data, "2")
+  let lf = "--X \t\nContent-Disposition: form-data; name=\"c\"\n\n3\n--X--"
+  let lf_parts = @feather
+    .parse_multipart(lf, "multipart/form-data; boundary=X")
+    .unwrap()
+  assert_eq(lf_parts.length(), 1)
+  assert_eq(lf_parts[0].data, "3")
+}
+
+///|
 test "parse_multipart returns none without a boundary" {
   assert_eq(@feather.parse_multipart("body", "text/plain"), None)
   assert_eq(@feather.parse_multipart("body", "multipart/form-data"), None)

@@ -70,6 +70,27 @@ test "parse_byte_range handles offsets beyond 100MB" {
 }
 
 ///|
+test "fresh matches etags containing commas and lists" {
+  let make = fn(header) {
+    @feather.Context::new({
+      method: "GET",
+      path: "/",
+      headers: Map([("If-None-Match", header)]),
+      body: "",
+    })
+  }
+  let single = make("\"a,b\"")
+  assert_true(single.fresh("\"a,b\""))
+  assert_true(single.fresh("W/\"a,b\""))
+  assert_false(single.fresh("\"a,c\""))
+  let listed = make("\"x\", W/\"a,b\"")
+  assert_true(listed.fresh("\"a,b\""))
+  assert_true(listed.fresh("\"x\""))
+  assert_false(listed.fresh("\"a\""))
+  assert_true(make("*").fresh("\"a,b\""))
+}
+
+///|
 test "Context bytes records a binary payload" {
   let ctx = @feather.create_context()
   ctx.bytes(200, b"\x00\x01\xfe\xff", content_type="application/octet-stream")

@@ -140,6 +140,30 @@ async test "server serves ranges for queued files" {
 }
 
 ///|
+async test "server ignores ranges for head requests on queued files" {
+  let dir = @fs.tmpdir(prefix="feather-file-head-range")
+  @fs.write_file(dir + "/digits.txt", "0123456789")
+  let app = @feather.App::new().get("/download", fn(ctx) {
+    ctx.file(200, dir + "/digits.txt")
+  })
+  with_server(app, client => {
+    client.request(
+      @http.RequestMethod::Head,
+      "/download",
+      extra_headers=Map([(@http.CaseInsensitiveString("Range"), "bytes=4-6")]),
+    )
+    let response = client.end_request()
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Length")),
+      Some("10"),
+    )
+    assert_eq(client.read_all().text(), "")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
 fn gzip_bytes(encoded : String) -> Bytes raise {
   match @feather.base64_decode(encoded) {
     Some(bytes) => bytes

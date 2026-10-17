@@ -390,7 +390,7 @@ async fn send_file_response(
   let mut status = response.status
   let mut start = 0L
   let mut length = size
-  if response.status == 200 {
+  if response.status == 200 && !head {
     match request.headers.get(header_range) {
       Some(value) =>
         if if_range_allows(request, effective_etag, mtime_secs) {
@@ -676,14 +676,18 @@ async fn serve_static_file(
     conn.end_response()
     return
   }
-  let range = match request.headers.get(header_range) {
-    Some(value) =>
-      if if_range_allows(request, etag, mtime_secs) {
-        parse_byte_range(value, size)
-      } else {
-        ByteRangeFull
-      }
-    None => ByteRangeFull
+  let range = if head {
+    ByteRangeFull
+  } else {
+    match request.headers.get(header_range) {
+      Some(value) =>
+        if if_range_allows(request, etag, mtime_secs) {
+          parse_byte_range(value, size)
+        } else {
+          ByteRangeFull
+        }
+      None => ByteRangeFull
+    }
   }
   let content_type_key = header_content_type
   let content_length_key = header_content_length
