@@ -3344,12 +3344,23 @@ pub(all) enum ByteRange {
 
 ///|
 fn etag_header_matches(value : StringView, etag : String) -> Bool {
+  let etag_view = etag.view()
+  let etag_opaque = if etag_view.has_prefix("W/") {
+    etag_view[2:]
+  } else {
+    etag_view
+  }
   for token in value.split(",") {
     let token = trim_ascii_space(token)
-    if token == "*" || token == etag.view() {
+    if token == "*" {
       return true
     }
-    if token.has_prefix("W/") && token[2:] == etag.view() {
+    let token_opaque = if token.has_prefix("W/") {
+      token[2:]
+    } else {
+      token
+    }
+    if token_opaque == etag_opaque {
       return true
     }
   }
