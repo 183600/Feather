@@ -2070,11 +2070,6 @@ fn hex_digit(value : Int) -> Int {
 }
 
 ///|
-fn decode_utf8_bytes(bytes : Bytes) -> String {
-  @utf8.decode_lossy(bytes)
-}
-
-///|
 fn decode_url_bytes(bytes : BytesView, plus_as_space : Bool) -> String {
   let length = bytes.length()
   let out = FixedArray::make(length, b' ')
@@ -2101,7 +2096,7 @@ fn decode_url_bytes(bytes : BytesView, plus_as_space : Bool) -> String {
     out_index = out_index + 1
     i = i + 1
   }
-  @utf8.decode_lossy(Bytes::from_array(out[:out_index]))
+  @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes()[:out_index])
 }
 
 ///|
@@ -2152,7 +2147,7 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
     out_index = out_index + 1
     j = j + 1
   }
-  @utf8.decode_lossy(Bytes::from_array(out[:out_index]))
+  @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes()[:out_index])
 }
 
 ///|
@@ -2282,7 +2277,7 @@ pub fn url_encode(source : String) -> String {
     }
     j = j + 1
   }
-  decode_utf8_bytes(Bytes::from_array(out[:out_index]))
+  @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes()[:out_index])
 }
 
 ///|
@@ -2339,7 +2334,18 @@ pub fn base64_encode(data : Bytes) -> String {
     out[out_index + 1] = alphabet[(value >> 12) & 63]
     out[out_index + 2] = alphabet[(value >> 6) & 63]
   }
-  decode_utf8_bytes(out.unsafe_reinterpret_as_bytes())
+  @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes())
+}
+
+///|
+/// Hand `length` leading bytes of `out` over as an owned `Bytes`, reusing the
+/// array without copying when it already has exactly that size.
+fn own_bytes_prefix(out : FixedArray[Byte], length : Int) -> Bytes {
+  if length == out.length() {
+    out.unsafe_reinterpret_as_bytes()
+  } else {
+    Bytes::from_array(out[:length])
+  }
 }
 
 ///|
@@ -2356,7 +2362,20 @@ pub fn base64_decode(text : String) -> Bytes? {
   if length % 4 == 1 {
     return None
   }
-  let out = FixedArray::make((length / 4 + 1) * 3, b' ')
+  let full_groups = length / 4
+  let remainder = length % 4
+  let mut out_len = full_groups * 3
+  if remainder == 2 {
+    out_len = out_len + 1
+  } else if remainder == 3 {
+    out_len = out_len + 2
+  } else if view.unsafe_get(length - 1) == ('=' : UInt16) {
+    out_len = out_len - 1
+    if view.unsafe_get(length - 2) == ('=' : UInt16) {
+      out_len = out_len - 1
+    }
+  }
+  let out = FixedArray::make(out_len, b' ')
   let mut i = 0
   let mut out_index = 0
   while i < length {
@@ -2373,7 +2392,7 @@ pub fn base64_decode(text : String) -> Bytes? {
     out[out_index] = ((first << 2) | (second >> 4)).to_byte()
     out_index = out_index + 1
     if remaining <= 2 {
-      return Some(Bytes::from_array(out[:out_index]))
+      return Some(own_bytes_prefix(out, out_index))
     }
     let third_raw = view.unsafe_get(i + 2)
     if remaining == 3 {
@@ -2386,13 +2405,13 @@ pub fn base64_decode(text : String) -> Bytes? {
       }
       out[out_index] = (((second & 15) << 4) | (third >> 2)).to_byte()
       out_index = out_index + 1
-      return Some(Bytes::from_array(out[:out_index]))
+      return Some(own_bytes_prefix(out, out_index))
     }
     if third_raw == ('=' : UInt16) {
       if view.unsafe_get(i + 3) != ('=' : UInt16) || remaining != 4 {
         return None
       }
-      return Some(Bytes::from_array(out[:out_index]))
+      return Some(own_bytes_prefix(out, out_index))
     }
     let third = base64_value(third_raw)
     if third < 0 {
@@ -2405,7 +2424,7 @@ pub fn base64_decode(text : String) -> Bytes? {
       if remaining != 4 {
         return None
       }
-      return Some(Bytes::from_array(out[:out_index]))
+      return Some(own_bytes_prefix(out, out_index))
     }
     let fourth = base64_value(fourth_raw)
     if fourth < 0 {
@@ -2415,7 +2434,7 @@ pub fn base64_decode(text : String) -> Bytes? {
     out_index = out_index + 1
     i = i + 4
   }
-  Some(Bytes::from_array(out[:out_index]))
+  Some(own_bytes_prefix(out, out_index))
 }
 
 ///|
@@ -2838,6 +2857,31 @@ fn find_view_from(
 }
 
 ///|
+/// First index at or after `start` where a part header block ends with a blank
+/// line, using either CRLF or bare LF line endings: the earliest position of
+/// `\r\n\r\n` or `\n\n`.
+fn find_header_end(view : StringView, start : Int32) -> Int32? {
+  let length = view.length()
+  let mut i = start
+  while i + 1 < length {
+    if view.unsafe_get(i) == ('\n' : UInt16) {
+      if view.unsafe_get(i + 1) == ('\n' : UInt16) {
+        return Some(i)
+      }
+      if i > start &&
+        view.unsafe_get(i - 1) == ('\r' : UInt16) &&
+        view.unsafe_get(i + 1) == ('\r' : UInt16) &&
+        i + 2 < length &&
+        view.unsafe_get(i + 2) == ('\n' : UInt16) {
+        return Some(i - 1)
+      }
+    }
+    i = i + 1
+  }
+  None
+}
+
+///|
 fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
   let length = view.length()
   if after >= length {
@@ -3136,8 +3180,6 @@ pub fn parse_multipart(
   let crlf_delimiter_view = crlf_delimiter.view()
   let lf_delimiter = "\n" + delimiter
   let lf_delimiter_view = lf_delimiter.view()
-  let crlfcrlf_view = "\r\n\r\n".view()
-  let lflf_view = "\n\n".view()
   let view = body.view()
   let mut pos = match find_terminated_delimiter(view, delimiter_view, 0) {
     Some(index) => index + delimiter_length
@@ -3162,17 +3204,9 @@ pub fn parse_multipart(
           None => break
         }
     }
-    let header_end = match find_view_from(view, crlfcrlf_view, pos) {
-      Some(crlf_index) =>
-        match find_view_from(view[:crlf_index], lflf_view, pos) {
-          Some(lf_index) => lf_index
-          None => crlf_index
-        }
-      None =>
-        match find_view_from(view, lflf_view, pos) {
-          Some(lf_index) => lf_index
-          None => break
-        }
+    let header_end = match find_header_end(view, pos) {
+      Some(index) => index
+      None => break
     }
     if header_end >= data_end {
       break

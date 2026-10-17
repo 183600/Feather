@@ -250,6 +250,15 @@ async fn request_from_http(
 }
 
 ///|
+/// Identity of the most recently built validators, so a burst of requests for
+/// the same unchanged file reuses the formatted `ETag` and `Last-Modified`
+/// values instead of rebuilding them per request.
+let validator_size : Ref[Int64] = Ref(-1L)
+let validator_mtime_secs : Ref[Int64] = Ref(-1L)
+let validator_mtime_nanos : Ref[Int] = Ref(-1)
+let validator_value : Ref[(String, String)?] = Ref(None)
+
+///|
 /// Build the `ETag` and `Last-Modified` validators for a file from its size
 /// and modification time.
 fn file_validators(
@@ -257,6 +266,15 @@ fn file_validators(
   mtime_secs : Int64,
   mtime_nanos : Int,
 ) -> (String, String) {
+  match validator_value.val {
+    Some(value) =>
+      if validator_size.val == size &&
+        validator_mtime_secs.val == mtime_secs &&
+        validator_mtime_nanos.val == mtime_nanos {
+        return value
+      }
+    None => ()
+  }
   let etag = "\"" +
     size.to_string() +
     "-" +
@@ -264,7 +282,12 @@ fn file_validators(
     "-" +
     mtime_nanos.to_string() +
     "\""
-  (etag, format_http_date(mtime_secs))
+  let value = (etag, format_http_date(mtime_secs))
+  validator_size.val = size
+  validator_mtime_secs.val = mtime_secs
+  validator_mtime_nanos.val = mtime_nanos
+  validator_value.val = Some(value)
+  value
 }
 
 ///|

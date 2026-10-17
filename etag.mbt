@@ -19,17 +19,16 @@ fn fnv1a_hex(data : Bytes) -> String {
   for byte in data {
     hash = (hash ^ byte.to_uint64()) * 1099511628211UL
   }
-  let hex = hash.to_string(radix=16)
-  let padding = 16 - hex.length()
-  if padding <= 0 {
-    return hex
+  let hex = FixedArray::make(16, b'0')
+  for i = 0; i < 16; i = i + 1 {
+    let nibble = ((hash >> ((15 - i) * 4)) & 15UL).to_int()
+    hex[i] = (if nibble < 10 {
+      b'0'.to_int() + nibble
+    } else {
+      b'a'.to_int() + nibble - 10
+    }).to_byte()
   }
-  let builder = StringBuilder(size_hint=34)
-  for i = 0; i < padding; i = i + 1 {
-    builder.write_char('0')
-  }
-  builder.write_string(hex)
-  builder.to_string()
+  @utf8.decode_lossy(hex.unsafe_reinterpret_as_bytes())
 }
 
 ///|

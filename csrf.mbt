@@ -8,18 +8,27 @@ const CSRF_TOKEN_KEY : String = "_csrf"
 const CSRF_TOKEN_LENGTH : Int32 = 32
 
 ///|
+/// Shared generator for CSRF tokens. Seeding reads platform entropy, so it is
+/// done once instead of on every token; the ChaCha8 stream keeps tokens
+/// unpredictable.
+let csrf_rng : @random.Rand = @random.Rand()
+
+///|
 /// Generate a fresh random CSRF token: 32 lowercase hex characters.
 fn csrf_generate_token() -> String {
-  let rng = @random.Rand()
-  let builder = StringBuilder(size_hint=CSRF_TOKEN_LENGTH * 2)
+  let out = FixedArray::make(CSRF_TOKEN_LENGTH, b'0')
   for i = 0; i < 2; i = i + 1 {
-    let hex = rng.uint64().to_string(radix=16)
-    for j = hex.length(); j < 16; j = j + 1 {
-      builder.write_char('0')
+    let value = csrf_rng.uint64()
+    for j = 0; j < 16; j = j + 1 {
+      let nibble = ((value >> ((15 - j) * 4)) & 15UL).to_int()
+      out[i * 16 + j] = (if nibble < 10 {
+        b'0'.to_int() + nibble
+      } else {
+        b'a'.to_int() + nibble - 10
+      }).to_byte()
     }
-    builder.write_string(hex)
   }
-  builder.to_string()
+  @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes())
 }
 
 ///|
