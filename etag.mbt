@@ -52,7 +52,10 @@ fn apply_etag(request : @http.Request, response : Response) -> Unit {
           if response.body.is_empty() {
             return
           } else {
-            @utf8.encode(response.body)
+            let encoded = @utf8.encode(response.body)
+            response.body = ""
+            response.data = Some(encoded)
+            encoded
           }
       }
       let computed = "\"" +

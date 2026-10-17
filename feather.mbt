@@ -1143,11 +1143,30 @@ pub fn Context::get(self : Context, key : String) -> String {
 }
 
 ///|
+/// Parsed parameter names mapped to their `param:`-prefixed state keys, so
+/// repeated lookups reuse the key instead of concatenating per lookup.
+let param_key_cache : Map[String, String] = Map([])
+
+///|
+fn param_state_key(name : String) -> String {
+  match param_key_cache.get(name) {
+    Some(key) => key
+    None => {
+      let key = PARAM_PREFIX + name
+      if param_key_cache.length() < PARSE_CACHE_LIMIT {
+        param_key_cache.set(name, key)
+      }
+      key
+    }
+  }
+}
+
+///|
 pub fn Context::param(self : Context, name : String) -> String {
   if self.state.is_empty() {
     return ""
   }
-  match self.state.get(PARAM_PREFIX + name) {
+  match self.state.get(param_state_key(name)) {
     Some(value) => value
     None => ""
   }
@@ -1305,9 +1324,14 @@ pub fn Context::header(self : Context, key : String) -> String {
     Some(value) => value
     None => {
       let target = key.view()
-      for name, value in self.request.headers {
-        if name.view().equal_ignore_ascii_case(target) {
-          return value
+      let target_length = target.length()
+      for name in self.request.headers.keys() {
+        if name.length() == target_length &&
+          name.view().equal_ignore_ascii_case(target) {
+          match self.request.headers.get(name) {
+            Some(value) => return value
+            None => ()
+          }
         }
       }
       ""
@@ -1673,6 +1697,86 @@ fn form_values_lookup(body : String) -> Map[String, Array[String]] {
 }
 
 ///|
+/// Most recently resolved multipart body, matched by the identity of the body
+/// string like the url-encoded form caches.
+let last_multipart_body : Ref[String?] = Ref(None)
+let last_multipart_content_type : Ref[String?] = Ref(None)
+let last_multipart_parts : Ref[Array[MultipartPart]?] = Ref(None)
+
+///|
+/// Parsed multipart bodies, keyed by the raw body text; the stored content
+/// type guards against a changed boundary for the same body.
+let multipart_cache : Map[String, (String, Array[MultipartPart])] = Map([])
+
+///|
+/// Copy a parsed multipart result so callers get an array and header maps that
+/// are theirs to modify while the cached original stays untouched.
+fn copy_multipart_parts(parts : Array[MultipartPart]) -> Array[MultipartPart] {
+  let copy : Array[MultipartPart] = Array(capacity=parts.length())
+  for part in parts {
+    copy.push({
+      name: part.name,
+      filename: part.filename,
+      content_type: part.content_type,
+      headers: part.headers.copy(),
+      data: part.data,
+    })
+  }
+  copy
+}
+
+///|
+fn multipart_parts_lookup(
+  body : String,
+  content_type : String,
+) -> Array[MultipartPart]? {
+  match last_multipart_body.val {
+    Some(cached_body) =>
+      if physical_equal(cached_body, body) &&
+        last_multipart_content_type.val is Some(cached_type) &&
+        cached_type == content_type {
+        match last_multipart_parts.val {
+          Some(cached) => return Some(cached)
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let parsed = match multipart_cache.get(body) {
+    Some((cached_type, parts)) =>
+      if cached_type == content_type {
+        Some(parts)
+      } else {
+        None
+      }
+    None => None
+  }
+  let parsed = match parsed {
+    Some(parts) => Some(parts)
+    None => {
+      let result = parse_multipart(body, content_type)
+      match result {
+        Some(parts) =>
+          if body.length() <= PARSE_CACHE_MAX_KEY {
+            parse_cache_set(multipart_cache, body, (content_type, parts))
+          }
+        None => ()
+      }
+      result
+    }
+  }
+  match parsed {
+    Some(parts) => {
+      last_multipart_body.val = Some(body)
+      last_multipart_content_type.val = Some(content_type)
+      last_multipart_parts.val = Some(parts)
+    }
+    None => ()
+  }
+  parsed
+}
+
+///|
 pub fn Context::cookies(self : Context) -> Map[String, String] {
   let header = self.header("Cookie")
   if header == "" {
@@ -1893,7 +1997,7 @@ pub fn Context::basic_auth(self : Context) -> (String, String)? {
     return None
   }
   let encoded = trim_ascii_space(view[6:])
-  let decoded = match base64_decode(encoded.to_owned()) {
+  let decoded = match base64_decode_view(encoded) {
     Some(decoded) => @utf8.decode_lossy(decoded)
     None => return None
   }
@@ -2438,7 +2542,13 @@ fn own_bytes_prefix(out : FixedArray[Byte], length : Int) -> Bytes {
 /// Padding may be omitted, but a stray `=` in the middle of the text is
 /// rejected.
 pub fn base64_decode(text : String) -> Bytes? {
-  let view = text.view()
+  base64_decode_view(text.view())
+}
+
+///|
+/// `base64_decode` on a view, so internal callers that already hold a slice of
+/// a larger string do not allocate a copy just to decode it.
+fn base64_decode_view(view : StringView) -> Bytes? {
   let length = view.length()
   if length == 0 {
     return Some(b"")
@@ -2703,8 +2813,23 @@ pub fn mime_type_for(path : String) -> String {
 }
 
 ///|
+/// Number of entries to reserve for a url-encoded result map, estimated from
+/// the source length so no extra scan is needed: short queries and forms keep
+/// the default size and long ones avoid a rehash.
+fn urlencoded_capacity(source : StringView) -> Int {
+  let estimate = source.length() >> 3
+  if estimate < 4 {
+    4
+  } else if estimate > 8 {
+    8
+  } else {
+    estimate
+  }
+}
+
+///|
 fn parse_urlencoded_view(source : StringView) -> Map[String, String] {
-  let result : Map[String, String] = Map([], capacity=4)
+  let result : Map[String, String] = Map([], capacity=urlencoded_capacity(source))
   let length = source.length()
   let mut pos = 0
   while pos <= length {
@@ -2746,7 +2871,10 @@ pub fn parse_urlencoded(source : String) -> Map[String, String] {
 /// Parse a url-encoded source into every value of each key, preserving the
 /// order in which the pairs appear.
 fn parse_urlencoded_multi(source : StringView) -> Map[String, Array[String]] {
-  let result : Map[String, Array[String]] = Map([], capacity=4)
+  let result : Map[String, Array[String]] = Map(
+    [],
+    capacity=urlencoded_capacity(source),
+  )
   let length = source.length()
   let mut pos = 0
   while pos <= length {
@@ -3377,9 +3505,14 @@ fn get_header_ignore_case(
     None => ()
   }
   let target = name.view()
-  for key, value in headers {
-    if key.view().equal_ignore_ascii_case(target) {
-      return Some(value)
+  let target_length = target.length()
+  for key in headers.keys() {
+    if key.length() == target_length &&
+      key.view().equal_ignore_ascii_case(target) {
+      match headers.get(key) {
+        Some(value) => return Some(value)
+        None => ()
+      }
     }
   }
   None
@@ -3565,8 +3698,8 @@ pub fn Context::multipart(self : Context) -> Array[MultipartPart] {
   if !self.is_multipart() {
     return []
   }
-  match parse_multipart(self.request.body, self.header("Content-Type")) {
-    Some(parts) => parts
+  match multipart_parts_lookup(self.request.body, self.header("Content-Type")) {
+    Some(parts) => copy_multipart_parts(parts)
     None => []
   }
 }
@@ -5245,18 +5378,16 @@ fn basic_auth_challenge(realm : String) -> String {
 
 ///|
 fn constant_time_equal(left : String, right : String) -> Bool {
-  let left_bytes = @utf8.encode(left)
-  let right_bytes = @utf8.encode(right)
-  let mut difference = left_bytes.length() ^ right_bytes.length()
-  let length = if left_bytes.length() > right_bytes.length() {
-    left_bytes.length()
-  } else {
-    right_bytes.length()
-  }
+  let left_view = left.view()
+  let right_view = right.view()
+  let left_length = left_view.length()
+  let right_length = right_view.length()
+  let mut difference = left_length ^ right_length
+  let length = if left_length > right_length { left_length } else { right_length }
   for i = 0; i < length; i = i + 1 {
-    let a = if i < left_bytes.length() { left_bytes[i].to_int() } else { 0 }
-    let b = if i < right_bytes.length() { right_bytes[i].to_int() } else { 0 }
-    difference = difference | (a ^ b)
+    let a = if i < left_length { left_view.unsafe_get(i) } else { 0 }
+    let b = if i < right_length { right_view.unsafe_get(i) } else { 0 }
+    difference = difference | (a ^ b).to_int()
   }
   difference == 0
 }
