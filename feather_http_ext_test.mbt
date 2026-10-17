@@ -153,6 +153,36 @@ test "405 responses list HEAD next to GET" {
 }
 
 ///|
+test "Allow header lists HEAD between GET and later methods" {
+  let app = @feather.App::new()
+    .get("/r", fn(ctx) { ctx.text(200, "g") })
+    .post("/r", fn(ctx) { ctx.text(200, "p") })
+  let response = app.respond({
+    method: "DELETE",
+    path: "/r",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 405)
+  assert_eq(response.headers.get("Allow"), Some("GET, HEAD, POST"))
+}
+
+///|
+test "Allow header keeps every method separated" {
+  let app = @feather.App::new()
+    .get("/r", fn(ctx) { ctx.text(200, "g") })
+    .put("/r", fn(ctx) { ctx.text(200, "p") })
+  let response = app.respond({
+    method: "DELETE",
+    path: "/r",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 405)
+  assert_eq(response.headers.get("Allow"), Some("GET, PUT, HEAD"))
+}
+
+///|
 test "OPTIONS on an unmatched path stays 404" {
   let app = @feather.App::new().get("/res", fn(ctx) { ctx.text(200, "g") })
   let response = app.respond({

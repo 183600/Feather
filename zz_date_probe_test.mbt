@@ -24,6 +24,14 @@ test "zz-format-http-date-known-values" {
 }
 
 ///|
+test "zz-parse-http-date-rejects-weekday-with-embedded-space" {
+  assert_eq(parse_http_date("S n, 15 Jun 2025 10:20:30 GMT"), None)
+  assert_eq(parse_http_date(" u , 15 Jun 2022 10:20:30 GMT"), None)
+  assert_true(parse_http_date(" Su, 15 Jun 2025 10:20:30 GMT") is Some(_))
+  assert_true(parse_http_date("Sun, 15 Jun 2025 10:20:30 GMT") is Some(_))
+}
+
+///|
 test "zz-date-roundtrip-fuzz" {
   let state = Ref(20261016)
   let mut failures = 0

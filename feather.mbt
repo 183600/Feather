@@ -641,19 +641,15 @@ fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
 /// allowed (RFC 9110 §9.3.2), so it is listed even when no HEAD route exists.
 fn allow_header_value(allowed : Array[String]) -> String {
   if allowed.contains("GET") && !allowed.contains("HEAD") {
-    let mut sorted = true
-    for i = 1; i < allowed.length(); i = i + 1 {
-      if allowed[i - 1].lexical_compare(allowed[i]) > 0 {
-        sorted = false
-        break
-      }
-    }
-    if sorted {
+    if allowed.is_sorted() {
       let builder = StringBuilder(size_hint=64)
       let mut first = true
       let mut inserted = false
       for method in allowed {
-        if !inserted && method.lexical_compare("HEAD") > 0 {
+        if !inserted && method.compare("HEAD") > 0 {
+          if !first {
+            builder.write_string(", ")
+          }
           builder.write_string("HEAD")
           first = false
           inserted = true
@@ -3550,6 +3546,22 @@ fn parse_imf_fixdate(view : StringView) -> Int64? {
     view.unsafe_get(19) != (':' : UInt16) ||
     view.unsafe_get(22) != (':' : UInt16) ||
     view.unsafe_get(25) != (' ' : UInt16) {
+    return None
+  }
+  // The tokenizing parser takes the RFC 1123 branch only when the first
+  // whitespace-delimited token contains the comma, so a weekday with an
+  // embedded space must fall back rather than parse.
+  let mut weekday_start = 0
+  while weekday_start < 4 &&
+    view.unsafe_get(weekday_start) == (' ' : UInt16) {
+    weekday_start = weekday_start + 1
+  }
+  let mut weekday_end = weekday_start
+  while weekday_end < 4 &&
+    view.unsafe_get(weekday_end) != (' ' : UInt16) {
+    weekday_end = weekday_end + 1
+  }
+  if weekday_end != 4 {
     return None
   }
   let day = imf_fixdate_two_digits(view, 5)
