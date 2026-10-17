@@ -88,6 +88,9 @@ pub struct RouteNode {
   mut route_wildcard_name : String
   mut route_wildcard_key : String
   mut exact_cache : Map[String, RouteNode]?
+  mut cached_path : String
+  mut cached_values : Array[String]
+  mut cached_wildcard : String
 }
 
 ///|
@@ -132,6 +135,9 @@ fn RouteNode::new() -> RouteNode {
     route_wildcard_name: "",
     route_wildcard_key: "",
     exact_cache: None,
+    cached_path: "",
+    cached_values: [],
+    cached_wildcard: "",
   }
 }
 
@@ -158,7 +164,7 @@ pub fn Context::new(request : Request) -> Context {
       cookies: [],
     },
     state: Map([], capacity=4),
-    json_state: Map([], capacity=4),
+    json_state: Map([], capacity=0),
     cleanups: [],
     file: None,
     session: None,
@@ -302,32 +308,49 @@ fn match_dynamic_node(
 }
 
 ///|
-fn extract_route_params(
-  node : RouteNode,
+/// Extract the per-path bindings for `node`, reusing the previous result when
+/// the same path is matched again.
+fn RouteNode::bound_values(
+  self : RouteNode,
   path : StringView,
-) -> (Map[String, String], String) {
-  let names = node.param_names
-  let params : Map[String, String] = Map([], capacity=names.length() + 1)
-  let mut path_pos = skip_slashes(path, 0)
-  let mut name_index = 0
+) -> (Array[String], String) {
+  if self.cached_path != "" && self.cached_path.view() == path {
+    return (self.cached_values, self.cached_wildcard)
+  }
+  let values : Array[String] = Array(capacity=self.param_names.length())
   let mut wildcard_value = ""
-  for kind in node.pattern_kinds {
+  let mut path_pos = skip_slashes(path, 0)
+  for kind in self.pattern_kinds {
     if kind == 1 {
       let path_end = segment_end(path, path_pos)
-      if name_index < names.length() {
-        params.set(names[name_index], path[path_pos:path_end].to_owned())
-      }
-      name_index = name_index + 1
+      values.push(path[path_pos:path_end].to_owned())
       path_pos = skip_slashes(path, path_end + 1)
     } else if kind == 0 {
       path_pos = skip_slashes(path, segment_end(path, path_pos) + 1)
     } else {
       wildcard_value = join_wildcard(path, path_pos)
-      if node.route_wildcard_name != "" {
-        params.set(node.route_wildcard_name, wildcard_value)
-      }
       break
     }
+  }
+  self.cached_path = path.to_owned()
+  self.cached_values = values
+  self.cached_wildcard = wildcard_value
+  (values, wildcard_value)
+}
+
+///|
+fn extract_route_params(
+  node : RouteNode,
+  path : StringView,
+) -> (Map[String, String], String) {
+  let names = node.param_names
+  let (values, wildcard_value) = node.bound_values(path)
+  let params : Map[String, String] = Map([], capacity=names.length() + 1)
+  for i = 0; i < names.length(); i = i + 1 {
+    params.set(names[i], values[i])
+  }
+  if node.route_wildcard_name != "" {
+    params.set(node.route_wildcard_name, wildcard_value)
   }
   (params, wildcard_value)
 }
@@ -699,27 +722,12 @@ fn bind_route_params(node : RouteNode, path : StringView, ctx : Context) -> Unit
   if keys.length() == 0 && node.route_wildcard_key == "" {
     return
   }
-  let mut path_pos = skip_slashes(path, 0)
-  let mut name_index = 0
-  for kind in node.pattern_kinds {
-    if kind == 1 {
-      let path_end = segment_end(path, path_pos)
-      if name_index < keys.length() {
-        ctx.state.set(keys[name_index], path[path_pos:path_end].to_owned())
-      }
-      name_index = name_index + 1
-      path_pos = skip_slashes(path, path_end + 1)
-    } else if kind == 0 {
-      path_pos = skip_slashes(path, segment_end(path, path_pos) + 1)
-    } else {
-      if node.route_wildcard_key != "" {
-        ctx.state.set(
-          node.route_wildcard_key,
-          join_wildcard(path, path_pos),
-        )
-      }
-      break
-    }
+  let (values, wildcard_value) = node.bound_values(path)
+  for i = 0; i < keys.length(); i = i + 1 {
+    ctx.state.set(keys[i], values[i])
+  }
+  if node.route_wildcard_key != "" {
+    ctx.state.set(node.route_wildcard_key, wildcard_value)
   }
 }
 
@@ -1770,6 +1778,10 @@ fn decode_utf8_bytes(bytes : Bytes) -> String {
 ///|
 fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
   let length = source.length()
+  if source.find("%") is None &&
+    (!plus_as_space || source.find("+") is None) {
+    return source.to_owned()
+  }
   let mut needs_decoding = false
   let mut ascii_only = true
   let mut high_byte = false
@@ -2233,18 +2245,24 @@ fn parse_urlencoded_view(source : StringView) -> Map[String, String] {
   let mut pos = 0
   while pos <= length {
     let mut end = pos
-    while end < length && source.unsafe_get(end) != ('&' : UInt16) {
+    let mut eq = -1
+    while end < length {
+      let code = source.unsafe_get(end)
+      if code == ('&' : UInt16) {
+        break
+      }
+      if code == ('=' : UInt16) && eq < 0 {
+        eq = end
+      }
       end = end + 1
     }
     if end > pos {
-      let pair = source[pos:end]
-      match pair.find("=") {
-        Some(index) => {
-          let key = decode_url(pair[:index])
-          let value = decode_url(pair[index + 1:])
-          result.set(key, value)
-        }
-        None => result.set(decode_url(pair), "")
+      if eq >= 0 {
+        let key = decode_url(source[pos:eq])
+        let value = decode_url(source[eq + 1:end])
+        result.set(key, value)
+      } else {
+        result.set(decode_url(source[pos:end]), "")
       }
     }
     if end >= length {
@@ -2549,26 +2567,33 @@ fn find_view_ignore_ascii_case(
   let mut i = start
   while i <= last {
     let value = haystack.unsafe_get(i).to_int()
-    let lower_value = if value >= 65 && value <= 90 {
-      value + 32
+    let first_matches = if value == first {
+      true
     } else {
-      value
+      let lower_value = if value >= 65 && value <= 90 {
+        value + 32
+      } else {
+        value
+      }
+      lower_value == lower_first
     }
-    if lower_value == lower_first {
+    if first_matches {
       let mut j = 1
       let mut matched = true
       while j < length {
-        let mut left = haystack.unsafe_get(i + j).to_int()
-        let mut right = needle.unsafe_get(j).to_int()
-        if left >= 65 && left <= 90 {
-          left = left + 32
-        }
-        if right >= 65 && right <= 90 {
-          right = right + 32
-        }
+        let left = haystack.unsafe_get(i + j).to_int()
+        let right = needle.unsafe_get(j).to_int()
         if left != right {
-          matched = false
-          break
+          let lower_left = if left >= 65 && left <= 90 { left + 32 } else { left }
+          let lower_right = if right >= 65 && right <= 90 {
+            right + 32
+          } else {
+            right
+          }
+          if lower_left != lower_right {
+            matched = false
+            break
+          }
         }
         j = j + 1
       }
@@ -2679,25 +2704,23 @@ fn parse_part_headers(
   let mut content_type : String? = None
   let mut content_type_matches = 0
   let length = header_text.length()
+  let newline = "\n".view()
+  let colon_view = ":".view()
   let mut pos = 0
   while pos <= length {
-    let mut end = pos
-    let mut colon = -1
-    while end < length {
-      let code = header_text.unsafe_get(end)
-      if code == ('\n' : UInt16) {
-        break
-      }
-      if code == (':' : UInt16) && colon < 0 {
-        colon = end
-      }
-      end = end + 1
+    let end = match find_view_from(header_text, newline, pos) {
+      Some(index) => index
+      None => length
     }
     let line_end = if end > pos &&
       header_text.unsafe_get(end - 1) == ('\r' : UInt16) {
       end - 1
     } else {
       end
+    }
+    let colon = match find_view_from(header_text, colon_view, pos) {
+      Some(index) => if index < line_end { index } else { -1 }
+      None => -1
     }
     if line_end > pos && colon >= 0 && colon < line_end {
       let name = owned_trimmed(header_text[pos:colon])
@@ -2783,19 +2806,17 @@ pub fn parse_multipart(
           None => break
         }
     }
-    let header_end = match (
-      find_view_from(view, crlfcrlf_view, pos),
-      find_view_from(view, lflf_view, pos),
-    ) {
-      (Some(crlf_index), Some(lf_index)) =>
-        if lf_index < crlf_index {
-          lf_index
-        } else {
-          crlf_index
+    let header_end = match find_view_from(view, crlfcrlf_view, pos) {
+      Some(crlf_index) =>
+        match find_view_from(view[:crlf_index], lflf_view, pos) {
+          Some(lf_index) => lf_index
+          None => crlf_index
         }
-      (Some(crlf_index), None) => crlf_index
-      (None, Some(lf_index)) => lf_index
-      (None, None) => break
+      None =>
+        match find_view_from(view, lflf_view, pos) {
+          Some(lf_index) => lf_index
+          None => break
+        }
     }
     if header_end >= data_end {
       break
@@ -3889,7 +3910,12 @@ fn App::best_static_mount(
 }
 
 ///|
-pub fn App::static_file_for(self : App, path : String) -> String? {
+/// Resolve a static file request to its filesystem path and `Cache-Control`
+/// value in one pass over the configured mounts.
+fn App::static_lookup(
+  self : App,
+  path : String,
+) -> (String, String)? {
   let path_view = clean_path_view(path)
   match self.best_static_mount(path_view) {
     None => None
@@ -3908,12 +3934,26 @@ pub fn App::static_file_for(self : App, path : String) -> String? {
         Some(clean) => clean
         None => return None
       }
-      if clean.is_empty() || decoded.has_suffix("/") {
-        Some(join_fs_path(join_fs_path(mount.root, clean), mount.index))
+      let file_path = if clean.is_empty() || decoded.has_suffix("/") {
+        join_fs_path(join_fs_path(mount.root, clean), mount.index)
       } else {
-        Some(join_fs_path(mount.root, clean))
+        join_fs_path(mount.root, clean)
       }
+      let cache_control = if mount.max_age > 0 {
+        "public, max-age=" + mount.max_age.to_string()
+      } else {
+        ""
+      }
+      Some((file_path, cache_control))
     }
+  }
+}
+
+///|
+pub fn App::static_file_for(self : App, path : String) -> String? {
+  match self.static_lookup(path) {
+    Some((file_path, _)) => Some(file_path)
+    None => None
   }
 }
 

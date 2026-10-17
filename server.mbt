@@ -503,7 +503,10 @@ async fn write_file_range(
   start : Int64,
   length : Int64,
 ) -> Unit {
-  let chunk_size : Int32 = 65536
+  if length <= 0L {
+    return
+  }
+  let chunk_size : Int32 = if length < 65536L { length.to_int() } else { 65536 }
   let buffer = FixedArray::make(chunk_size, b'\x00')
   let mut remaining = length
   let mut position = start
@@ -722,17 +725,11 @@ async fn handle_request(
       None => ()
     }
   }
-  if head || request.meth is @http.Get {
-    match app.static_file_for(request.path) {
-      Some(file_path) =>
+  if (head || request.meth is @http.Get) && !app.static_mounts.is_empty() {
+    match app.static_lookup(request.path) {
+      Some((file_path, cache_control)) =>
         if !app.has_route(if head { "HEAD" } else { "GET" }, request.path) {
-          serve_static_file(
-            conn,
-            file_path,
-            head,
-            request,
-            app.static_cache_control_for(request.path),
-          )
+          serve_static_file(conn, file_path, head, request, cache_control)
           return
         }
       None => ()

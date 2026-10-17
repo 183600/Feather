@@ -365,6 +365,9 @@ pub struct RouteNode {
   mut route_wildcard_name : String
   mut route_wildcard_key : String
   mut exact_cache : Map[String, RouteNode]?
+  mut cached_path : String
+  mut cached_values : Array[String]
+  mut cached_wildcard : String
 }
 
 pub(all) enum RouteOutcome {

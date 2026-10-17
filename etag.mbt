@@ -21,11 +21,15 @@ fn fnv1a_hex(data : Bytes) -> String {
   }
   let hex = hash.to_string(radix=16)
   let padding = 16 - hex.length()
-  if padding > 0 {
-    "0".repeat(padding) + hex
-  } else {
-    hex
+  if padding <= 0 {
+    return hex
   }
+  let builder = StringBuilder::new(size_hint=16)
+  for i = 0; i < padding; i = i + 1 {
+    builder.write_char('0')
+  }
+  builder.write_string(hex)
+  builder.to_string()
 }
 
 ///|

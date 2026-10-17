@@ -97,22 +97,7 @@ fn content_type_is_compressible(content_type : StringView) -> Bool {
 
 ///|
 fn contains_ignore_ascii_case(haystack : StringView, needle : StringView) -> Bool {
-  if needle.is_empty() {
-    return true
-  }
-  let length = haystack.length()
-  let needle_length = needle.length()
-  if needle_length > length {
-    return false
-  }
-  let mut i = 0
-  while i + needle_length <= length {
-    if starts_with_ignore_ascii_case(haystack[i:], needle) {
-      return true
-    }
-    i = i + 1
-  }
-  false
+  find_view_ignore_ascii_case(haystack, needle, 0) is Some(_)
 }
 
 ///|
