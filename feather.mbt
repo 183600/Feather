@@ -641,6 +641,34 @@ fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
 /// allowed (RFC 9110 §9.3.2), so it is listed even when no HEAD route exists.
 fn allow_header_value(allowed : Array[String]) -> String {
   if allowed.contains("GET") && !allowed.contains("HEAD") {
+    let mut sorted = true
+    for i = 1; i < allowed.length(); i = i + 1 {
+      if allowed[i - 1].lexical_compare(allowed[i]) > 0 {
+        sorted = false
+        break
+      }
+    }
+    if sorted {
+      let builder = StringBuilder(size_hint=64)
+      let mut first = true
+      let mut inserted = false
+      for method in allowed {
+        if !inserted && method.lexical_compare("HEAD") > 0 {
+          builder.write_string("HEAD")
+          first = false
+          inserted = true
+        }
+        if !first {
+          builder.write_string(", ")
+        }
+        builder.write_string(method)
+        first = false
+      }
+      if !inserted {
+        builder.write_string(", HEAD")
+      }
+      return builder.to_string()
+    }
     let with_head = allowed.copy()
     with_head.push("HEAD")
     with_head.sort()
@@ -1659,7 +1687,9 @@ pub fn Context::add_cookie(
 
 ///|
 fn render_cookie(cookie : @http.Cookie) -> String {
-  let builder = StringBuilder(size_hint=cookie.name.length() + 32)
+  let builder = StringBuilder(
+    size_hint=(cookie.name.length() + cookie.value.length() + 64) * 2,
+  )
   builder.write_string(cookie.name)
   builder.write_char('=')
   builder.write_string(cookie.value)
@@ -2146,10 +2176,10 @@ fn percent_hex_byte(value : Int) -> Byte {
 }
 
 ///|
-fn write_percent_byte(buffer : @buffer.Buffer, value : Int) -> Unit {
-  buffer.write_byte(b'%')
-  buffer.write_byte(percent_hex_byte(value / 16))
-  buffer.write_byte(percent_hex_byte(value % 16))
+fn write_percent_to(out : FixedArray[Byte], offset : Int, value : Int) -> Unit {
+  out[offset] = b'%'
+  out[offset + 1] = percent_hex_byte(value / 16)
+  out[offset + 2] = percent_hex_byte(value % 16)
 }
 
 ///|
@@ -2163,52 +2193,81 @@ pub fn url_encode(source : String) -> String {
   if start == length {
     return source
   }
-  let buffer = @buffer.Buffer::Buffer(size_hint=length + 8)
-  let mut p = 0
-  while p < start {
-    buffer.write_byte(view.unsafe_get(p).to_int().to_byte())
-    p = p + 1
-  }
+  let mut out_len = start
   let mut i = start
   while i < length {
     let code = view.unsafe_get(i).to_int()
     if code < 0x80 {
-      if is_url_unreserved(code) {
-        buffer.write_byte(code.to_byte())
-      } else {
-        write_percent_byte(buffer, code)
-      }
+      out_len = out_len + (if is_url_unreserved(code) { 1 } else { 3 })
     } else if code < 0x800 {
-      write_percent_byte(buffer, 0xC0 | (code >> 6))
-      write_percent_byte(buffer, 0x80 | (code & 0x3F))
-    } else if code >= 0xD800 && code <= 0xDBFF {
-      if i + 1 < length {
-        let low = view.unsafe_get(i + 1).to_int()
-        if low >= 0xDC00 && low <= 0xDFFF {
-          let scalar = ((code - 0xD800) << 10) + (low - 0xDC00) + 0x10000
-          write_percent_byte(buffer, 0xF0 | (scalar >> 18))
-          write_percent_byte(buffer, 0x80 | ((scalar >> 12) & 0x3F))
-          write_percent_byte(buffer, 0x80 | ((scalar >> 6) & 0x3F))
-          write_percent_byte(buffer, 0x80 | (scalar & 0x3F))
-          i = i + 2
-          continue
-        }
+      out_len = out_len + 6
+    } else if code >= 0xD800 && code <= 0xDBFF && i + 1 < length {
+      let low = view.unsafe_get(i + 1).to_int()
+      if low >= 0xDC00 && low <= 0xDFFF {
+        out_len = out_len + 12
+        i = i + 2
+        continue
       }
-      write_percent_byte(buffer, 0xEF)
-      write_percent_byte(buffer, 0xBF)
-      write_percent_byte(buffer, 0xBD)
-    } else if code >= 0xDC00 && code <= 0xDFFF {
-      write_percent_byte(buffer, 0xEF)
-      write_percent_byte(buffer, 0xBF)
-      write_percent_byte(buffer, 0xBD)
+      out_len = out_len + 9
     } else {
-      write_percent_byte(buffer, 0xE0 | (code >> 12))
-      write_percent_byte(buffer, 0x80 | ((code >> 6) & 0x3F))
-      write_percent_byte(buffer, 0x80 | (code & 0x3F))
+      out_len = out_len + 9
     }
     i = i + 1
   }
-  decode_utf8_bytes(buffer.to_bytes())
+  let out = FixedArray::make(out_len, b' ')
+  let mut p = 0
+  while p < start {
+    out[p] = view.unsafe_get(p).to_int().to_byte()
+    p = p + 1
+  }
+  let mut out_index = start
+  let mut j = start
+  while j < length {
+    let code = view.unsafe_get(j).to_int()
+    if code < 0x80 {
+      if is_url_unreserved(code) {
+        out[out_index] = code.to_byte()
+        out_index = out_index + 1
+      } else {
+        write_percent_to(out, out_index, code)
+        out_index = out_index + 3
+      }
+    } else if code < 0x800 {
+      write_percent_to(out, out_index, 0xC0 | (code >> 6))
+      write_percent_to(out, out_index + 3, 0x80 | (code & 0x3F))
+      out_index = out_index + 6
+    } else if code >= 0xD800 && code <= 0xDBFF {
+      if j + 1 < length {
+        let low = view.unsafe_get(j + 1).to_int()
+        if low >= 0xDC00 && low <= 0xDFFF {
+          let scalar = ((code - 0xD800) << 10) + (low - 0xDC00) + 0x10000
+          write_percent_to(out, out_index, 0xF0 | (scalar >> 18))
+          write_percent_to(out, out_index + 3, 0x80 | ((scalar >> 12) & 0x3F))
+          write_percent_to(out, out_index + 6, 0x80 | ((scalar >> 6) & 0x3F))
+          write_percent_to(out, out_index + 9, 0x80 | (scalar & 0x3F))
+          out_index = out_index + 12
+          j = j + 2
+          continue
+        }
+      }
+      write_percent_to(out, out_index, 0xEF)
+      write_percent_to(out, out_index + 3, 0xBF)
+      write_percent_to(out, out_index + 6, 0xBD)
+      out_index = out_index + 9
+    } else if code >= 0xDC00 && code <= 0xDFFF {
+      write_percent_to(out, out_index, 0xEF)
+      write_percent_to(out, out_index + 3, 0xBF)
+      write_percent_to(out, out_index + 6, 0xBD)
+      out_index = out_index + 9
+    } else {
+      write_percent_to(out, out_index, 0xE0 | (code >> 12))
+      write_percent_to(out, out_index + 3, 0x80 | ((code >> 6) & 0x3F))
+      write_percent_to(out, out_index + 6, 0x80 | (code & 0x3F))
+      out_index = out_index + 9
+    }
+    j = j + 1
+  }
+  decode_utf8_bytes(Bytes::from_fixedarray(out, len=out_index))
 }
 
 ///|
@@ -2282,8 +2341,9 @@ pub fn base64_decode(text : String) -> Bytes? {
   if length % 4 == 1 {
     return None
   }
-  let buffer = @buffer.Buffer::Buffer(size_hint=(length / 4 + 1) * 3)
+  let out = FixedArray::make((length / 4 + 1) * 3, b' ')
   let mut i = 0
+  let mut out_index = 0
   while i < length {
     let remaining = length - i
     let first = base64_value(view.unsafe_get(i))
@@ -2295,9 +2355,10 @@ pub fn base64_decode(text : String) -> Bytes? {
     if first < 0 || second < 0 {
       return None
     }
-    buffer.write_byte(((first << 2) | (second >> 4)).to_byte())
+    out[out_index] = ((first << 2) | (second >> 4)).to_byte()
+    out_index = out_index + 1
     if remaining <= 2 {
-      return Some(buffer.to_bytes())
+      return Some(Bytes::from_fixedarray(out, len=out_index))
     }
     let third_raw = view.unsafe_get(i + 2)
     if remaining == 3 {
@@ -2308,35 +2369,38 @@ pub fn base64_decode(text : String) -> Bytes? {
       if third < 0 {
         return None
       }
-      buffer.write_byte((((second & 15) << 4) | (third >> 2)).to_byte())
-      return Some(buffer.to_bytes())
+      out[out_index] = (((second & 15) << 4) | (third >> 2)).to_byte()
+      out_index = out_index + 1
+      return Some(Bytes::from_fixedarray(out, len=out_index))
     }
     if third_raw == ('=' : UInt16) {
       if view.unsafe_get(i + 3) != ('=' : UInt16) || remaining != 4 {
         return None
       }
-      return Some(buffer.to_bytes())
+      return Some(Bytes::from_fixedarray(out, len=out_index))
     }
     let third = base64_value(third_raw)
     if third < 0 {
       return None
     }
-    buffer.write_byte((((second & 15) << 4) | (third >> 2)).to_byte())
+    out[out_index] = (((second & 15) << 4) | (third >> 2)).to_byte()
+    out_index = out_index + 1
     let fourth_raw = view.unsafe_get(i + 3)
     if fourth_raw == ('=' : UInt16) {
       if remaining != 4 {
         return None
       }
-      return Some(buffer.to_bytes())
+      return Some(Bytes::from_fixedarray(out, len=out_index))
     }
     let fourth = base64_value(fourth_raw)
     if fourth < 0 {
       return None
     }
-    buffer.write_byte((((third & 3) << 6) | fourth).to_byte())
+    out[out_index] = (((third & 3) << 6) | fourth).to_byte()
+    out_index = out_index + 1
     i = i + 4
   }
-  Some(buffer.to_bytes())
+  Some(Bytes::from_fixedarray(out, len=out_index))
 }
 
 ///|
@@ -3367,7 +3431,7 @@ pub fn format_http_date(unix_seconds : Int64) -> String {
     minute = ((time_of_day % 3600L) / 60L).to_int()
     second = (time_of_day % 60L).to_int()
   }
-  let builder = StringBuilder(size_hint=29)
+  let builder = StringBuilder(size_hint=58)
   builder.write_string(http_weekdays[weekday.to_int()])
   builder.write_string(", ")
   write_two_digits(builder, day)
@@ -3450,8 +3514,73 @@ fn parse_time_of_day(time : StringView) -> Int64? {
 }
 
 ///|
+fn imf_fixdate_two_digits(view : StringView, at : Int32) -> Int {
+  let a = view.unsafe_get(at).to_int() - 48
+  let b = view.unsafe_get(at + 1).to_int() - 48
+  if a < 0 || a > 9 || b < 0 || b > 9 {
+    return -1
+  }
+  a * 10 + b
+}
+
+///|
+fn imf_fixdate_four_digits(view : StringView, at : Int32) -> Int {
+  let a = view.unsafe_get(at).to_int() - 48
+  let b = view.unsafe_get(at + 1).to_int() - 48
+  let c = view.unsafe_get(at + 2).to_int() - 48
+  let d = view.unsafe_get(at + 3).to_int() - 48
+  if a < 0 || a > 9 || b < 0 || b > 9 || c < 0 || c > 9 || d < 0 || d > 9 {
+    return -1
+  }
+  a * 1000 + b * 100 + c * 10 + d
+}
+
+///|
+/// Parse the fixed-layout IMF-fixdate form (`Sun, 15 Jun 2025 10:20:30 GMT`)
+/// without tokenizing, falling back to the general path on any deviation.
+fn parse_imf_fixdate(view : StringView) -> Int64? {
+  if view.length() != 29 {
+    return None
+  }
+  if view.unsafe_get(3) != (',' : UInt16) ||
+    view.unsafe_get(4) != (' ' : UInt16) ||
+    view.unsafe_get(7) != (' ' : UInt16) ||
+    view.unsafe_get(11) != (' ' : UInt16) ||
+    view.unsafe_get(16) != (' ' : UInt16) ||
+    view.unsafe_get(19) != (':' : UInt16) ||
+    view.unsafe_get(22) != (':' : UInt16) ||
+    view.unsafe_get(25) != (' ' : UInt16) {
+    return None
+  }
+  let day = imf_fixdate_two_digits(view, 5)
+  let month = match month_from_name(view[8:11]) {
+    Some(month) => month
+    None => return None
+  }
+  let year = imf_fixdate_four_digits(view, 12)
+  let hour = imf_fixdate_two_digits(view, 17)
+  let minute = imf_fixdate_two_digits(view, 20)
+  let second = imf_fixdate_two_digits(view, 23)
+  if day < 0 || year < 0 || hour < 0 || minute < 0 || second < 0 {
+    return None
+  }
+  if day < 1 || day > 31 || year < 1970 || hour > 23 || minute > 59 || second > 60 {
+    return None
+  }
+  Some(
+    days_from_civil(year.to_int64(), month, day) *
+    86400L +
+    (hour * 3600 + minute * 60 + second).to_int64(),
+  )
+}
+
+///|
 pub fn parse_http_date(value : String) -> Int64? {
   let view = value.view()
+  match parse_imf_fixdate(view) {
+    Some(seconds) => return Some(seconds)
+    None => ()
+  }
   let length = view.length()
   let parts : FixedArray[StringView] = FixedArray::make(6, "")
   let mut count = 0

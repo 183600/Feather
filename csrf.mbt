@@ -11,7 +11,7 @@ const CSRF_TOKEN_LENGTH : Int32 = 32
 /// Generate a fresh random CSRF token: 32 lowercase hex characters.
 fn csrf_generate_token() -> String {
   let rng = @random.Rand()
-  let builder = StringBuilder(size_hint=CSRF_TOKEN_LENGTH)
+  let builder = StringBuilder(size_hint=CSRF_TOKEN_LENGTH * 2)
   for i = 0; i < 2; i = i + 1 {
     let hex = rng.uint64().to_string(radix=16)
     for j = hex.length(); j < 16; j = j + 1 {

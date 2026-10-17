@@ -55,7 +55,7 @@ pub fn SessionStore::ttl(self : SessionStore) -> Int64 {
 
 ///|
 fn SessionStore::generate_id(self : SessionStore) -> String {
-  let builder = StringBuilder(size_hint=32)
+  let builder = StringBuilder(size_hint=64)
   for i = 0; i < 2; i = i + 1 {
     let hex = self.rng.uint64().to_string(radix=16)
     for i = hex.length(); i < 16; i = i + 1 {

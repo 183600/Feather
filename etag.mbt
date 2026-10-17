@@ -24,7 +24,7 @@ fn fnv1a_hex(data : Bytes) -> String {
   if padding <= 0 {
     return hex
   }
-  let builder = StringBuilder()
+  let builder = StringBuilder(size_hint=34)
   for i = 0; i < padding; i = i + 1 {
     builder.write_char('0')
   }
