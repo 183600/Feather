@@ -2879,11 +2879,7 @@ pub fn Context::query(self : Context, name : String) -> String {
 
 ///|
 pub fn Context::form(self : Context, name : String) -> String {
-  let content_type = self.header("Content-Type")
-  if !starts_with_ignore_ascii_case(
-    content_type.view(),
-    "application/x-www-form-urlencoded".view(),
-  ) {
+  if !self.is_form() {
     return ""
   }
   let name_view = name.view()
@@ -2988,11 +2984,7 @@ pub fn Context::query_values(self : Context, name : String) -> Array[String] {
 /// Returns an empty array when the body is not
 /// `application/x-www-form-urlencoded`.
 pub fn Context::form_values(self : Context, name : String) -> Array[String] {
-  let content_type = self.header("Content-Type")
-  if !starts_with_ignore_ascii_case(
-    content_type.view(),
-    "application/x-www-form-urlencoded".view(),
-  ) {
+  if !self.is_form() {
     return []
   }
   let name_view = name.view()
@@ -3018,11 +3010,7 @@ pub fn Context::form_values(self : Context, name : String) -> Array[String] {
 
 ///|
 pub fn Context::form_map(self : Context) -> Map[String, String] {
-  let content_type = self.header("Content-Type")
-  if !starts_with_ignore_ascii_case(
-    content_type.view(),
-    "application/x-www-form-urlencoded".view(),
-  ) {
+  if !self.is_form() {
     return Map([], capacity=0)
   }
   form_map_lookup(self.request.body).copy()
@@ -3571,14 +3559,10 @@ pub fn parse_multipart(
 
 ///|
 pub fn Context::multipart(self : Context) -> Array[MultipartPart] {
-  let content_type = self.header("Content-Type")
-  if !starts_with_ignore_ascii_case(
-    content_type.view(),
-    "multipart/form-data".view(),
-  ) {
+  if !self.is_multipart() {
     return []
   }
-  match parse_multipart(self.request.body, content_type) {
+  match parse_multipart(self.request.body, self.header("Content-Type")) {
     Some(parts) => parts
     None => []
   }

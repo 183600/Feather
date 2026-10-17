@@ -45,6 +45,51 @@ test "content type helpers normalize the media type" {
 }
 
 ///|
+test "form accessors only parse actual form media types" {
+  let junk = @feather
+    .Context::new({
+      method: "POST",
+      path: "/",
+      headers: Map([
+        ("Content-Type", "application/x-www-form-urlencoded-pwned"),
+      ]),
+      body: "a=1",
+    })
+  assert_false(junk.is_form())
+  assert_eq(junk.form("a"), "")
+  assert_eq(junk.form_values("a").length(), 0)
+  assert_eq(junk.form_map().length(), 0)
+  let parameterized = @feather
+    .Context::new({
+      method: "POST",
+      path: "/",
+      headers: Map([
+        ("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"),
+      ]),
+      body: "a=1&b=2&a=3",
+    })
+  assert_true(parameterized.is_form())
+  assert_eq(parameterized.form("a"), "3")
+  assert_eq(parameterized.form_values("a").length(), 2)
+  assert_eq(parameterized.form_map().get("b"), Some("2"))
+}
+
+///|
+test "multipart accessors only parse actual multipart media types" {
+  let junk = @feather
+    .Context::new({
+      method: "POST",
+      path: "/",
+      headers: Map([
+        ("Content-Type", "multipart/form-data-pwned; boundary=X"),
+      ]),
+      body: "--X--\r\n",
+    })
+  assert_false(junk.is_multipart())
+  assert_eq(junk.multipart().length(), 0)
+}
+
+///|
 test "method override rewrites post requests from the header" {
   let app = @feather
     .App::new()
