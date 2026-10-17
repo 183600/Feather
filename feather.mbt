@@ -1324,9 +1324,16 @@ pub fn Context::forwarded_ip(self : Context) -> String {
 }
 
 ///|
-pub fn Context::cookies(self : Context) -> Map[String, String] {
+fn is_cookie_whitespace(code : UInt16) -> Bool {
+  code == (' ' : UInt16) ||
+  code == ('\t' : UInt16) ||
+  code == ('\n' : UInt16) ||
+  code == ('\r' : UInt16)
+}
+
+///|
+fn parse_cookie_map(header : StringView) -> Map[String, String] {
   let cookies : Map[String, String] = Map([], capacity=8)
-  let header = self.header("Cookie").view()
   let length = header.length()
   let mut pos = 0
   while pos <= length {
@@ -1335,31 +1342,11 @@ pub fn Context::cookies(self : Context) -> Map[String, String] {
       end = end + 1
     }
     let mut start = pos
-    while start < end {
-      let code = header.unsafe_get(start)
-      if code > (' ' : UInt16) {
-        break
-      }
-      if code != (' ' : UInt16) &&
-        code != ('\t' : UInt16) &&
-        code != ('\n' : UInt16) &&
-        code != ('\r' : UInt16) {
-        break
-      }
+    while start < end && is_cookie_whitespace(header.unsafe_get(start)) {
       start = start + 1
     }
     let mut stop = end
-    while stop > start {
-      let code = header.unsafe_get(stop - 1)
-      if code > (' ' : UInt16) {
-        break
-      }
-      if code != (' ' : UInt16) &&
-        code != ('\t' : UInt16) &&
-        code != ('\n' : UInt16) &&
-        code != ('\r' : UInt16) {
-        break
-      }
+    while stop > start && is_cookie_whitespace(header.unsafe_get(stop - 1)) {
       stop = stop - 1
     }
     if start < stop {
@@ -1369,17 +1356,7 @@ pub fn Context::cookies(self : Context) -> Map[String, String] {
       }
       if eq < stop {
         let mut name_end = eq
-        while name_end > start {
-          let code = header.unsafe_get(name_end - 1)
-          if code > (' ' : UInt16) {
-            break
-          }
-          if code != (' ' : UInt16) &&
-            code != ('\t' : UInt16) &&
-            code != ('\n' : UInt16) &&
-            code != ('\r' : UInt16) {
-            break
-          }
+        while name_end > start && is_cookie_whitespace(header.unsafe_get(name_end - 1)) {
           name_end = name_end - 1
         }
         if name_end > start {
@@ -1405,47 +1382,213 @@ pub fn Context::cookies(self : Context) -> Map[String, String] {
 }
 
 ///|
-pub fn Context::cookie(self : Context, name : String) -> String? {
-  let target = name.view()
-  let header = self.header("Cookie").view()
+fn cookie_scan(header : StringView, name : String) -> String? {
   let length = header.length()
-  let mut pos = 0
+  let target_length = name.length()
+  let mut first_non_ws = -1
+  let mut last_non_ws = -1
+  let mut name_end = -1
+  let mut eq = -1
+  let mut i = 0
   let mut result : String? = None
-  while pos <= length {
-    let mut end = pos
-    while end < length && header.unsafe_get(end) != (';' : UInt16) {
-      end = end + 1
+  while i <= length {
+    let code = if i < length {
+      header.unsafe_get(i)
+    } else {
+      (';' : UInt16)
     }
-    let pair = trim_ascii_space(header[pos:end])
-    if !pair.is_empty() {
-      let pair_length = pair.length()
-      let mut eq = 0
-      while eq < pair_length && pair.unsafe_get(eq) != ('=' : UInt16) {
-        eq = eq + 1
-      }
-      if eq < pair_length {
-        let name_view = trim_ascii_space(pair[:eq])
-        if !name_view.is_empty() && name_view == target {
-          let raw_value = pair[eq + 1:]
-          let raw_length = raw_value.length()
-          result = Some(
-            if raw_length >= 2 &&
-              raw_value.unsafe_get(0) == ('"' : UInt16) &&
-              raw_value.unsafe_get(raw_length - 1) == ('"' : UInt16) {
-              raw_value[1:raw_length - 1].to_owned()
-            } else {
-              raw_value.to_owned()
-            },
-          )
+    if code == (';' : UInt16) {
+      if first_non_ws >= 0 && eq >= 0 && name_end > first_non_ws {
+        let nlen = name_end - first_non_ws
+        if nlen == target_length {
+          let mut j = 0
+          let mut equal = true
+          while j < nlen {
+            if header.unsafe_get(first_non_ws + j) != name.unsafe_get(j) {
+              equal = false
+              break
+            }
+            j = j + 1
+          }
+          if equal {
+            let raw_start = eq + 1
+            let raw_length = last_non_ws + 1 - raw_start
+            result = Some(
+              if raw_length >= 2 &&
+                header.unsafe_get(raw_start) == ('"' : UInt16) &&
+                header.unsafe_get(raw_start + raw_length - 1) ==
+                ('"' : UInt16) {
+                header[raw_start + 1:raw_start + raw_length - 1].to_owned()
+              } else {
+                header[raw_start:raw_start + raw_length].to_owned()
+              },
+            )
+          }
         }
       }
+      first_non_ws = -1
+      last_non_ws = -1
+      name_end = -1
+      eq = -1
+    } else if code > (' ' : UInt16) ||
+      (code != (' ' : UInt16) &&
+        code != ('\t' : UInt16) &&
+        code != ('\n' : UInt16) &&
+        code != ('\r' : UInt16)) {
+      if first_non_ws < 0 {
+        first_non_ws = i
+      }
+      last_non_ws = i
+      if code == ('=' : UInt16) {
+        if eq < 0 {
+          eq = i
+        }
+      } else if eq < 0 {
+        name_end = i + 1
+      }
     }
-    if end >= length {
-      break
-    }
-    pos = end + 1
+    i = i + 1
   }
   result
+}
+
+///|
+/// Upper bound on entries kept in the per-process parse caches.
+const PARSE_CACHE_LIMIT : Int = 128
+
+///|
+/// Headers longer than this are parsed but not cached.
+const PARSE_CACHE_MAX_KEY : Int = 4096
+
+///|
+fn[K : Hash + Eq] parse_cache_set(
+  cache : Map[K, Map[String, String]],
+  key : K,
+  value : Map[String, String],
+) -> Unit {
+  if cache.length() >= PARSE_CACHE_LIMIT {
+    match cache.keys().next() {
+      Some(oldest) => ignore(cache.remove(oldest))
+      None => ()
+    }
+  }
+  cache.set(key, value)
+}
+
+///|
+/// Last parsed `Cookie` header, keyed by its raw value.
+let cookies_cache : Map[String, Map[String, String]] = Map([])
+
+///|
+/// Last parsed query strings, keyed by the raw text after `?`.
+let queries_cache : Map[StringView, Map[String, String]] = Map([])
+
+///|
+/// Most recently resolved `Cookie` header, matched by identity to skip hashing
+/// the (usually long) header on repeated lookups within one request.
+let last_cookie_header : Ref[String?] = Ref(None)
+let last_cookie_map : Ref[Map[String, String]?] = Ref(None)
+
+///|
+fn cookie_map_lookup(header : String) -> Map[String, String] {
+  match last_cookie_header.val {
+    Some(cached_header) =>
+      if physical_equal(cached_header, header) {
+        match last_cookie_map.val {
+          Some(cached_map) => return cached_map
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let parsed = match cookies_cache.get(header) {
+    Some(cached) => cached
+    None => {
+      let parsed = parse_cookie_map(header.view())
+      if header.length() <= PARSE_CACHE_MAX_KEY {
+        parse_cache_set(cookies_cache, header, parsed)
+      }
+      parsed
+    }
+  }
+  last_cookie_header.val = Some(header)
+  last_cookie_map.val = Some(parsed)
+  parsed
+}
+
+///|
+/// Most recently resolved query string, matched by the identity of the path
+/// string plus the `?` offset to skip substring allocation and hashing on
+/// repeated lookups within one request.
+let last_query_path : Ref[String?] = Ref(None)
+let last_query_start : Ref[Int] = Ref(-1)
+let last_query_map : Ref[Map[String, String]?] = Ref(None)
+
+///|
+fn query_map_lookup(path : String, index : Int) -> Map[String, String] {
+  match last_query_path.val {
+    Some(cached_path) =>
+      if physical_equal(cached_path, path) && last_query_start.val == index {
+        match last_query_map.val {
+          Some(cached_map) => return cached_map
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let source = path.view()[index + 1:]
+  let parsed = match queries_cache.get(source) {
+    Some(cached) => cached
+    None => {
+      let parsed = parse_urlencoded_view(source)
+      if source.length() <= PARSE_CACHE_MAX_KEY {
+        parse_cache_set(queries_cache, source, parsed)
+      }
+      parsed
+    }
+  }
+  last_query_path.val = Some(path)
+  last_query_start.val = index
+  last_query_map.val = Some(parsed)
+  parsed
+}
+
+///|
+pub fn Context::cookies(self : Context) -> Map[String, String] {
+  let header = self.header("Cookie")
+  if header == "" {
+    return Map([], capacity=8)
+  }
+  cookie_map_lookup(header).copy()
+}
+
+///|
+pub fn Context::cookie(self : Context, name : String) -> String? {
+  if name == "" {
+    return None
+  }
+  let header = self.header("Cookie")
+  if header == "" {
+    return None
+  }
+  match last_cookie_header.val {
+    Some(cached_header) =>
+      if physical_equal(cached_header, header) {
+        match last_cookie_map.val {
+          Some(cached_map) => return cached_map.get(name)
+          None => ()
+        }
+      }
+    None => ()
+  }
+  match cookies_cache.get(header) {
+    Some(cached) => {
+      last_cookie_header.val = Some(header)
+      last_cookie_map.val = Some(cached)
+      cached.get(name)
+    }
+    None => cookie_scan(header.view(), name)
+  }
 }
 
 ///|
@@ -1887,111 +2030,84 @@ fn decode_utf8_bytes(bytes : Bytes) -> String {
 }
 
 ///|
+fn decode_url_bytes(bytes : BytesView, plus_as_space : Bool) -> String {
+  let length = bytes.length()
+  let out = FixedArray::make(length, b' ')
+  let mut out_index = 0
+  let mut i = 0
+  while i < length {
+    let byte = bytes[i].to_int()
+    if byte == 37 && i + 2 < length {
+      let high = hex_digit(bytes[i + 1].to_int())
+      let low = hex_digit(bytes[i + 2].to_int())
+      if high >= 0 && low >= 0 {
+        out[out_index] = (high * 16 + low).to_byte()
+        out_index = out_index + 1
+        i = i + 3
+        continue
+      }
+    } else if byte == 43 && plus_as_space {
+      out[out_index] = b' '
+      out_index = out_index + 1
+      i = i + 1
+      continue
+    }
+    out[out_index] = byte.to_byte()
+    out_index = out_index + 1
+    i = i + 1
+  }
+  @utf8.decode_lossy(Bytes::from_fixedarray(out, len=out_index))
+}
+
+///|
 fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
   let length = source.length()
-  let mut needs_decoding = false
   let mut ascii_only = true
-  let mut high_byte = false
+  let mut needs_decoding = false
   let mut i = 0
   while i < length {
     let value = source.unsafe_get(i).to_int()
     if value > 127 {
       ascii_only = false
-    } else if value == 37 {
+    } else if value == 37 || (value == 43 && plus_as_space) {
       needs_decoding = true
-      if i + 2 < length {
-        let high = hex_digit(source.unsafe_get(i + 1).to_int())
-        let low = hex_digit(source.unsafe_get(i + 2).to_int())
-        if high >= 8 && low >= 0 {
-          high_byte = true
-        }
-      }
-    } else if value == 43 && plus_as_space {
-      needs_decoding = true
+      break
     }
     i = i + 1
   }
   if !needs_decoding {
     return source.to_owned()
   }
-  if ascii_only && !high_byte {
-    let builder = StringBuilder(size_hint=length)
-    let mut i = 0
-    while i < length {
-      let value = source.unsafe_get(i).to_int()
-      if value == 37 {
-        if i + 2 < length {
-          let high = hex_digit(source.unsafe_get(i + 1).to_int())
-          let low = hex_digit(source.unsafe_get(i + 2).to_int())
-          if high >= 0 && low >= 0 {
-            builder.write_char((high * 16 + low).unsafe_to_char())
-            i = i + 3
-            continue
-          }
-        }
-        builder.write_char('%')
-        i = i + 1
-      } else if value == 43 && plus_as_space {
-        builder.write_char(' ')
-        i = i + 1
-      } else {
-        let run_start = i
-        i = i + 1
-        while i < length {
-          let next = source.unsafe_get(i).to_int()
-          if next == 37 || (next == 43 && plus_as_space) {
-            break
-          }
-          i = i + 1
-        }
-        builder.write_stringview(source[run_start:i])
-      }
-    }
-    return builder.to_string()
+  if !ascii_only {
+    return decode_url_bytes(@utf8.encode(source), plus_as_space)
   }
-  let buffer = @buffer.Buffer::Buffer(size_hint=length)
-  let mut i = 0
-  if ascii_only {
-    while i < length {
-      let code = source.unsafe_get(i).to_int()
-      if code == 37 && i + 2 < length {
-        let high = hex_digit(source.unsafe_get(i + 1).to_int())
-        let low = hex_digit(source.unsafe_get(i + 2).to_int())
-        if high >= 0 && low >= 0 {
-          buffer.write_byte((high * 16 + low).to_byte())
-          i = i + 3
-          continue
-        }
-        buffer.write_byte(code.to_byte())
-      } else if code == 43 && plus_as_space {
-        buffer.write_byte(b' ')
-      } else {
-        buffer.write_byte(code.to_byte())
+  let out = FixedArray::make(length, b' ')
+  let mut out_index = 0
+  let mut j = 0
+  while j < length {
+    let code = source.unsafe_get(j).to_int()
+    if code == 37 && j + 2 < length {
+      let high = hex_digit(source.unsafe_get(j + 1).to_int())
+      let low = hex_digit(source.unsafe_get(j + 2).to_int())
+      if high >= 0 && low >= 0 {
+        out[out_index] = (high * 16 + low).to_byte()
+        out_index = out_index + 1
+        j = j + 3
+        continue
       }
-      i = i + 1
+    } else if code == 43 && plus_as_space {
+      out[out_index] = b' '
+      out_index = out_index + 1
+      j = j + 1
+      continue
+    } else if code > 127 {
+      return decode_url_bytes(@utf8.encode(source), plus_as_space)
     }
-  } else {
-    let bytes = @utf8.encode(source)
-    while i < bytes.length() {
-      let byte = bytes[i]
-      if byte == b'%' && i + 2 < bytes.length() {
-        let high = hex_digit(bytes[i + 1].to_int())
-        let low = hex_digit(bytes[i + 2].to_int())
-        if high >= 0 && low >= 0 {
-          buffer.write_byte((high * 16 + low).to_byte())
-          i = i + 2
-        } else {
-          buffer.write_byte(byte)
-        }
-      } else if byte == b'+' && plus_as_space {
-        buffer.write_byte(b' ')
-      } else {
-        buffer.write_byte(byte)
-      }
-      i = i + 1
-    }
+    out[out_index] = code.to_byte()
+    out_index = out_index + 1
+    j = j + 1
   }
-  decode_utf8_bytes(buffer.to_bytes())
+  @utf8.decode_lossy(Bytes::from_fixedarray(out, len=out_index))
 }
 
 ///|
@@ -2462,7 +2578,27 @@ fn query_param(source : StringView, name : String) -> String {
 pub fn Context::query(self : Context, name : String) -> String {
   let path = self.request.path
   match path.find("?") {
-    Some(index) => query_param(path[index + 1:], name)
+    Some(index) => {
+      let name_view = name.view()
+      let name_length = name_view.length()
+      let mut needs_raw = false
+      let mut i = 0
+      while i < name_length {
+        let code = name_view.unsafe_get(i)
+        if code == ('%' : UInt16) || code == ('+' : UInt16) {
+          needs_raw = true
+          break
+        }
+        i = i + 1
+      }
+      if needs_raw {
+        return query_param(path.view()[index + 1:], name)
+      }
+      match query_map_lookup(path, index).get(name) {
+        Some(value) => value
+        None => ""
+      }
+    }
     None => ""
   }
 }
@@ -2481,8 +2617,9 @@ pub fn Context::form(self : Context, name : String) -> String {
 
 ///|
 pub fn Context::queries(self : Context) -> Map[String, String] {
-  match self.request.path.find("?") {
-    Some(index) => parse_urlencoded_view(self.request.path[index + 1:])
+  let path = self.request.path
+  match path.find("?") {
+    Some(index) => query_map_lookup(path, index).copy()
     None => Map([], capacity=0)
   }
 }
