@@ -1,5 +1,5 @@
 ///|
-async fn zz_decode_gzip(data : Bytes) -> Bytes {
+async fn decode_gzip_for_test(data : Bytes) -> Bytes {
   let reader = @io.MemoryReader(async fn(writer) {
     writer.write(data)
   })
@@ -68,12 +68,12 @@ async test "gzip compress round trips" {
   let compressed = gzip_compress(payload)
   assert_true(compressed.length() > 0)
   assert_true(compressed.length() < payload.length())
-  assert_eq(zz_decode_gzip(compressed), payload)
+  assert_eq(decode_gzip_for_test(compressed), payload)
 }
 
 ///|
 async test "gzip compress empty input round trips" {
   let payload = b""
   let compressed = gzip_compress(payload)
-  assert_eq(zz_decode_gzip(compressed), payload)
+  assert_eq(decode_gzip_for_test(compressed), payload)
 }

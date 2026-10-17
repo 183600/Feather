@@ -1,6 +1,3 @@
-// Test cases for Feather Web Framework
-// Based on PLAN.md specifications
-
 ///|
 test "Feather server can be created with basic configuration" {
   let config : Config = { host: "127.0.0.1", port: 8080, timeout: 30000, }
