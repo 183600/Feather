@@ -168,3 +168,34 @@ async test "server handles head requests" {
     ignore(client.read_all())
   })
 }
+
+///|
+async test "server records the client ip without the port" {
+  let app = @feather.App::new().get("/ip", fn(ctx) { ctx.text(200, ctx.ip()) })
+  with_server(app, client => {
+    let response = client.get("/ip")
+    assert_eq(response.code, 200)
+    let body = client.read_all().text()
+    assert_eq(body, "127.0.0.1")
+  })
+}
+
+///|
+async test "server strips bodies from no-content responses" {
+  let app = @feather.App::new().get("/empty", fn(ctx) {
+    ctx.text(200, "payload")
+    ctx.status(204)
+  })
+  with_server(app, client => {
+    let response = client.get("/empty")
+    assert_eq(response.code, 204)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Length")),
+      None,
+    )
+    assert_eq(client.read_all().text(), "")
+    let follow_up = client.get("/empty")
+    assert_eq(follow_up.code, 204)
+    assert_eq(client.read_all().text(), "")
+  })
+}

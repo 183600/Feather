@@ -83,6 +83,8 @@ test "rate limit middleware throttles per key" {
   assert_eq(second.status, 429)
   assert_eq(second.body, "429 Too Many Requests")
   assert_eq(second.headers.get("Retry-After"), Some("60"))
+  assert_eq(second.headers.get("X-RateLimit-Limit"), Some("1"))
+  assert_eq(second.headers.get("X-RateLimit-Remaining"), Some("0"))
   let bob = app.respond({
     method: "GET",
     path: "/api",

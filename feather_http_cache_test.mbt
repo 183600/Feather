@@ -439,6 +439,56 @@ async test "server keeps cache control on revalidated responses" {
 }
 
 ///|
+async test "server keeps representation headers on revalidated queued files" {
+  let dir = @fs.tmpdir(prefix="feather-file-cc-304")
+  @fs.write_file(dir + "/report.css", "body{}")
+  let app = @feather.App::new().get("/report.css", fn(ctx) {
+    ctx.set_header("Cache-Control", "public, max-age=60")
+    ctx.file(200, dir + "/report.css", download_name="report.css")
+  })
+  with_server(app, client => {
+    let first = client.get("/report.css")
+    let etag = match first.headers.get(@http.CaseInsensitiveString("ETag")) {
+      Some(etag) => etag
+      None => fail("missing ETag")
+    }
+    assert_eq(
+      first.headers.get(@http.CaseInsensitiveString("Content-Disposition")),
+      Some("attachment; filename=\"report.css\""),
+    )
+    ignore(client.read_all())
+    let revalidated = client.get(
+      "/report.css",
+      extra_headers=Map([(@http.CaseInsensitiveString("If-None-Match"), etag)]),
+    )
+    assert_eq(revalidated.code, 304)
+    assert_eq(
+      revalidated.headers.get(@http.CaseInsensitiveString("ETag")),
+      Some(etag),
+    )
+    assert_eq(
+      revalidated.headers.get(@http.CaseInsensitiveString("Cache-Control")),
+      Some("public, max-age=60"),
+    )
+    assert_true(
+      revalidated.headers.get(
+        @http.CaseInsensitiveString("Last-Modified"),
+      ) is Some(_),
+    )
+    assert_eq(
+      revalidated.headers.get(@http.CaseInsensitiveString("Content-Type")),
+      None,
+    )
+    assert_eq(
+      revalidated.headers.get(@http.CaseInsensitiveString("Content-Length")),
+      None,
+    )
+    assert_eq(client.read_all().text(), "")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
 test "Context fresh and not_modified support dynamic caching" {
   let ctx = @feather.Context::new({
     method: "GET",
@@ -503,4 +553,26 @@ test "Context forwarded_ip honors proxy headers" {
   let direct = @feather.create_context()
   direct.state.set("remote_addr", "192.0.2.1:9000")
   assert_eq(direct.forwarded_ip(), "192.0.2.1:9000")
+}
+
+///|
+async test "server ignores range headers for non-200 queued files" {
+  let dir = @fs.tmpdir(prefix="feather-file-range-status")
+  @fs.write_file(dir + "/nope.txt", "0123456789")
+  let app = @feather.App::new().get("/nope.txt", fn(ctx) {
+    ctx.file(404, dir + "/nope.txt")
+  })
+  with_server(app, client => {
+    let response = client.get(
+      "/nope.txt",
+      extra_headers=Map([(@http.CaseInsensitiveString("Range"), "bytes=0-3")]),
+    )
+    assert_eq(response.code, 404)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      None,
+    )
+    assert_eq(client.read_all().text(), "0123456789")
+  })
+  @fs.rmdir(dir, recursive=true)
 }

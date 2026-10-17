@@ -147,11 +147,11 @@ fn RateLimiter::maybe_sweep(self : RateLimiter, now : Int64) -> Unit {
 /// Middleware that throttles requests per key, by default per client IP.
 ///
 /// Each key may make `RateLimiter::new`'s allowance of requests per window;
-/// requests over the limit are answered with `429 Too Many Requests` and a
-/// `Retry-After` header (whole seconds, rounded up) without reaching the
-/// handler. Accepted responses carry `X-RateLimit-Limit` and
-/// `X-RateLimit-Remaining` headers. Pass `key` to throttle by something else,
-/// such as a session id or an API token.
+/// requests over the limit are answered with `429 Too Many Requests`, a
+/// `Retry-After` header (whole seconds, rounded up) and the remaining count,
+/// without reaching the handler. Every response carries `X-RateLimit-Limit`
+/// and `X-RateLimit-Remaining` headers. Pass `key` to throttle by something
+/// else, such as a session id or an API token.
 pub fn middleware_rate_limit(
   limiter : RateLimiter,
   key~ : (Context) -> String = fn(ctx) { ctx.ip() },
@@ -170,6 +170,8 @@ pub fn middleware_rate_limit(
         let millis = limiter.retry_after(bucket_key)
         let seconds = millis / 1000L + (if millis % 1000L == 0L { 0L } else { 1L })
         ctx.set_header("Retry-After", seconds.to_string())
+        ctx.set_header("X-RateLimit-Limit", limiter.max().to_string())
+        ctx.set_header("X-RateLimit-Remaining", "0")
         ctx.text(429, "429 Too Many Requests")
       }
     }

@@ -1296,6 +1296,10 @@ pub fn Context::full_url(self : Context) -> String {
 }
 
 ///|
+/// Address of the client that opened the connection, without the ephemeral
+/// port. When the request is served by `App::serve` this is the peer IP
+/// recorded by the server; contexts built by hand report `"127.0.0.1"` unless
+/// `remote_addr` was set in the state.
 pub fn Context::ip(self : Context) -> String {
   match self.state.get("remote_addr") {
     Some(value) => value

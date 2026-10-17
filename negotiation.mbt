@@ -230,6 +230,8 @@ fn accept_encoding_quality(header : StringView, coding : StringView) -> Int {
     exact_q
   } else if star_q >= 0 {
     star_q
+  } else if coding.equal_ignore_ascii_case("identity".view()) {
+    1000
   } else {
     0
   }
@@ -240,7 +242,9 @@ fn accept_encoding_quality(header : StringView, coding : StringView) -> Int {
 ///
 /// A missing or empty header accepts every encoding; `q=0` entries reject the
 /// matched encoding, and an encoding that is neither listed nor matched by
-/// `*` is not acceptable.
+/// `*` is not acceptable. The `identity` coding is the exception: it is
+/// acceptable by default whenever the header does not explicitly reject it
+/// (RFC 9110 §12.5.3).
 pub fn Context::accepts_encoding(self : Context, encoding : String) -> Bool {
   accept_encoding_quality(self.header("Accept-Encoding").view(), encoding.view()) >
   0

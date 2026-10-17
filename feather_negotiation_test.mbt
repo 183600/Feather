@@ -163,6 +163,17 @@ test "accepts_encoding rejects codings that are not listed" {
 }
 
 ///|
+test "accepts_encoding treats identity as acceptable by default" {
+  assert_true(encoding_ctx("gzip").accepts_encoding("identity"))
+  assert_true(encoding_ctx("gzip, br").accepts_encoding("identity"))
+  assert_true(encoding_ctx("").accepts_encoding("identity"))
+  assert_false(encoding_ctx("gzip, identity;q=0").accepts_encoding("identity"))
+  assert_false(encoding_ctx("*;q=0").accepts_encoding("identity"))
+  assert_true(encoding_ctx("gzip, *;q=0.5").accepts_encoding("identity"))
+  assert_false(encoding_ctx("identity;q=0, *;q=0.8").accepts_encoding("identity"))
+}
+
+///|
 test "preferred_encoding picks the best coding and honors server order" {
   let ctx = encoding_ctx("br;q=0.9, gzip;q=0.8")
   assert_eq(ctx.preferred_encoding(["gzip", "br"]), Some("br"))

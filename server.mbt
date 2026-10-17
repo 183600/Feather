@@ -353,52 +353,43 @@ async fn send_file_response(
   }
   let effective_etag = headers.get(header_etag).unwrap_or(etag)
   if conditional_not_modified(request, effective_etag, mtime_secs) {
-    let not_modified_headers : @http.Headers = Map([], capacity=2)
-    not_modified_headers.set(header_etag, effective_etag)
-    match headers.get(header_last_modified) {
-      Some(value) => not_modified_headers.set(header_last_modified, value)
-      None => ()
-    }
-    send_with_date(
-      conn,
-      304,
-      "Not Modified",
-      not_modified_headers,
-      cookies=response.cookies,
-    )
+    headers.remove(header_content_length)
+    headers.remove(header_content_type)
+    send_with_date(conn, 304, "Not Modified", headers, cookies=response.cookies)
     conn.end_response()
     return
   }
   let mut status = response.status
   let mut start = 0L
   let mut length = size
-  match request.headers.get(header_range) {
-    Some(value) => {
-      if if_range_allows(request, effective_etag, mtime_secs) {
-        match parse_byte_range(value, size) {
-          ByteRangeSpec(range_start, range_end) => {
-            status = 206
-            start = range_start
-            length = range_end - range_start + 1L
+  if response.status == 200 {
+    match request.headers.get(header_range) {
+      Some(value) =>
+        if if_range_allows(request, effective_etag, mtime_secs) {
+          match parse_byte_range(value, size) {
+            ByteRangeSpec(range_start, range_end) => {
+              status = 206
+              start = range_start
+              length = range_end - range_start + 1L
+            }
+            ByteRangeInvalid => {
+              headers.remove(header_content_length)
+              headers.set(header_content_range, "bytes */" + size.to_string())
+              send_with_date(
+                conn,
+                416,
+                status_text(416),
+                headers,
+                cookies=response.cookies,
+              )
+              conn.end_response()
+              return
+            }
+            ByteRangeFull => ()
           }
-          ByteRangeInvalid => {
-            headers.remove(header_content_length)
-            headers.set(header_content_range, "bytes */" + size.to_string())
-            send_with_date(
-              conn,
-              416,
-              status_text(416),
-              headers,
-              cookies=response.cookies,
-            )
-            conn.end_response()
-            return
-          }
-          ByteRangeFull => ()
         }
-      }
+      None => ()
     }
-    None => ()
   }
   if status == 206 {
     headers.set(
@@ -438,6 +429,24 @@ async fn send_file_response(
 }
 
 ///|
+/// Host part of a peer address, without the ephemeral port.
+///
+/// Recorded as the `remote_addr` context state so IP-based logic (logging,
+/// `Context::ip`, rate limiting) keys by client rather than by connection.
+fn socket_addr_host(addr : @socket.Addr) -> String {
+  if addr.is_ipv6() {
+    let text = addr.to_string()
+    match text.find("]") {
+      Some(index) => text[:index + 1].to_owned()
+      None => text
+    }
+  } else {
+    let ip = addr.ip()
+    "\{ip >> 24}.\{(ip >> 16) & 255}.\{(ip >> 8) & 255}.\{ip & 255}"
+  }
+}
+
+///|
 async fn send_response(
   conn : @http.ServerConnection,
   response : Response,
@@ -456,9 +465,14 @@ async fn send_response(
         @utf8.encode(response.body)
       }
   }
-  let has_body = body_bytes.length() > 0
+  let body_allowed = response.status >= 200 &&
+    response.status != 204 &&
+    response.status != 304
+  let has_body = body_allowed && body_bytes.length() > 0
   if has_body && !headers.contains(header_content_length) {
     headers.set(header_content_length, body_bytes.length().to_string())
+  } else if !body_allowed {
+    headers.remove(header_content_length)
   }
   if response.cookies.length() > 0 {
     headers.remove(header_set_cookie)
@@ -715,7 +729,7 @@ async fn build_response(
 ) -> (Response, FileResponse?) {
   let req = request_from_http(request, body, app.max_body_size)
   let ctx = Context::new(req)
-  ctx.state.set("remote_addr", conn.client_addr().to_string())
+  ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   app.handle(ctx) catch {
     HttpError(status, message) => error_response(ctx, status, message)
     HttpErrorPayload(status, message, payload) =>
@@ -761,7 +775,7 @@ async fn handle_websocket(
   defer conn.close()
   defer socket.close()
   let ctx = Context::new(req)
-  ctx.state.set("remote_addr", conn.client_addr().to_string())
+  ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
   }
