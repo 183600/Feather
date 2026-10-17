@@ -2227,18 +2227,28 @@ pub fn mime_type_for(path : String) -> String {
 ///|
 fn parse_urlencoded_view(source : StringView) -> Map[String, String] {
   let result : Map[String, String] = Map([], capacity=4)
-  for pair in source.split("&") {
-    if pair.is_empty() {
-      continue
+  let length = source.length()
+  let mut pos = 0
+  while pos <= length {
+    let mut end = pos
+    while end < length && source.unsafe_get(end) != ('&' : UInt16) {
+      end = end + 1
     }
-    match pair.find("=") {
-      Some(index) => {
-        let key = decode_url(pair[:index])
-        let value = decode_url(pair[index + 1:])
-        result.set(key, value)
+    if end > pos {
+      let pair = source[pos:end]
+      match pair.find("=") {
+        Some(index) => {
+          let key = decode_url(pair[:index])
+          let value = decode_url(pair[index + 1:])
+          result.set(key, value)
+        }
+        None => result.set(decode_url(pair), "")
       }
-      None => result.set(decode_url(pair), "")
     }
+    if end >= length {
+      break
+    }
+    pos = end + 1
   }
   result
 }
