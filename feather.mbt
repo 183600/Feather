@@ -940,15 +940,42 @@ pub fn internal_error(ctx : Context, detail : String) -> Unit {
 }
 
 ///|
+let error_body_cache : Map[Int32, Map[String, String]] = Map([])
+
+///|
+fn cached_error_body(status : Int32, message : String) -> String {
+  let by_message = match error_body_cache.get(status) {
+    Some(by_message) => by_message
+    None => {
+      let by_message : Map[String, String] = Map([], capacity=4)
+      if error_body_cache.length() < 32 {
+        error_body_cache.set(status, by_message)
+      }
+      by_message
+    }
+  }
+  match by_message.get(message) {
+    Some(body) => body
+    None => {
+      let payload : Map[String, Json] = Map([], capacity=2)
+      payload.set("status", Json::number(status.to_double()))
+      payload.set("error", Json::string(message))
+      let body = Json::object(payload).stringify()
+      if by_message.length() < 8 {
+        by_message.set(message, body)
+      }
+      body
+    }
+  }
+}
+
+///|
 pub fn error_response(ctx : Context, status : Int32, message : String) -> Unit {
   ctx.file = None
-  let payload : Map[String, Json] = Map([], capacity=2)
-  payload.set("status", Json::number(status.to_double()))
-  payload.set("error", Json::string(message))
   ctx.response.status = status
   ctx.response.headers.set("Content-Type", "application/json; charset=utf-8")
   ctx.response.data = None
-  ctx.response.body = Json::object(payload).stringify()
+  ctx.response.body = cached_error_body(status, message)
 }
 
 ///|
@@ -1273,23 +1300,54 @@ pub fn Context::cookies(self : Context) -> Map[String, String] {
     while end < length && header.unsafe_get(end) != (';' : UInt16) {
       end = end + 1
     }
-    let pair = trim_ascii_space(header[pos:end])
-    if !pair.is_empty() {
-      let pair_length = pair.length()
-      let mut eq = 0
-      while eq < pair_length && pair.unsafe_get(eq) != ('=' : UInt16) {
+    let mut start = pos
+    while start < end {
+      let code = header.unsafe_get(start)
+      if code != (' ' : UInt16) &&
+        code != ('\t' : UInt16) &&
+        code != ('\n' : UInt16) &&
+        code != ('\r' : UInt16) {
+        break
+      }
+      start = start + 1
+    }
+    let mut stop = end
+    while stop > start {
+      let code = header.unsafe_get(stop - 1)
+      if code != (' ' : UInt16) &&
+        code != ('\t' : UInt16) &&
+        code != ('\n' : UInt16) &&
+        code != ('\r' : UInt16) {
+        break
+      }
+      stop = stop - 1
+    }
+    if start < stop {
+      let mut eq = start
+      while eq < stop && header.unsafe_get(eq) != ('=' : UInt16) {
         eq = eq + 1
       }
-      if eq < pair_length {
-        let name = owned_trimmed(pair[:eq])
-        if name != "" {
-          let raw_value = pair[eq + 1:]
-          let value = if raw_value.length() >= 2 &&
-            raw_value.unsafe_get(0) == ('"' : UInt16) &&
-            raw_value.unsafe_get(raw_value.length() - 1) == ('"' : UInt16) {
-            raw_value[1:raw_value.length() - 1].to_owned()
+      if eq < stop {
+        let mut name_end = eq
+        while name_end > start {
+          let code = header.unsafe_get(name_end - 1)
+          if code != (' ' : UInt16) &&
+            code != ('\t' : UInt16) &&
+            code != ('\n' : UInt16) &&
+            code != ('\r' : UInt16) {
+            break
+          }
+          name_end = name_end - 1
+        }
+        if name_end > start {
+          let name = header[start:name_end].to_owned()
+          let raw_start = eq + 1
+          let value = if stop - raw_start >= 2 &&
+            header.unsafe_get(raw_start) == ('"' : UInt16) &&
+            header.unsafe_get(stop - 1) == ('"' : UInt16) {
+            header[raw_start + 1:stop - 1].to_owned()
           } else {
-            raw_value.to_owned()
+            header[raw_start:stop].to_owned()
           }
           cookies.set(name, value)
         }
@@ -2121,8 +2179,8 @@ fn has_ascii_upper(view : StringView) -> Bool {
   let length = view.length()
   let mut i = 0
   while i < length {
-    let value = view.unsafe_get(i).to_int()
-    if value >= 65 && value <= 90 {
+    let value = view.unsafe_get(i)
+    if value >= ('A' : UInt16) && value <= ('Z' : UInt16) {
       return true
     }
     i = i + 1
@@ -2141,16 +2199,20 @@ fn starts_with_ignore_ascii_case(
   }
   let mut i = 0
   while i < length {
-    let mut left = view.unsafe_get(i).to_int()
-    let mut right = prefix.unsafe_get(i).to_int()
-    if left >= 65 && left <= 90 {
-      left = left + 32
-    }
-    if right >= 65 && right <= 90 {
-      right = right + 32
-    }
+    let left = view.unsafe_get(i)
+    let right = prefix.unsafe_get(i)
     if left != right {
-      return false
+      let mut left_code = left.to_int()
+      let mut right_code = right.to_int()
+      if left_code >= 65 && left_code <= 90 {
+        left_code = left_code + 32
+      }
+      if right_code >= 65 && right_code <= 90 {
+        right_code = right_code + 32
+      }
+      if left_code != right_code {
+        return false
+      }
     }
     i = i + 1
   }

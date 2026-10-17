@@ -95,6 +95,10 @@ fn content_type_is_compressible(content_type : StringView) -> Bool {
   lower.has_suffix("+xml")
 }
 
+let header_accept_encoding : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Accept-Encoding",
+)
+
 ///|
 fn contains_ignore_ascii_case(haystack : StringView, needle : StringView) -> Bool {
   find_view_ignore_ascii_case(haystack, needle, 0) is Some(_)
@@ -149,9 +153,7 @@ async fn compress_response(
     return
   }
   add_vary_accept_encoding(response)
-  let accept_encoding = match request.headers.get(
-    @http.CaseInsensitiveString("Accept-Encoding"),
-  ) {
+  let accept_encoding = match request.headers.get(header_accept_encoding) {
     Some(value) => value
     None => return
   }
