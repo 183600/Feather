@@ -637,6 +637,20 @@ fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
 }
 
 ///|
+/// Render an `Allow` header value. `HEAD` is implicit whenever `GET` is
+/// allowed (RFC 9110 §9.3.2), so it is listed even when no HEAD route exists.
+fn allow_header_value(allowed : Array[String]) -> String {
+  if allowed.contains("GET") && !allowed.contains("HEAD") {
+    let with_head = allowed.copy()
+    with_head.push("HEAD")
+    with_head.sort()
+    with_head.join(", ")
+  } else {
+    allowed.join(", ")
+  }
+}
+
+///|
 priv enum RouteMatch {
   MatchFound(RouteNode, Map[String, String]?, String)
   MatchMethods(Array[String])
@@ -901,7 +915,12 @@ pub fn Router::dispatch_with(
         None => not_found(ctx)
       }
     }
-    DispatchMethods(methods) => method_not_allowed(ctx, methods)
+    DispatchMethods(methods) =>
+      if ctx.request.method == "OPTIONS" {
+        respond_options(ctx, methods)
+      } else {
+        method_not_allowed(ctx, methods)
+      }
     DispatchMissing =>
       match fallback {
         Some(handler) => handler(ctx)
@@ -923,10 +942,21 @@ pub fn not_found(ctx : Context) -> Unit {
 pub fn method_not_allowed(ctx : Context, allowed : Array[String]) -> Unit {
   ctx.file = None
   ctx.response.status = 405
-  ctx.response.headers.set("Allow", allowed.join(", "))
+  ctx.response.headers.set("Allow", allow_header_value(allowed))
   ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
   ctx.response.data = None
   ctx.response.body = "405 Method Not Allowed"
+}
+
+///|
+/// Answer an `OPTIONS` request for a path that exists under other methods with
+/// `204 No Content` and an `Allow` header, without running any handler.
+pub fn respond_options(ctx : Context, allowed : Array[String]) -> Unit {
+  ctx.file = None
+  ctx.response.status = 204
+  ctx.response.headers.set("Allow", allow_header_value(allowed))
+  ctx.response.data = None
+  ctx.response.body = ""
 }
 
 ///|
@@ -2724,6 +2754,34 @@ fn header_parameter(value : StringView, name : String) -> String? {
 }
 
 ///|
+/// Look up an extended parameter such as `filename*` (RFC 8187) in a header
+/// value and decode its `charset'language'value` form.
+///
+/// Only the `UTF-8` charset is accepted; other charsets, missing separators
+/// and malformed percent escapes yield `None` so the caller can fall back to
+/// the plain parameter.
+fn header_ext_parameter(value : StringView, name : String) -> String? {
+  let raw = match header_parameter(value, name + "*") {
+    Some(raw) => raw
+    None => return None
+  }
+  let view = raw.view()
+  let first = match view.find("'") {
+    Some(index) => index
+    None => return None
+  }
+  if !view[:first].equal_ignore_ascii_case("utf-8".view()) {
+    return None
+  }
+  let rest = view[first + 1:]
+  let second = match rest.find("'") {
+    Some(index) => index
+    None => return None
+  }
+  Some(decode_url_path(rest[second + 1:]))
+}
+
+///|
 pub fn multipart_boundary(content_type : String) -> String? {
   let view = content_type.view()
   let is_multipart = starts_with_ignore_ascii_case(
@@ -2912,7 +2970,10 @@ pub fn parse_multipart(
     }
     let filename = match disposition {
       Some(disposition) =>
-        header_parameter(disposition.view(), "filename").unwrap_or("")
+        match header_ext_parameter(disposition.view(), "filename") {
+          Some(filename) => filename
+          None => header_parameter(disposition.view(), "filename").unwrap_or("")
+        }
       None => ""
     }
     let part_content_type = if content_type_matches == 1 {
@@ -3639,6 +3700,7 @@ pub(all) struct StaticMount {
   root : String
   index : String
   max_age : Int32
+  precompressed : Bool
 }
 
 ///|
@@ -3874,12 +3936,19 @@ fn clean_relative_path(relative : StringView) -> String? {
 }
 
 ///|
+/// Serve files from `root` under `url_prefix`.
+///
+/// When `precompressed` is enabled, a sibling `<file>.gz` is served instead of
+/// the file itself to clients that accept the `gzip` coding, saving the CPU
+/// cost of compressing at request time. Responses carry
+/// `Vary: Accept-Encoding` so shared caches keep the variants apart.
 pub fn App::static_files(
   self : App,
   url_prefix : String,
   root : String,
   index~ : String = "index.html",
   max_age~ : Int32 = 0,
+  precompressed~ : Bool = false,
 ) -> App {
   let mut clean_root = root
   while clean_root.length() > 1 && clean_root.has_suffix("/") {
@@ -3890,6 +3959,7 @@ pub fn App::static_files(
     root: clean_root,
     index,
     max_age,
+    precompressed,
   })
   self
 }
@@ -3928,6 +3998,7 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
       root: mount.root,
       index: mount.index,
       max_age: mount.max_age,
+      precompressed: mount.precompressed,
     })
   }
   for path, handler in child.ws_handlers {
@@ -3983,12 +4054,12 @@ fn App::best_static_mount(
 }
 
 ///|
-/// Resolve a static file request to its filesystem path and `Cache-Control`
-/// value in one pass over the configured mounts.
+/// Resolve a static file request to its filesystem path, `Cache-Control` value
+/// and precompressed-serving flag in one pass over the configured mounts.
 fn App::static_lookup(
   self : App,
   path : String,
-) -> (String, String)? {
+) -> (String, String, Bool)? {
   let path_view = clean_path_view(path)
   match self.best_static_mount(path_view) {
     None => None
@@ -4017,7 +4088,7 @@ fn App::static_lookup(
       } else {
         ""
       }
-      Some((file_path, cache_control))
+      Some((file_path, cache_control, mount.precompressed))
     }
   }
 }
@@ -4025,7 +4096,7 @@ fn App::static_lookup(
 ///|
 pub fn App::static_file_for(self : App, path : String) -> String? {
   match self.static_lookup(path) {
-    Some((file_path, _)) => Some(file_path)
+    Some((file_path, _, _)) => Some(file_path)
     None => None
   }
 }
@@ -4519,8 +4590,11 @@ pub fn Feather::static_files(
   root : String,
   index~ : String = "index.html",
   max_age~ : Int32 = 0,
+  precompressed~ : Bool = false,
 ) -> Feather {
-  ignore(self.app.static_files(url_prefix, root, index~, max_age~))
+  ignore(
+    self.app.static_files(url_prefix, root, index~, max_age~, precompressed~),
+  )
   self
 }
 

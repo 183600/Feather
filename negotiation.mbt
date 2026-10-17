@@ -269,3 +269,125 @@ pub fn Context::preferred_encoding(
   }
   best
 }
+
+///|
+/// Quality value (in thousandths) assigned to `language` by an
+/// `Accept-Language` header.
+///
+/// Matching follows RFC 9110 §12.5.4: a range matches when it is `*`, equals
+/// the tag, or is a prefix of the tag ending at a `-` boundary, so `en`
+/// matches `en-US`. The most specific matching range decides the quality. A
+/// missing or empty header accepts every language.
+fn accept_language_quality(header : StringView, language : StringView) -> Int {
+  if trim_ascii_space(header).is_empty() {
+    return 1000
+  }
+  let length = header.length()
+  let mut pos = 0
+  let mut best_q = -1
+  let mut best_specificity = -1
+  let mut saw_entry = false
+  while pos < length {
+    let mut end = pos
+    while end < length {
+      let code = header.unsafe_get(end)
+      if code == (';' : UInt16) || code == (',' : UInt16) {
+        break
+      }
+      end = end + 1
+    }
+    let token = trim_ascii_space(header[pos:end])
+    let mut quality = 1000
+    let mut scan = end
+    while scan < length && header.unsafe_get(scan) == (';' : UInt16) {
+      scan = scan + 1
+      let parameter_start = scan
+      while scan < length {
+        let code = header.unsafe_get(scan)
+        if code == (';' : UInt16) || code == (',' : UInt16) {
+          break
+        }
+        scan = scan + 1
+      }
+      let parameter = trim_ascii_space(header[parameter_start:scan])
+      if parameter.length() >= 2 &&
+        (parameter.unsafe_get(0) == ('q' : UInt16) ||
+          parameter.unsafe_get(0) == ('Q' : UInt16)) {
+        let mut marker = 1
+        while marker < parameter.length() &&
+          parameter.unsafe_get(marker) == (' ' : UInt16) {
+          marker = marker + 1
+        }
+        if marker < parameter.length() &&
+          parameter.unsafe_get(marker) == ('=' : UInt16) {
+          quality = parse_quality(trim_ascii_space(parameter[marker + 1:]))
+        }
+      }
+    }
+    if !token.is_empty() {
+      saw_entry = true
+      let specificity = if token == "*" {
+        0
+      } else if token.equal_ignore_ascii_case(language) {
+        2
+      } else if language.length() > token.length() &&
+        token.length() > 0 &&
+        language.unsafe_get(token.length()) == ('-' : UInt16) &&
+        starts_with_ignore_ascii_case(language, token) {
+        1
+      } else {
+        -1
+      }
+      if specificity >= 0 && specificity > best_specificity {
+        best_specificity = specificity
+        best_q = quality
+      }
+    }
+    pos = scan
+    if pos < length && header.unsafe_get(pos) == (',' : UInt16) {
+      pos = pos + 1
+    }
+  }
+  if !saw_entry {
+    return 1000
+  }
+  if best_specificity < 0 {
+    0
+  } else {
+    best_q
+  }
+}
+
+///|
+/// Check whether the request's `Accept-Language` header allows `language`.
+///
+/// A missing or empty header accepts every language; `q=0` entries reject the
+/// matched language, and a language that matches no range and is not covered
+/// by `*` is not acceptable.
+pub fn Context::accepts_language(self : Context, language : String) -> Bool {
+  accept_language_quality(self.header("Accept-Language").view(), language.view()) >
+  0
+}
+
+///|
+/// Pick the most preferred language from `offers` according to the request's
+/// `Accept-Language` header.
+///
+/// Returns `None` when the client rejects every offer. Ties keep the order of
+/// `offers`, so the server can express its own preference.
+pub fn Context::preferred_language(
+  self : Context,
+  offers : ArrayView[String],
+) -> String? {
+  let header = self.header("Accept-Language").view()
+  let mut best : String? = None
+  let mut best_q = 0
+  for offer in offers {
+    let quality = accept_language_quality(header, offer.view())
+    if quality > best_q {
+      best_q = quality
+      best = Some(offer)
+    }
+  }
+  best
+}

@@ -81,6 +81,8 @@ pub fn parse_multipart(String, String) -> Array[MultipartPart]?
 
 pub fn parse_urlencoded(String) -> Map[String, String]
 
+pub fn respond_options(Context, Array[String]) -> Unit
+
 pub fn status_text(Int) -> String
 
 pub fn url_decode(String) -> String
@@ -140,7 +142,7 @@ pub async fn App::serve(Self, @socket.Addr) -> Unit
 pub async fn App::serve_with(Self, @http.Server, max_connections? : Int) -> Unit
 pub fn App::static_cache_control_for(Self, String) -> String
 pub fn App::static_file_for(Self, String) -> String?
-pub fn App::static_files(Self, String, String, index? : String, max_age? : Int) -> Self
+pub fn App::static_files(Self, String, String, index? : String, max_age? : Int, precompressed? : Bool) -> Self
 pub fn App::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn App::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 pub fn App::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
@@ -168,6 +170,7 @@ pub(all) struct Context {
 }
 pub fn Context::accepts(Self, String) -> Bool
 pub fn Context::accepts_encoding(Self, String) -> Bool
+pub fn Context::accepts_language(Self, String) -> Bool
 pub fn Context::add_cookie(Self, String, String, path? : String, max_age? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> Unit
 pub fn Context::basic_auth(Self) -> (String, String)?
 pub fn Context::bearer_token(Self) -> String?
@@ -212,6 +215,7 @@ pub fn Context::param_bool(Self, String) -> Bool?
 pub fn Context::param_int(Self, String) -> Int?
 pub fn Context::params(Self) -> Map[String, String]
 pub fn Context::preferred_encoding(Self, ArrayView[String]) -> String?
+pub fn Context::preferred_language(Self, ArrayView[String]) -> String?
 pub fn Context::preferred_type(Self, ArrayView[String]) -> String?
 pub fn Context::protocol(Self) -> String
 pub fn Context::queries(Self) -> Map[String, String]
@@ -260,7 +264,7 @@ pub fn Feather::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn Feather::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
 pub async fn Feather::serve(Self) -> Unit
 pub async fn Feather::serve_with(Self, @http.Server, max_connections? : Int) -> Unit
-pub fn Feather::static_files(Self, String, String, index? : String, max_age? : Int) -> Self
+pub fn Feather::static_files(Self, String, String, index? : String, max_age? : Int, precompressed? : Bool) -> Self
 pub fn Feather::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn Feather::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 pub fn Feather::validate_body_size(Self, String) -> Bool
@@ -423,6 +427,7 @@ pub(all) struct StaticMount {
   root : String
   index : String
   max_age : Int
+  precompressed : Bool
 }
 
 // Type aliases

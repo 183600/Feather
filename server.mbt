@@ -72,6 +72,11 @@ let header_content_encoding : @http.CaseInsensitiveString = @http.CaseInsensitiv
 )
 
 ///|
+let header_vary : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Vary",
+)
+
+///|
 /// Raised when a request body declares a content coding but cannot be decoded.
 priv suberror MalformedRequestBody
 
@@ -529,17 +534,62 @@ async fn write_file_range(
 }
 
 ///|
+/// Open the `gzip` sibling of `file_path`, if it exists and is a regular file.
+async fn open_precompressed_gzip(file_path : String) -> @fs.File? {
+  let handle = Some(@fs.open(file_path + ".gz", mode=@fs.ReadOnly)) catch {
+    _ => None
+  }
+  match handle {
+    Some(handle) =>
+      if handle.kind() is @fs.Directory {
+        handle.close()
+        None
+      } else {
+        Some(handle)
+      }
+    None => None
+  }
+}
+
+///|
+/// Append `value` to the `Vary` header without duplicating an existing entry.
+fn add_vary_header(headers : @http.Headers, value : String) -> Unit {
+  match headers.get(header_vary) {
+    Some(existing) =>
+      if !contains_ignore_ascii_case(existing.view(), value.view()) {
+        headers.set(header_vary, existing + ", " + value)
+      }
+    None => headers.set(header_vary, value)
+  }
+}
+
+///|
 async fn serve_static_file(
   conn : @http.ServerConnection,
   file_path : String,
   head : Bool,
   request : @http.Request,
   cache_control : String,
+  precompressed : Bool,
 ) -> Unit {
-  let file = @fs.open(file_path, mode=@fs.ReadOnly) catch {
-    _ => {
-      send_simple(conn, 404, "404 Not Found", head)
-      return
+  let mut precompressed_handle : @fs.File? = None
+  if precompressed {
+    match request.headers.get(header_accept_encoding) {
+      Some(value) =>
+        if accept_encoding_allows_gzip(value.view()) {
+          precompressed_handle = open_precompressed_gzip(file_path)
+        }
+      None => ()
+    }
+  }
+  let serving_gzip = precompressed_handle is Some(_)
+  let file = match precompressed_handle {
+    Some(handle) => handle
+    None => @fs.open(file_path, mode=@fs.ReadOnly) catch {
+      _ => {
+        send_simple(conn, 404, "404 Not Found", head)
+        return
+      }
     }
   }
   defer file.close()
@@ -551,6 +601,14 @@ async fn serve_static_file(
     send_with_date(conn, 301, "Moved Permanently", headers)
     conn.end_response()
     return
+  }
+  let decorate_headers = fn(headers : @http.Headers) {
+    if precompressed {
+      add_vary_header(headers, "Accept-Encoding")
+    }
+    if serving_gzip {
+      headers.set(header_content_encoding, "gzip")
+    }
   }
   let size = file.size() catch {
     _ => 0L
@@ -571,6 +629,7 @@ async fn serve_static_file(
     if cache_control != "" {
       headers.set(cache_control_key, cache_control)
     }
+    decorate_headers(headers)
     send_with_date(conn, 304, "Not Modified", headers)
     conn.end_response()
     return
@@ -594,6 +653,7 @@ async fn serve_static_file(
         (content_range_key, "bytes */" + size.to_string()),
         (accept_ranges_key, "bytes"),
       ])
+      decorate_headers(headers)
       send_with_date(conn, 416, "Range Not Satisfiable", headers)
       conn.end_response()
     }
@@ -618,6 +678,7 @@ async fn serve_static_file(
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
       }
+      decorate_headers(headers)
       send_with_date(conn, 206, "Partial Content", headers)
       if !head {
         write_file_range(conn, file, start, length)
@@ -635,6 +696,7 @@ async fn serve_static_file(
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
       }
+      decorate_headers(headers)
       send_with_date(conn, 200, "OK", headers)
       if !head {
         conn.write_reader(file)
@@ -727,9 +789,16 @@ async fn handle_request(
   }
   if (head || request.meth is @http.Get) && !app.static_mounts.is_empty() {
     match app.static_lookup(request.path) {
-      Some((file_path, cache_control)) =>
+      Some((file_path, cache_control, precompressed)) =>
         if !app.has_route(if head { "HEAD" } else { "GET" }, request.path) {
-          serve_static_file(conn, file_path, head, request, cache_control)
+          serve_static_file(
+            conn,
+            file_path,
+            head,
+            request,
+            cache_control,
+            precompressed,
+          )
           return
         }
       None => ()
