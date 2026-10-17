@@ -225,7 +225,6 @@ fn fz2_string(state : Array[Int], alphabet : Array[Char], max_length : Int) -> S
 
 ///|
 fn fz2_fail(message : String) -> Unit {
-  println(message)
   abort(message)
 }
 
@@ -321,5 +320,4 @@ test "tmp-url-fuzz" {
       }
     }
   }
-  println("url fuzz done")
 }

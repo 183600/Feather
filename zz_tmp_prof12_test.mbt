@@ -428,5 +428,4 @@ test "fz-cookie-query" {
       )
     }
   }
-  println("fuzz done")
 }

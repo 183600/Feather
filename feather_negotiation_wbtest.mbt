@@ -1,11 +1,11 @@
 ///|
-test "audit weak etag comparison is symmetric" {
+test "weak etag comparison is symmetric" {
   assert_true(etag_header_matches("W/\"abc\"".view(), "\"abc\""))
   assert_true(etag_header_matches("\"abc\"".view(), "W/\"abc\""))
 }
 
 ///|
-test "audit accept negotiation" {
+test "accept negotiation" {
   assert_eq(accept_quality_for("text/html;q=0", "text/html".view()), 0)
   assert_eq(accept_quality_for("*/*;q=0.5", "text/html".view()), 500)
   assert_eq(

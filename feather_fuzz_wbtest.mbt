@@ -1,15 +1,15 @@
 ///|
-priv struct ZzRng {
+priv struct FuzzRng {
   mut state : Int64
 }
 
 ///|
-fn ZzRng::new(seed : Int64) -> ZzRng {
+fn FuzzRng::new(seed : Int64) -> FuzzRng {
   { state: seed }
 }
 
 ///|
-fn ZzRng::next(self : ZzRng) -> Int {
+fn FuzzRng::next(self : FuzzRng) -> Int {
   self.state = (self.state * 6364136223846793005L +
     1442695040888963407L) &
     9223372036854775807L
@@ -17,7 +17,7 @@ fn ZzRng::next(self : ZzRng) -> Int {
 }
 
 ///|
-fn ZzRng::below(self : ZzRng, n : Int) -> Int {
+fn FuzzRng::below(self : FuzzRng, n : Int) -> Int {
   if n <= 0 {
     0
   } else {
@@ -26,36 +26,36 @@ fn ZzRng::below(self : ZzRng, n : Int) -> Int {
 }
 
 ///|
-fn zz_pick(rng : ZzRng, pool : Array[String]) -> String {
+fn fuzz_pick(rng : FuzzRng, pool : Array[String]) -> String {
   pool[rng.below(pool.length())]
 }
 
 ///|
-fn zz_random_string(rng : ZzRng, pool : Array[String], max_len : Int) -> String {
+fn fuzz_random_string(rng : FuzzRng, pool : Array[String], max_len : Int) -> String {
   let builder = StringBuilder()
   let count = rng.below(max_len + 1)
   for i = 0; i < count; i = i + 1 {
-    builder.write_string(zz_pick(rng, pool))
+    builder.write_string(fuzz_pick(rng, pool))
   }
   builder.to_string()
 }
 
 ///|
-fn zz_random_segments(
-  rng : ZzRng,
+fn fuzz_random_segments(
+  rng : FuzzRng,
   pool : Array[String],
   max_len : Int,
 ) -> Array[String] {
   let out : Array[String] = []
   let count = rng.below(max_len + 1)
   for i = 0; i < count; i = i + 1 {
-    out.push(zz_pick(rng, pool))
+    out.push(fuzz_pick(rng, pool))
   }
   out
 }
 
 ///|
-fn zz_join_segments(segments : Array[String], leading : Bool) -> String {
+fn fuzz_join_segments(segments : Array[String], leading : Bool) -> String {
   let builder = StringBuilder()
   if leading {
     builder.write_char('/')
@@ -70,7 +70,7 @@ fn zz_join_segments(segments : Array[String], leading : Bool) -> String {
 }
 
 ///|
-fn zz_map_eq(a : Map[String, String], b : Map[String, String]) -> Bool {
+fn fuzz_map_eq(a : Map[String, String], b : Map[String, String]) -> Bool {
   if a.length() != b.length() {
     return false
   }
@@ -84,7 +84,7 @@ fn zz_map_eq(a : Map[String, String], b : Map[String, String]) -> Bool {
 }
 
 ///|
-fn zz_ref_match(
+fn fuzz_ref_match(
   pattern : String,
   path : Array[String],
 ) -> (Map[String, String], String, String)? {
@@ -138,7 +138,7 @@ fn zz_ref_match(
 
 ///|
 test "fuzz router dispatch matches reference matcher" {
-  let rng = ZzRng::new(20261016L)
+  let rng = FuzzRng::new(20261016L)
   let tails : Array[String] = [
     "", "/:p", "/:p/:q", "/s/:p", "/s/*w", "/*w", "/:p/*w", "/:z", "/s/*",
   ]
@@ -159,15 +159,15 @@ test "fuzz router dispatch matches reference matcher" {
   let segment_pool : Array[String] = ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "s", "x", "y", "z", "1", "a"]
   let iterations = 3000
   for iter = 0; iter < iterations; iter = iter + 1 {
-    let segments = zz_random_segments(rng, segment_pool, 4)
-    let path = zz_join_segments(segments, true)
-    let meth = zz_pick(rng, ["GET", "POST", "PUT"])
+    let segments = fuzz_random_segments(rng, segment_pool, 4)
+    let path = fuzz_join_segments(segments, true)
+    let meth = fuzz_pick(rng, ["GET", "POST", "PUT"])
     let expected = {
       let mut found : (Map[String, String], String, String)? = None
       for route in routes {
         let (route_meth, pattern) = route
         if route_meth == meth {
-          let m = zz_ref_match(pattern, segments)
+          let m = fuzz_ref_match(pattern, segments)
           if m is Some(_) {
             found = m
             break
@@ -180,7 +180,7 @@ test "fuzz router dispatch matches reference matcher" {
       let allowed : Array[String] = []
       for route in routes {
         let (route_meth, pattern) = route
-        if zz_ref_match(pattern, segments) is Some(_) {
+        if fuzz_ref_match(pattern, segments) is Some(_) {
           let mut seen = false
           for existing in allowed {
             if existing == route_meth {
@@ -199,7 +199,7 @@ test "fuzz router dispatch matches reference matcher" {
       RouteFound(found) =>
         match expected {
           Some((params, wildcard, wildcard_name)) => {
-            if !zz_map_eq(found.params, params) {
+            if !fuzz_map_eq(found.params, params) {
               fail(
                 "route params mismatch for \{meth} \{path}: \{found.params} vs \{params}",
               )
@@ -231,7 +231,7 @@ test "fuzz router dispatch matches reference matcher" {
     match expected {
       Some((params, _, _)) => {
         assert_eq(response.status, 200)
-        if !zz_map_eq(ctx.params(), params) {
+        if !fuzz_map_eq(ctx.params(), params) {
           fail(
             "dispatch params mismatch for \{meth} \{path}: \{ctx.params()} vs \{params}",
           )
@@ -258,7 +258,7 @@ test "fuzz router dispatch matches reference matcher" {
 
 ///|
 test "fuzz format and parse http date round trip" {
-  let rng = ZzRng::new(77L)
+  let rng = FuzzRng::new(77L)
   let cases : Array[Int64] = [0L, 1L, 951782400L, 4102444800L, 253402300799L]
   for value in cases {
     let formatted = format_http_date(value)
@@ -282,13 +282,13 @@ test "fuzz format and parse http date round trip" {
 
 ///|
 test "fuzz url encode decode round trip" {
-  let rng = ZzRng::new(4242L)
+  let rng = FuzzRng::new(4242L)
   let pool : Array[String] = [
     "a", "Z", "0", "-", ".", "_", "~", " ", "%", "+", "/", "?", "&", "=", "#",
     "中", "世", "é", "😀", ":p", "*w",
   ]
   for iter = 0; iter < 4000; iter = iter + 1 {
-    let value = zz_random_string(rng, pool, 8)
+    let value = fuzz_random_string(rng, pool, 8)
     let encoded = url_encode(value)
     let decoded = url_decode(encoded)
     if decoded != value {
@@ -298,7 +298,7 @@ test "fuzz url encode decode round trip" {
 }
 
 ///|
-fn zz_make_multipart(
+fn fuzz_make_multipart(
   boundary : String,
   parts : Array[(String, String)],
   nl : String,
@@ -328,7 +328,7 @@ fn zz_make_multipart(
 
 ///|
 test "fuzz multipart parse round trip" {
-  let rng = ZzRng::new(999L)
+  let rng = FuzzRng::new(999L)
   let pools : Array[Array[String]] = [
     ["a", "b", "1", "2", " ", ":", "="],
     ["x", "+", ".", "u", "-", "_"],
@@ -342,11 +342,11 @@ test "fuzz multipart parse round trip" {
     let count = rng.below(4)
     for i = 0; i < count; i = i + 1 {
       let name = "field" + i.to_string()
-      let data = zz_random_string(rng, pools[rng.below(pools.length())], 10)
+      let data = fuzz_random_string(rng, pools[rng.below(pools.length())], 10)
       parts.push((name, data))
     }
     let preamble = if iter % 7 == 0 { "preamble" + nl } else { "" }
-    let body = zz_make_multipart(boundary, parts, nl, preamble)
+    let body = fuzz_make_multipart(boundary, parts, nl, preamble)
     let content_type = "multipart/form-data; boundary=" + boundary
     match parse_multipart(body, content_type) {
       Some(parsed) => {

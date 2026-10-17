@@ -1,5 +1,5 @@
 ///|
-async test "probe read_body utf8 split across chunks" {
+async test "read_body utf8 split across chunks" {
   @async.with_task_group(group => {
     let (r, w) = @io.pipe()
     let full = "a".repeat(8191) + "世"
