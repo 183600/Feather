@@ -3479,6 +3479,31 @@ pub fn Context::not_modified(
 }
 
 ///|
+/// Parse a non-negative decimal byte offset into `Int64`, returning `None` for
+/// empty, non-numeric or out-of-range input.
+fn parse_byte_offset(view : StringView) -> Int64? {
+  let length = view.length()
+  if length == 0 {
+    return None
+  }
+  let mut value = 0L
+  let mut i = 0
+  while i < length {
+    let digit = view.unsafe_get(i).to_int() - 48
+    if digit < 0 || digit > 9 {
+      return None
+    }
+    let digit64 = digit.to_int64()
+    if value > (9223372036854775807L - digit64) / 10L {
+      return None
+    }
+    value = value * 10L + digit64
+    i = i + 1
+  }
+  Some(value)
+}
+
+///|
 pub fn parse_byte_range(value : String, total : Int64) -> ByteRange {
   let view = trim_ascii_space(value.view())
   if !starts_with_ignore_ascii_case(view, "bytes=".view()) {
@@ -3495,18 +3520,18 @@ pub fn parse_byte_range(value : String, total : Int64) -> ByteRange {
   let start_text = trim_ascii_space(spec[:dash])
   let end_text = trim_ascii_space(spec[dash + 1:])
   if start_text.is_empty() {
-    let suffix = match parse_decimal(end_text) {
-      Some(suffix) => suffix.to_int64()
+    let suffix = match parse_byte_offset(end_text) {
+      Some(suffix) => suffix
       None => return ByteRangeFull
     }
-    if suffix <= 0 || total <= 0L {
+    if suffix <= 0L || total <= 0L {
       return ByteRangeInvalid
     }
     let start = if suffix >= total { 0L } else { total - suffix }
     return ByteRangeSpec(start, total - 1L)
   }
-  let start = match parse_decimal(start_text) {
-    Some(start) => start.to_int64()
+  let start = match parse_byte_offset(start_text) {
+    Some(start) => start
     None => return ByteRangeFull
   }
   if end_text.is_empty() {
@@ -3515,8 +3540,8 @@ pub fn parse_byte_range(value : String, total : Int64) -> ByteRange {
     }
     return ByteRangeSpec(start, total - 1L)
   }
-  let end = match parse_decimal(end_text) {
-    Some(end) => end.to_int64()
+  let end = match parse_byte_offset(end_text) {
+    Some(end) => end
     None => return ByteRangeFull
   }
   if start > end {

@@ -45,6 +45,31 @@ test "parse_byte_range handles the single range forms" {
 }
 
 ///|
+test "parse_byte_range handles offsets beyond 100MB" {
+  let total = 1_000_000_000L
+  assert_eq(
+    @feather.parse_byte_range("bytes=500000000-", total) is
+    @feather.ByteRangeSpec(500000000L, 999999999L),
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=200000000-300000000", total) is
+    @feather.ByteRangeSpec(200000000L, 300000000L),
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=-600000000", total) is
+    @feather.ByteRangeSpec(400000000L, 999999999L),
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=1000000000-", total) is
+    @feather.ByteRangeInvalid,
+    true,
+  )
+}
+
+///|
 test "Context bytes records a binary payload" {
   let ctx = @feather.create_context()
   ctx.bytes(200, b"\x00\x01\xfe\xff", content_type="application/octet-stream")
