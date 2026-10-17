@@ -328,12 +328,8 @@ pub fn middleware_session(
             }
         }
       }
-      next(ctx) catch {
-        err => {
-          persist()
-          raise err
-        }
-      }
+      errdefer persist()
+      next(ctx)
       persist()
     }
   }

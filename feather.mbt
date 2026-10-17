@@ -65,6 +65,9 @@ pub type Middleware = (Handler) -> Handler
 pub type WebSocketHandler = async (Context, @websocket.Conn) -> Unit raise
 
 ///|
+pub type SseHandler = async (Context, Sse) -> Unit raise
+
+///|
 pub(all) struct Route {
   path : String
   method : String
@@ -1120,6 +1123,22 @@ pub fn Context::param(self : Context, name : String) -> String {
 }
 
 ///|
+/// Like `Context::param`, but percent-decodes the captured segment.
+///
+/// Route matching keeps the raw text (so `%2F` cannot act as another path
+/// separator), which means `Context::param` returns whatever the client
+/// typed. Use this accessor for slugs and ids that should be decoded before
+/// display or lookup; `+` is kept as-is because it has no special meaning in a
+/// path segment.
+pub fn Context::param_decoded(self : Context, name : String) -> String {
+  let raw = self.param(name)
+  if raw == "" {
+    return ""
+  }
+  decode_url_path(raw.view())
+}
+
+///|
 pub fn Context::params(self : Context) -> Map[String, String] {
   let result : Map[String, String] = Map([], capacity=4)
   let prefix_length = PARAM_PREFIX.length()
@@ -2082,7 +2101,7 @@ fn decode_url_bytes(bytes : BytesView, plus_as_space : Bool) -> String {
     out_index = out_index + 1
     i = i + 1
   }
-  @utf8.decode_lossy(Bytes::from_fixedarray(out, len=out_index))
+  @utf8.decode_lossy(Bytes::from_array(out[:out_index]))
 }
 
 ///|
@@ -2133,7 +2152,7 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
     out_index = out_index + 1
     j = j + 1
   }
-  @utf8.decode_lossy(Bytes::from_fixedarray(out, len=out_index))
+  @utf8.decode_lossy(Bytes::from_array(out[:out_index]))
 }
 
 ///|
@@ -2263,7 +2282,7 @@ pub fn url_encode(source : String) -> String {
     }
     j = j + 1
   }
-  decode_utf8_bytes(Bytes::from_fixedarray(out, len=out_index))
+  decode_utf8_bytes(Bytes::from_array(out[:out_index]))
 }
 
 ///|
@@ -2354,7 +2373,7 @@ pub fn base64_decode(text : String) -> Bytes? {
     out[out_index] = ((first << 2) | (second >> 4)).to_byte()
     out_index = out_index + 1
     if remaining <= 2 {
-      return Some(Bytes::from_fixedarray(out, len=out_index))
+      return Some(Bytes::from_array(out[:out_index]))
     }
     let third_raw = view.unsafe_get(i + 2)
     if remaining == 3 {
@@ -2367,13 +2386,13 @@ pub fn base64_decode(text : String) -> Bytes? {
       }
       out[out_index] = (((second & 15) << 4) | (third >> 2)).to_byte()
       out_index = out_index + 1
-      return Some(Bytes::from_fixedarray(out, len=out_index))
+      return Some(Bytes::from_array(out[:out_index]))
     }
     if third_raw == ('=' : UInt16) {
       if view.unsafe_get(i + 3) != ('=' : UInt16) || remaining != 4 {
         return None
       }
-      return Some(Bytes::from_fixedarray(out, len=out_index))
+      return Some(Bytes::from_array(out[:out_index]))
     }
     let third = base64_value(third_raw)
     if third < 0 {
@@ -2386,7 +2405,7 @@ pub fn base64_decode(text : String) -> Bytes? {
       if remaining != 4 {
         return None
       }
-      return Some(Bytes::from_fixedarray(out, len=out_index))
+      return Some(Bytes::from_array(out[:out_index]))
     }
     let fourth = base64_value(fourth_raw)
     if fourth < 0 {
@@ -2396,7 +2415,7 @@ pub fn base64_decode(text : String) -> Bytes? {
     out_index = out_index + 1
     i = i + 4
   }
-  Some(Bytes::from_fixedarray(out, len=out_index))
+  Some(Bytes::from_array(out[:out_index]))
 }
 
 ///|
@@ -4037,27 +4056,38 @@ pub struct App {
   mut no_route_handler : Handler?
   ws_router : Router
   ws_handlers : Map[String, WebSocketHandler]
+  sse_router : Router
+  sse_handlers : Map[String, SseHandler]
   mut compress_enabled : Bool
   mut compress_min_size : Int32
   mut etag_enabled : Bool
 }
 
 ///|
-pub fn App::new() -> App {
+/// Build an application with every optional feature disabled. `timeout` is the
+/// per-request timeout in milliseconds; `0` disables it.
+fn App::fresh(timeout : Int32) -> App {
   {
     router: create_router(),
     middlewares: [],
     max_body_size: DEFAULT_MAX_BODY_SIZE,
-    timeout: 0,
+    timeout,
     chain: None,
     static_mounts: [],
     no_route_handler: None,
     ws_router: create_router(),
     ws_handlers: Map([]),
+    sse_router: create_router(),
+    sse_handlers: Map([]),
     compress_enabled: false,
     compress_min_size: 1024,
     etag_enabled: false,
   }
+}
+
+///|
+pub fn App::new() -> App {
+  App::fresh(0)
 }
 
 ///|
@@ -4148,6 +4178,45 @@ pub fn App::websocket(
 ///|
 pub fn App::has_websocket(self : App, path : String) -> Bool {
   self.ws_router.route("GET", path) is RouteFound(_)
+}
+
+///|
+/// Register a server-sent events handler for `GET path`.
+///
+/// The handler receives a `Sse` writer after the `200 OK` header
+/// (`Content-Type: text/event-stream`) has been sent and keeps the response
+/// open until it returns or calls `Sse::close`. Event streams are long-lived,
+/// so they are not subject to `App::request_timeout`, and application
+/// middleware registered with `App::use` does not run for them, mirroring
+/// `App::websocket`. Path parameters are available through `Context::param`.
+pub fn App::sse(self : App, path : String, handler : SseHandler) -> App {
+  let clean_path = clean_route_path(path)
+  self.sse_router.add_route("GET", clean_path, fn(_ctx) { () })
+  self.sse_handlers.set(clean_path, handler)
+  self
+}
+
+///|
+pub fn App::has_sse(self : App, path : String) -> Bool {
+  self.sse_router.route("GET", path) is RouteFound(_)
+}
+
+///|
+pub fn App::resolve_sse(
+  self : App,
+  path : String,
+) -> (SseHandler, Map[String, String])? {
+  if self.sse_handlers.is_empty() {
+    return None
+  }
+  match self.sse_router.route("GET", path) {
+    RouteFound(route) =>
+      match self.sse_handlers.get(route.path) {
+        Some(handler) => Some((handler, route.params))
+        None => None
+      }
+    _ => None
+  }
 }
 
 ///|
@@ -4328,6 +4397,11 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
     let mounted = join_paths(base, path)
     self.ws_router.add_route("GET", mounted, fn(_ctx) { () })
     self.ws_handlers.set(mounted, handler)
+  }
+  for path, handler in child.sse_handlers {
+    let mounted = join_paths(base, path)
+    self.sse_router.add_route("GET", mounted, fn(_ctx) { () })
+    self.sse_handlers.set(mounted, handler)
   }
   self.chain = None
   self
@@ -4738,23 +4812,7 @@ pub(all) struct Feather {
 
 ///|
 pub fn create_feather(config : Config) -> Feather {
-  {
-    config,
-    app: {
-      router: create_router(),
-      middlewares: [],
-      max_body_size: DEFAULT_MAX_BODY_SIZE,
-      timeout: config.timeout,
-      chain: None,
-      static_mounts: [],
-      no_route_handler: None,
-      ws_router: create_router(),
-      ws_handlers: Map([]),
-      compress_enabled: false,
-      compress_min_size: 1024,
-      etag_enabled: false,
-    },
-  }
+  { config, app: App::fresh(config.timeout) }
 }
 
 ///|
@@ -4876,6 +4934,12 @@ pub fn Feather::websocket(
 ///|
 pub fn Feather::mount(self : Feather, prefix : String, child : Feather) -> Feather {
   ignore(self.app.mount(prefix, child.app))
+  self
+}
+
+///|
+pub fn Feather::sse(self : Feather, path : String, handler : SseHandler) -> Feather {
+  ignore(self.app.sse(path, handler))
   self
 }
 

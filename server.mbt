@@ -77,6 +77,11 @@ let header_vary : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
 )
 
 ///|
+let header_x_accel_buffering : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "X-Accel-Buffering",
+)
+
+///|
 /// Raised when a request body declares a content coding but cannot be decoded.
 priv suberror MalformedRequestBody
 
@@ -785,6 +790,60 @@ async fn handle_websocket(
 }
 
 ///|
+/// Stream server-sent events for a handler registered with `App::sse`.
+///
+/// The response header is sent before the handler runs so events are delivered
+/// while the handler is still producing them. A handler failure (most often a
+/// client disconnect surfacing as a write error) just tears the stream down.
+async fn handle_sse(
+  app : App,
+  request : @http.Request,
+  body : &@io.Reader,
+  conn : @http.ServerConnection,
+  handler : SseHandler,
+  params : Map[String, String],
+) -> Unit {
+  let req = request_from_http(request, body, app.max_body_size) catch {
+    PayloadTooLarge => {
+      send_simple(conn, 413, "413 Payload Too Large", false)
+      return
+    }
+    MalformedRequestBody => {
+      send_simple(conn, 400, "400 Bad Request", false)
+      return
+    }
+    _ => {
+      send_simple(conn, 500, "500 Internal Server Error", false)
+      return
+    }
+  }
+  let headers : @http.Headers = Map([
+    (header_content_type, "text/event-stream; charset=utf-8"),
+    (header_cache_control, "no-cache"),
+    (header_x_accel_buffering, "no"),
+  ])
+  send_with_date(conn, 200, "OK", headers)
+  conn.flush() catch {
+    _ => {
+      conn.close()
+      return
+    }
+  }
+  let ctx = Context::new(req)
+  ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
+  for name, value in params {
+    ctx.state.set(PARAM_PREFIX + name, value)
+  }
+  let sse = Sse::new(conn)
+  handler(ctx, sse) catch {
+    _ => ()
+  }
+  sse.close() catch {
+    _ => conn.close()
+  }
+}
+
+///|
 async fn handle_request(
   app : App,
   request : @http.Request,
@@ -798,7 +857,14 @@ async fn handle_request(
         handle_websocket(app, request, body, conn, handler, params)
         return
       }
-      None => ()
+      None =>
+        match app.resolve_sse(request.path) {
+          Some((handler, params)) => {
+            handle_sse(app, request, body, conn, handler, params)
+            return
+          }
+          None => ()
+        }
     }
   }
   if (head || request.meth is @http.Get) && !app.static_mounts.is_empty() {

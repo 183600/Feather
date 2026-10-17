@@ -111,6 +111,8 @@ pub struct App {
   mut no_route_handler : ((Context) -> Unit raise)?
   ws_router : Router
   ws_handlers : Map[String, async (Context, @websocket.Conn) -> Unit]
+  sse_router : Router
+  sse_handlers : Map[String, async (Context, Sse) -> Unit]
   mut compress_enabled : Bool
   mut compress_min_size : Int
   mut etag_enabled : Bool
@@ -124,6 +126,7 @@ pub fn App::get(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::group(Self, String) -> RouteGroup
 pub fn App::handle(Self, Context) -> Unit raise
 pub fn App::has_route(Self, String, String) -> Bool
+pub fn App::has_sse(Self, String) -> Bool
 pub fn App::has_websocket(Self, String) -> Bool
 pub fn App::head(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::max_body_size(Self, Int) -> Self
@@ -134,12 +137,14 @@ pub fn App::patch(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::post(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::put(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::request_timeout(Self, Int) -> Self
+pub fn App::resolve_sse(Self, String) -> (async (Context, Sse) -> Unit, Map[String, String])?
 pub fn App::resolve_websocket(Self, String) -> (async (Context, @websocket.Conn) -> Unit, Map[String, String])?
 pub fn App::respond(Self, Request) -> Response
 pub fn App::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn App::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
 pub async fn App::serve(Self, @socket.Addr) -> Unit
 pub async fn App::serve_with(Self, @http.Server, max_connections? : Int) -> Unit
+pub fn App::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn App::static_cache_control_for(Self, String) -> String
 pub fn App::static_file_for(Self, String) -> String?
 pub fn App::static_files(Self, String, String, index? : String, max_age? : Int, precompressed? : Bool) -> Self
@@ -212,6 +217,7 @@ pub fn Context::no_content(Self) -> Unit
 pub fn Context::not_modified(Self, etag? : String, last_modified? : String) -> Unit
 pub fn Context::param(Self, String) -> String
 pub fn Context::param_bool(Self, String) -> Bool?
+pub fn Context::param_decoded(Self, String) -> String
 pub fn Context::param_int(Self, String) -> Int?
 pub fn Context::params(Self) -> Map[String, String]
 pub fn Context::preferred_encoding(Self, ArrayView[String]) -> String?
@@ -264,6 +270,7 @@ pub fn Feather::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn Feather::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
 pub async fn Feather::serve(Self) -> Unit
 pub async fn Feather::serve_with(Self, @http.Server, max_connections? : Int) -> Unit
+pub fn Feather::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn Feather::static_files(Self, String, String, index? : String, max_age? : Int, precompressed? : Bool) -> Self
 pub fn Feather::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn Feather::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
@@ -422,6 +429,16 @@ pub fn SessionStore::save(Self, Session) -> Unit
 pub fn SessionStore::sweep(Self) -> Unit
 pub fn SessionStore::ttl(Self) -> Int64
 
+pub struct Sse {
+  conn : @http.ServerConnection
+  mut closed : Bool
+}
+pub async fn Sse::close(Self) -> Unit
+pub async fn Sse::comment(Self, String) -> Unit
+pub fn Sse::is_closed(Self) -> Bool
+pub async fn Sse::send(Self, String, event? : String, id? : String, retry? : Int) -> Unit
+pub async fn[T : ToJson] Sse::send_json(Self, T, event? : String, id? : String, retry? : Int) -> Unit
+
 pub(all) struct StaticMount {
   url_prefix : String
   root : String
@@ -434,6 +451,8 @@ pub(all) struct StaticMount {
 pub type Handler = (Context) -> Unit raise
 
 pub type Middleware = ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub type SseHandler = async (Context, Sse) -> Unit
 
 pub type WebSocketHandler = async (Context, @websocket.Conn) -> Unit
 
