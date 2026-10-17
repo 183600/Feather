@@ -44,6 +44,9 @@ fn parse_quality(value : StringView) -> Int {
       index = index + 1
     }
   }
+  if result > 1000 {
+    return 0
+  }
   result
 }
 

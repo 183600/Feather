@@ -2781,13 +2781,19 @@ pub fn parse_multipart(
           None => break
         }
     }
-    let header_end = match find_view_from(view, crlfcrlf_view, pos) {
-      Some(index) => index
-      None =>
-        match find_view_from(view, lflf_view, pos) {
-          Some(index) => index
-          None => break
+    let header_end = match (
+      find_view_from(view, crlfcrlf_view, pos),
+      find_view_from(view, lflf_view, pos),
+    ) {
+      (Some(crlf_index), Some(lf_index)) =>
+        if lf_index < crlf_index {
+          lf_index
+        } else {
+          crlf_index
         }
+      (Some(crlf_index), None) => crlf_index
+      (None, Some(lf_index)) => lf_index
+      (None, None) => break
     }
     if header_end >= data_end {
       break
