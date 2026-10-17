@@ -32,6 +32,7 @@ fn p3_bench_ctx_new_variant(
     json_state: Map([], capacity=cap_json),
     cleanups: [],
     file: None,
+    session: None,
   }
 }
 

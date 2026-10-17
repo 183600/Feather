@@ -292,6 +292,7 @@ test "Context with different request paths" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(ctx1.get_path(), "/")
@@ -401,6 +402,7 @@ test "Context with different HTTP methods" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   let post_ctx : Context = {
@@ -410,6 +412,7 @@ test "Context with different HTTP methods" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(get_ctx.get_method(), "GET")
@@ -550,6 +553,7 @@ test "Context header with empty value" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(ctx.header("Empty-Header"), "")
@@ -642,6 +646,7 @@ test "Context with different response status codes" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   let created_ctx : Context = {
@@ -651,6 +656,7 @@ test "Context with different response status codes" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(ok_ctx.response.status, 200)
@@ -779,6 +785,7 @@ test "Context with different request methods" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   let post_ctx : Context = {
@@ -793,6 +800,7 @@ test "Context with different request methods" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(get_ctx.request.method, "GET")
@@ -897,6 +905,7 @@ test "Context with different response bodies" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   let json_ctx : Context = {
@@ -912,6 +921,7 @@ test "Context with different response bodies" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(empty_ctx.response.body, "")
@@ -1163,6 +1173,7 @@ test "Context with different request and response combinations" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(ctx.request.method, "POST")
@@ -1268,6 +1279,7 @@ test "Context with different request headers and methods" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   let post_ctx : Context = {
@@ -1282,6 +1294,7 @@ test "Context with different request headers and methods" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(get_ctx.request.headers.get("Accept"), Some("application/json"))
@@ -1391,6 +1404,7 @@ test "Context with different request and response states" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(ctx.get("key1"), "value1")
@@ -1434,6 +1448,7 @@ test "Context with different request methods and paths" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   let post_api : Context = {
@@ -1448,6 +1463,7 @@ test "Context with different request methods and paths" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(get_root.request.method, "GET")
@@ -1500,6 +1516,7 @@ test "Context with different request headers and body" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(ctx.request.headers.size(), 2)
@@ -1600,6 +1617,7 @@ test "Context with different request methods and paths with unicode" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(ctx.request.path, "/api/测试")
@@ -1648,6 +1666,7 @@ test "Context with different request and response with unicode" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(ctx.request.body, "数据")
@@ -1697,6 +1716,7 @@ test "Context with different request methods and unicode paths" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   let post_ctx : Context = {
@@ -1711,6 +1731,7 @@ test "Context with different request methods and unicode paths" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(get_ctx.request.method, "GET")
@@ -1760,6 +1781,7 @@ test "Context with different request and response with mixed content" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(ctx.request.body, "数据!@#")
@@ -1804,6 +1826,7 @@ test "Context with different request methods and special character paths" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   let post_ctx : Context = {
@@ -1818,6 +1841,7 @@ test "Context with different request methods and special character paths" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(get_ctx.request.method, "GET")
@@ -1869,6 +1893,7 @@ test "Context with different request and response with very long unicode content
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(ctx.request.body, long_unicode)
@@ -1923,6 +1948,7 @@ test "Context with different request and response with maximum length content" {
     json_state: Map::new(),
     cleanups: [],
     file: None,
+    session: None,
   }
 
   assert_eq(ctx.request.body.length(), 500)

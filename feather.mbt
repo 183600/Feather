@@ -52,6 +52,7 @@ pub(all) struct Context {
   json_state : Map[String, Json]
   cleanups : Array[() -> Unit]
   mut file : FileResponse?
+  mut session : Session?
 }
 
 ///|
@@ -160,6 +161,7 @@ pub fn Context::new(request : Request) -> Context {
     json_state: Map([], capacity=4),
     cleanups: [],
     file: None,
+    session: None,
   }
 }
 
@@ -3558,6 +3560,7 @@ pub struct App {
   ws_handlers : Map[String, WebSocketHandler]
   mut compress_enabled : Bool
   mut compress_min_size : Int32
+  mut etag_enabled : Bool
 }
 
 ///|
@@ -3574,6 +3577,7 @@ pub fn App::new() -> App {
     ws_handlers: Map([]),
     compress_enabled: false,
     compress_min_size: 1024,
+    etag_enabled: false,
   }
 }
 
@@ -4241,6 +4245,7 @@ pub fn create_feather(config : Config) -> Feather {
       ws_handlers: Map([]),
       compress_enabled: false,
       compress_min_size: 1024,
+      etag_enabled: false,
     },
   }
 }

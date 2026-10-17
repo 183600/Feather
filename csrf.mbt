@@ -1,0 +1,121 @@
+///|
+/// Per-session token used to protect state-changing requests against
+/// cross-site request forgery.
+const CSRF_TOKEN_KEY : String = "_csrf"
+
+///|
+/// Length of a CSRF token in characters (two 64-bit values in hex).
+const CSRF_TOKEN_LENGTH : Int32 = 32
+
+///|
+/// Generate a fresh random CSRF token: 32 lowercase hex characters.
+fn csrf_generate_token() -> String {
+  let rng = @random.Rand()
+  let builder = StringBuilder(size_hint=CSRF_TOKEN_LENGTH)
+  for i = 0; i < 2; i = i + 1 {
+    let hex = rng.uint64().to_string(radix=16)
+    for j = hex.length(); j < 16; j = j + 1 {
+      builder.write_char('0')
+    }
+    builder.write_string(hex)
+  }
+  builder.to_string()
+}
+
+///|
+/// Compare two tokens without an early exit on the first differing character,
+/// so the comparison does not leak how much of a guess was correct.
+fn csrf_constant_time_equal(a : StringView, b : StringView) -> Bool {
+  if a.length() != b.length() {
+    return false
+  }
+  let mut diff = 0
+  for i = 0; i < a.length(); i = i + 1 {
+    diff = diff | (a.unsafe_get(i) ^ b.unsafe_get(i)).to_int()
+  }
+  diff == 0
+}
+
+///|
+/// The CSRF token bound to this request's session, generating and saving one
+/// when the session has none yet. Returns `""` when no session is attached,
+/// for example when `middleware_session` is not installed.
+///
+/// Embed the returned token in forms as the field expected by
+/// `middleware_csrf` (default `_csrf`) or send it back in the header
+/// (default `X-CSRF-Token`).
+pub fn Context::csrf_token(
+  self : Context,
+  key~ : String = CSRF_TOKEN_KEY,
+) -> String {
+  match self.session() {
+    Some(session) =>
+      match session.data.get(key) {
+        Some(token) => token
+        None => {
+          let token = csrf_generate_token()
+          session.data.set(key, token)
+          session.modified = true
+          token
+        }
+      }
+    None => ""
+  }
+}
+
+///|
+/// Middleware that rejects state-changing requests which fail to prove they
+/// come from a page served by this application, using a synchronizer token
+/// stored in the session.
+///
+/// Install it after `middleware_session` so requests have a session. Safe
+/// methods (`GET`, `HEAD`, `OPTIONS`) pass through untouched; handlers for
+/// those methods can render `Context::csrf_token()` into forms. Unsafe methods
+/// (`POST`, `PUT`, `PATCH`, `DELETE`) must send the same token in the `header`
+/// (default `X-CSRF-Token`), in a `application/x-www-form-urlencoded` field, or
+/// in a multipart field, named by `field` (default `_csrf`); otherwise the
+/// request is answered with `403 Forbidden` before reaching the handler.
+/// Requests without a session and requests whose session has no token yet are
+/// rejected too.
+pub fn middleware_csrf(
+  field~ : String = CSRF_TOKEN_KEY,
+  header~ : String = "X-CSRF-Token",
+  key~ : String = CSRF_TOKEN_KEY,
+) -> Middleware {
+  let field_name = field
+  let header_name = header
+  let token_key = key
+  fn(next) {
+    fn(ctx) raise {
+      let meth = ctx.get_method()
+      if meth.view().equal_ignore_ascii_case("GET".view()) ||
+        meth.view().equal_ignore_ascii_case("HEAD".view()) ||
+        meth.view().equal_ignore_ascii_case("OPTIONS".view()) {
+        next(ctx)
+        return
+      }
+      let expected = match ctx.session() {
+        Some(session) =>
+          match session.data.get(token_key) {
+            Some(token) => token
+            None => ""
+          }
+        None => ""
+      }
+      let mut provided = trim_ascii_space(ctx.header(header_name).view()).to_owned()
+      if provided == "" {
+        provided = trim_ascii_space(ctx.form(field_name).view()).to_owned()
+      }
+      if provided == "" {
+        provided = trim_ascii_space(ctx.multipart_value(field_name).view()).to_owned()
+      }
+      if expected != "" &&
+        provided != "" &&
+        csrf_constant_time_equal(provided.view(), expected.view()) {
+        next(ctx)
+      } else {
+        ctx.text(403, "403 Forbidden")
+      }
+    }
+  }
+}

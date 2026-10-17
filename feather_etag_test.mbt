@@ -1,0 +1,174 @@
+///|
+let etag_key : @http.CaseInsensitiveString = @http.CaseInsensitiveString("ETag")
+
+///|
+let if_none_match_key : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "If-None-Match",
+)
+
+///|
+let etag_accept_encoding_key : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Accept-Encoding",
+)
+
+///|
+let etag_content_encoding_key : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Content-Encoding",
+)
+
+///|
+async test "App etag adds a validator and answers if-none-match" {
+  let app = @feather.App::new()
+    .etag()
+    .get("/api", fn(ctx) { ctx.json(200, { "ok": "true" }) })
+  with_server(app, client => {
+    let first = client.get("/api")
+    assert_eq(first.code, 200)
+    let etag = first.headers.get(etag_key).unwrap()
+    assert_true(etag.has_prefix("\""))
+    assert_true(etag.has_suffix("\""))
+    assert_eq(client.read_all().text(), "{\"ok\":\"true\"}")
+    let second = client.get(
+      "/api",
+      extra_headers=Map([(if_none_match_key, etag)]),
+    )
+    assert_eq(second.code, 304)
+    assert_eq(second.headers.get(etag_key), Some(etag))
+    assert_eq(client.read_all().text(), "")
+  })
+}
+
+///|
+async test "App etag honors weak and wildcard validators" {
+  let app = @feather.App::new()
+    .etag()
+    .get("/api", fn(ctx) { ctx.text(200, "hello") })
+  with_server(app, client => {
+    let first = client.get("/api")
+    let etag = first.headers.get(etag_key).unwrap()
+    ignore(client.read_all())
+    let weak = client.get(
+      "/api",
+      extra_headers=Map([(if_none_match_key, "W/" + etag)]),
+    )
+    assert_eq(weak.code, 304)
+    ignore(client.read_all())
+    let star = client.get("/api", extra_headers=Map([(if_none_match_key, "*")]))
+    assert_eq(star.code, 304)
+    ignore(client.read_all())
+  })
+}
+
+///|
+async test "App etag changes with the response body" {
+  let app = @feather.App::new()
+    .etag()
+    .get("/api/:v", fn(ctx) { ctx.text(200, ctx.param("v")) })
+  with_server(app, client => {
+    let one = client.get("/api/one")
+    let etag_one = one.headers.get(etag_key).unwrap()
+    ignore(client.read_all())
+    let two = client.get("/api/two")
+    let etag_two = two.headers.get(etag_key).unwrap()
+    ignore(client.read_all())
+    assert_true(etag_one != etag_two)
+    let replay = client.get(
+      "/api/one",
+      extra_headers=Map([(if_none_match_key, etag_one)]),
+    )
+    assert_eq(replay.code, 304)
+    ignore(client.read_all())
+  })
+}
+
+///|
+async test "App etag respects explicit validators and no-store" {
+  let app = @feather.App::new()
+    .etag()
+    .get("/custom", fn(ctx) {
+      ctx.set_header("ETag", "\"custom\"")
+      ctx.text(200, "hi")
+    })
+    .get("/nostore", fn(ctx) {
+      ctx.set_header("Cache-Control", "no-store")
+      ctx.text(200, "hi")
+    })
+    .get("/empty", fn(ctx) { ctx.no_content() })
+  with_server(app, client => {
+    let custom = client.get("/custom")
+    assert_eq(custom.headers.get(etag_key), Some("\"custom\""))
+    assert_eq(client.read_all().text(), "hi")
+    let custom_hit = client.get(
+      "/custom",
+      extra_headers=Map([(if_none_match_key, "\"custom\"")]),
+    )
+    assert_eq(custom_hit.code, 304)
+    ignore(client.read_all())
+    let no_store = client.get("/nostore")
+    assert_eq(no_store.headers.get(etag_key), None)
+    ignore(client.read_all())
+    let empty = client.get("/empty")
+    assert_eq(empty.code, 204)
+    assert_eq(empty.headers.get(etag_key), None)
+    ignore(client.read_all())
+    let missing = client.get("/missing")
+    assert_eq(missing.code, 404)
+    assert_eq(missing.headers.get(etag_key), None)
+    ignore(client.read_all())
+  })
+}
+
+///|
+async test "App etag combines with compression" {
+  let payload = "feather etag payload ".repeat(64)
+  let app = @feather.App::new()
+    .etag()
+    .compress(min_size=16)
+    .get("/big", fn(ctx) { ctx.text(200, payload) })
+  with_server(app, client => {
+    let first = client.get(
+      "/big",
+      extra_headers=Map([(etag_accept_encoding_key, "gzip")]),
+    )
+    assert_eq(first.headers.get(etag_content_encoding_key), Some("gzip"))
+    let etag = first.headers.get(etag_key).unwrap()
+    ignore(client.read_all())
+    let second = client.get(
+      "/big",
+      extra_headers=Map([
+        (etag_accept_encoding_key, "gzip"),
+        (if_none_match_key, etag),
+      ]),
+    )
+    assert_eq(second.code, 304)
+    ignore(client.read_all())
+    let identity = client.get(
+      "/big",
+      extra_headers=Map([(etag_accept_encoding_key, "identity")]),
+    )
+    assert_true(identity.headers.get(etag_key).unwrap() != etag)
+    ignore(client.read_all())
+  })
+}
+
+///|
+async test "feather facade enables etag" {
+  let feather = @feather.create_feather({
+      host: "127.0.0.1",
+      port: 0,
+      timeout: 0,
+    })
+    .etag()
+    .get("/api", fn(ctx) { ctx.text(200, "hello") })
+  with_server(feather.app, client => {
+    let first = client.get("/api")
+    let etag = first.headers.get(etag_key).unwrap()
+    ignore(client.read_all())
+    let second = client.get(
+      "/api",
+      extra_headers=Map([(if_none_match_key, etag)]),
+    )
+    assert_eq(second.code, 304)
+    ignore(client.read_all())
+  })
+}

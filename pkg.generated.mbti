@@ -7,10 +7,13 @@ import {
   "moonbitlang/async/websocket",
   "moonbitlang/core/debug",
   "moonbitlang/core/json",
+  "moonbitlang/core/random",
 }
 
 // Values
 pub const DEFAULT_MAX_BODY_SIZE : Int = 1000
+
+pub const DEFAULT_SESSION_TTL : Int64 = 86_400_000
 
 pub const PARAM_PREFIX : String = "param:"
 
@@ -48,15 +51,21 @@ pub fn middleware_basic_auth_with((String, String) -> Bool, realm? : String) -> 
 
 pub fn middleware_cors(allow_origin? : String, allow_methods? : String, allow_headers? : String, expose_headers? : String, allow_credentials? : Bool, max_age? : Int) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
+pub fn middleware_csrf(field? : String, header? : String, key? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
 pub fn middleware_error_handler() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_logger(log? : (String) -> Unit, with_duration? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_rate_limit(RateLimiter, key? : (Context) -> String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_recover() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_request_id(header? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_secure_headers(content_type_options? : String, frame_options? : String, referrer_policy? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_session(SessionStore, cookie? : String, path? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn mime_type_for(String) -> String
 
@@ -102,10 +111,12 @@ pub struct App {
   ws_handlers : Map[String, async (Context, @websocket.Conn) -> Unit]
   mut compress_enabled : Bool
   mut compress_min_size : Int
+  mut etag_enabled : Bool
 }
 pub fn App::all(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::compress(Self, min_size? : Int) -> Self
 pub fn App::delete(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::etag(Self) -> Self
 pub fn App::fallback(Self, (Context) -> Unit raise) -> Self
 pub fn App::get(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::group(Self, String) -> RouteGroup
@@ -153,6 +164,7 @@ pub(all) struct Context {
   json_state : Map[String, Json]
   cleanups : Array[() -> Unit]
   mut file : FileResponse?
+  mut session : Session?
 }
 pub fn Context::accepts(Self, String) -> Bool
 pub fn Context::accepts_encoding(Self, String) -> Bool
@@ -163,6 +175,7 @@ pub fn Context::bytes(Self, Int, Bytes, content_type? : String) -> Unit
 pub fn Context::clear_cookie(Self, String, path? : String) -> Unit
 pub fn Context::cookie(Self, String) -> String?
 pub fn Context::cookies(Self) -> Map[String, String]
+pub fn Context::csrf_token(Self, key? : String) -> String
 pub fn Context::defer_cleanup(Self, () -> Unit) -> Unit
 pub fn Context::fail(Self, Int, String) -> Unit raise HttpError
 pub fn Context::fail_with(Self, Int, String, Json) -> Unit raise HttpErrorPayload
@@ -208,6 +221,13 @@ pub fn Context::query_int(Self, String) -> Int?
 pub fn Context::query_values(Self, String) -> Array[String]
 pub fn Context::redirect(Self, Int, String) -> Unit
 pub fn Context::request_id(Self) -> String
+pub fn Context::session(Self) -> Session?
+pub fn Context::session_destroy(Self) -> Bool
+pub fn Context::session_get(Self, String) -> String
+pub fn Context::session_id(Self) -> String?
+pub fn Context::session_regenerate(Self) -> Bool
+pub fn Context::session_remove(Self, String) -> Bool
+pub fn Context::session_set(Self, String, String) -> Bool
 pub fn Context::set(Self, String, String) -> Unit
 pub fn Context::set_cookie(Self, String, String, path? : String, max_age? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> Unit
 pub fn Context::set_header(Self, String, String) -> Unit
@@ -222,6 +242,7 @@ pub(all) struct Feather {
 pub fn Feather::all(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::compress(Self, min_size? : Int) -> Self
 pub fn Feather::delete(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::etag(Self) -> Self
 pub fn Feather::fallback(Self, (Context) -> Unit raise) -> Self
 pub fn Feather::get(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::group(Self, String) -> RouteGroup
@@ -270,6 +291,23 @@ pub(all) struct NamedRoute {
   method : String
   path : String
 }
+
+type RateBucket
+
+pub struct RateLimiter {
+  max : Int
+  window : Int64
+  buckets : Map[String, RateBucket]
+  mut last_sweep : Int64
+}
+pub fn RateLimiter::allow(Self, String) -> Bool
+pub fn RateLimiter::count(Self) -> Int
+pub fn RateLimiter::max(Self) -> Int
+pub fn RateLimiter::new(max~ : Int, window? : Int64) -> Self
+pub fn RateLimiter::remaining(Self, String) -> Int
+pub fn RateLimiter::retry_after(Self, String) -> Int64
+pub fn RateLimiter::sweep(Self) -> Unit
+pub fn RateLimiter::window(Self) -> Int64
 
 pub(all) struct Request {
   method : String
@@ -351,6 +389,31 @@ pub fn Router::matching(Self, String, String) -> Route?
 pub fn Router::route(Self, String, String) -> RouteOutcome
 pub fn Router::route_name(Self, String) -> NamedRoute?
 pub fn Router::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
+
+pub(all) struct Session {
+  mut id : String
+  data : Map[String, String]
+  mut expires_at : Int64
+  mut modified : Bool
+  mut destroyed : Bool
+  mut regenerate : Bool
+}
+
+pub struct SessionStore {
+  sessions : Map[String, Session]
+  rng : @random.Rand
+  ttl : Int64
+  mut last_sweep : Int64
+}
+pub fn SessionStore::clear(Self) -> Unit
+pub fn SessionStore::count(Self) -> Int
+pub fn SessionStore::create(Self) -> Session
+pub fn SessionStore::destroy(Self, String) -> Unit
+pub fn SessionStore::get(Self, String) -> Session?
+pub fn SessionStore::new(ttl? : Int64) -> Self
+pub fn SessionStore::save(Self, Session) -> Unit
+pub fn SessionStore::sweep(Self) -> Unit
+pub fn SessionStore::ttl(Self) -> Int64
 
 pub(all) struct StaticMount {
   url_prefix : String

@@ -661,6 +661,9 @@ async fn build_response(
   if file is None && app.compress_enabled {
     compress_response(request, ctx.response, app.compress_min_size)
   }
+  if file is None && app.etag_enabled {
+    apply_etag(request, ctx.response)
+  }
   (ctx.response, file)
 }
 
