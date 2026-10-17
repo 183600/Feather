@@ -54,27 +54,38 @@ pub fn RateLimiter::window(self : RateLimiter) -> Int64 {
 
 ///|
 /// Record a request for `key` and report whether it fits in the current
-/// window. The first request for a key always fits.
-pub fn RateLimiter::allow(self : RateLimiter, key : String) -> Bool {
+/// window, together with the remaining allowance in the same lookup.
+fn RateLimiter::allow_with_remaining(
+  self : RateLimiter,
+  key : String,
+) -> (Bool, Int) {
   let now = @async.now()
   match self.buckets.get(key) {
     Some(bucket) =>
       if now - bucket.start >= self.window {
         bucket.start = now
         bucket.count = 1
-        true
+        (true, self.max - 1)
       } else if bucket.count < self.max {
         bucket.count = bucket.count + 1
-        true
+        (true, self.max - bucket.count)
       } else {
-        false
+        (false, 0)
       }
     None => {
       self.maybe_sweep(now)
       self.buckets.set(key, { start: now, count: 1 })
-      true
+      (true, self.max - 1)
     }
   }
+}
+
+///|
+/// Record a request for `key` and report whether it fits in the current
+/// window. The first request for a key always fits.
+pub fn RateLimiter::allow(self : RateLimiter, key : String) -> Bool {
+  let (allowed, _) = self.allow_with_remaining(key)
+  allowed
 }
 
 ///|
@@ -167,21 +178,20 @@ pub fn middleware_rate_limit(
   limiter : RateLimiter,
   key~ : (Context) -> String = fn(ctx) { ctx.ip() },
 ) -> Middleware {
+  let max_string = limiter.max().to_string()
   fn(next) {
     fn(ctx) raise {
       let bucket_key = key(ctx)
-      if limiter.allow(bucket_key) {
-        ctx.set_header("X-RateLimit-Limit", limiter.max().to_string())
-        ctx.set_header(
-          "X-RateLimit-Remaining",
-          limiter.remaining(bucket_key).to_string(),
-        )
+      let (allowed, remaining) = limiter.allow_with_remaining(bucket_key)
+      if allowed {
+        ctx.set_header("X-RateLimit-Limit", max_string)
+        ctx.set_header("X-RateLimit-Remaining", remaining.to_string())
         next(ctx)
       } else {
         let millis = limiter.retry_after(bucket_key)
         let seconds = millis / 1000L + (if millis % 1000L == 0L { 0L } else { 1L })
         ctx.set_header("Retry-After", seconds.to_string())
-        ctx.set_header("X-RateLimit-Limit", limiter.max().to_string())
+        ctx.set_header("X-RateLimit-Limit", max_string)
         ctx.set_header("X-RateLimit-Remaining", "0")
         ctx.text(429, "429 Too Many Requests")
       }

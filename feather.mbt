@@ -1453,77 +1453,6 @@ fn parse_cookie_map(header : StringView) -> Map[String, String] {
 }
 
 ///|
-fn cookie_scan(header : StringView, name : String) -> String? {
-  let length = header.length()
-  let target_length = name.length()
-  let mut first_non_ws = -1
-  let mut last_non_ws = -1
-  let mut name_end = -1
-  let mut eq = -1
-  let mut i = 0
-  let mut result : String? = None
-  while i <= length {
-    let code = if i < length {
-      header.unsafe_get(i)
-    } else {
-      (';' : UInt16)
-    }
-    if code == (';' : UInt16) {
-      if first_non_ws >= 0 && eq >= 0 && name_end > first_non_ws {
-        let nlen = name_end - first_non_ws
-        if nlen == target_length {
-          let mut j = 0
-          let mut equal = true
-          while j < nlen {
-            if header.unsafe_get(first_non_ws + j) != name.unsafe_get(j) {
-              equal = false
-              break
-            }
-            j = j + 1
-          }
-          if equal {
-            let raw_start = eq + 1
-            let raw_length = last_non_ws + 1 - raw_start
-            result = Some(
-              if raw_length >= 2 &&
-                header.unsafe_get(raw_start) == ('"' : UInt16) &&
-                header.unsafe_get(raw_start + raw_length - 1) ==
-                ('"' : UInt16) {
-                header[raw_start + 1:raw_start + raw_length - 1].to_owned()
-              } else {
-                header[raw_start:raw_start + raw_length].to_owned()
-              },
-            )
-          }
-        }
-      }
-      first_non_ws = -1
-      last_non_ws = -1
-      name_end = -1
-      eq = -1
-    } else if code > (' ' : UInt16) ||
-      (code != (' ' : UInt16) &&
-        code != ('\t' : UInt16) &&
-        code != ('\n' : UInt16) &&
-        code != ('\r' : UInt16)) {
-      if first_non_ws < 0 {
-        first_non_ws = i
-      }
-      last_non_ws = i
-      if code == ('=' : UInt16) {
-        if eq < 0 {
-          eq = i
-        }
-      } else if eq < 0 {
-        name_end = i + 1
-      }
-    }
-    i = i + 1
-  }
-  result
-}
-
-///|
 /// Upper bound on entries kept in the per-process parse caches.
 const PARSE_CACHE_LIMIT : Int = 128
 
@@ -1532,10 +1461,10 @@ const PARSE_CACHE_LIMIT : Int = 128
 const PARSE_CACHE_MAX_KEY : Int = 4096
 
 ///|
-fn[K : Hash + Eq] parse_cache_set(
-  cache : Map[K, Map[String, String]],
+fn[K : Hash + Eq, V] parse_cache_set(
+  cache : Map[K, V],
   key : K,
-  value : Map[String, String],
+  value : V,
 ) -> Unit {
   if cache.length() >= PARSE_CACHE_LIMIT {
     match cache.keys().next() {
@@ -1625,6 +1554,122 @@ fn query_map_lookup(path : String, index : Int) -> Map[String, String] {
 }
 
 ///|
+/// Most recently resolved multi-value query string, matched like
+/// `query_map_lookup` to skip substring allocation and rescanning on repeated
+/// lookups within one request.
+let last_query_multi_path : Ref[String?] = Ref(None)
+let last_query_multi_start : Ref[Int] = Ref(-1)
+let last_query_multi_map : Ref[Map[String, Array[String]]?] = Ref(None)
+
+///|
+/// Parsed multi-value query strings, keyed by the raw text after `?`.
+let queries_multi_cache : Map[StringView, Map[String, Array[String]]] = Map([])
+
+///|
+fn query_multi_lookup(path : String, index : Int) -> Map[String, Array[String]] {
+  match last_query_multi_path.val {
+    Some(cached_path) =>
+      if physical_equal(cached_path, path) && last_query_multi_start.val == index {
+        match last_query_multi_map.val {
+          Some(cached_map) => return cached_map
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let source = path.view()[index + 1:]
+  let parsed = match queries_multi_cache.get(source) {
+    Some(cached) => cached
+    None => {
+      let parsed = parse_urlencoded_multi(source)
+      if source.length() <= PARSE_CACHE_MAX_KEY {
+        parse_cache_set(queries_multi_cache, source, parsed)
+      }
+      parsed
+    }
+  }
+  last_query_multi_path.val = Some(path)
+  last_query_multi_start.val = index
+  last_query_multi_map.val = Some(parsed)
+  parsed
+}
+
+///|
+/// Most recently resolved url-encoded form body, matched by the identity of the
+/// body string so repeated field lookups within one request reuse a single
+/// parse instead of rescanning the body for every field.
+let last_form_body : Ref[String?] = Ref(None)
+let last_form_map : Ref[Map[String, String]?] = Ref(None)
+
+///|
+/// Parsed url-encoded form bodies, keyed by the raw body text.
+let forms_cache : Map[String, Map[String, String]] = Map([])
+
+///|
+fn form_map_lookup(body : String) -> Map[String, String] {
+  match last_form_body.val {
+    Some(cached_body) =>
+      if physical_equal(cached_body, body) {
+        match last_form_map.val {
+          Some(cached_map) => return cached_map
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let parsed = match forms_cache.get(body) {
+    Some(cached) => cached
+    None => {
+      let parsed = parse_urlencoded_view(body.view())
+      if body.length() <= PARSE_CACHE_MAX_KEY {
+        parse_cache_set(forms_cache, body, parsed)
+      }
+      parsed
+    }
+  }
+  last_form_body.val = Some(body)
+  last_form_map.val = Some(parsed)
+  parsed
+}
+
+///|
+/// Most recently resolved multi-value url-encoded form body, matched by the
+/// identity of the body string like `form_map_lookup`.
+let last_form_values_body : Ref[String?] = Ref(None)
+let last_form_values_map : Ref[Map[String, Array[String]]?] = Ref(None)
+
+///|
+/// Parsed multi-value url-encoded form bodies, keyed by the raw body text.
+let forms_multi_cache : Map[String, Map[String, Array[String]]] = Map([])
+
+///|
+fn form_values_lookup(body : String) -> Map[String, Array[String]] {
+  match last_form_values_body.val {
+    Some(cached_body) =>
+      if physical_equal(cached_body, body) {
+        match last_form_values_map.val {
+          Some(cached_map) => return cached_map
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let parsed = match forms_multi_cache.get(body) {
+    Some(cached) => cached
+    None => {
+      let parsed = parse_urlencoded_multi(body.view())
+      if body.length() <= PARSE_CACHE_MAX_KEY {
+        parse_cache_set(forms_multi_cache, body, parsed)
+      }
+      parsed
+    }
+  }
+  last_form_values_body.val = Some(body)
+  last_form_values_map.val = Some(parsed)
+  parsed
+}
+
+///|
 pub fn Context::cookies(self : Context) -> Map[String, String] {
   let header = self.header("Cookie")
   if header == "" {
@@ -1658,7 +1703,15 @@ pub fn Context::cookie(self : Context, name : String) -> String? {
       last_cookie_map.val = Some(cached)
       cached.get(name)
     }
-    None => cookie_scan(header.view(), name)
+    None => {
+      let parsed = parse_cookie_map(header.view())
+      if header.length() <= PARSE_CACHE_MAX_KEY {
+        parse_cache_set(cookies_cache, header, parsed)
+      }
+      last_cookie_header.val = Some(header)
+      last_cookie_map.val = Some(parsed)
+      parsed.get(name)
+    }
   }
 }
 
@@ -2687,6 +2740,46 @@ pub fn parse_urlencoded(source : String) -> Map[String, String] {
 }
 
 ///|
+/// Parse a url-encoded source into every value of each key, preserving the
+/// order in which the pairs appear.
+fn parse_urlencoded_multi(source : StringView) -> Map[String, Array[String]] {
+  let result : Map[String, Array[String]] = Map([], capacity=4)
+  let length = source.length()
+  let mut pos = 0
+  while pos <= length {
+    let mut end = pos
+    let mut eq = -1
+    while end < length {
+      let code = source.unsafe_get(end)
+      if code == ('&' : UInt16) {
+        break
+      }
+      if code == ('=' : UInt16) && eq < 0 {
+        eq = end
+      }
+      end = end + 1
+    }
+    if end > pos {
+      let key = if eq >= 0 {
+        decode_url(source[pos:eq])
+      } else {
+        decode_url(source[pos:end])
+      }
+      let value = if eq >= 0 { decode_url(source[eq + 1:end]) } else { "" }
+      match result.get(key) {
+        Some(values) => values.push(value)
+        None => result.set(key, [value])
+      }
+    }
+    if end >= length {
+      break
+    }
+    pos = end + 1
+  }
+  result
+}
+
+///|
 fn query_key_matches(
   source : StringView,
   start : Int,
@@ -2793,7 +2886,25 @@ pub fn Context::form(self : Context, name : String) -> String {
   ) {
     return ""
   }
-  query_param(self.request.body.view(), name)
+  let name_view = name.view()
+  let name_length = name_view.length()
+  let mut needs_raw = false
+  let mut i = 0
+  while i < name_length {
+    let code = name_view.unsafe_get(i)
+    if code == ('%' : UInt16) || code == ('+' : UInt16) {
+      needs_raw = true
+      break
+    }
+    i = i + 1
+  }
+  if needs_raw {
+    return query_param(self.request.body.view(), name)
+  }
+  match form_map_lookup(self.request.body).get(name) {
+    Some(value) => value
+    None => ""
+  }
 }
 
 ///|
@@ -2845,7 +2956,27 @@ fn collect_values(source : StringView, name : String) -> Array[String] {
 /// they appear in the query string.
 pub fn Context::query_values(self : Context, name : String) -> Array[String] {
   match self.request.path.find("?") {
-    Some(index) => collect_values(self.request.path[index + 1:].view(), name)
+    Some(index) => {
+      let name_view = name.view()
+      let name_length = name_view.length()
+      let mut needs_raw = false
+      let mut i = 0
+      while i < name_length {
+        let code = name_view.unsafe_get(i)
+        if code == ('%' : UInt16) || code == ('+' : UInt16) {
+          needs_raw = true
+          break
+        }
+        i = i + 1
+      }
+      if needs_raw {
+        return collect_values(self.request.path[index + 1:].view(), name)
+      }
+      match query_multi_lookup(self.request.path, index).get(name) {
+        Some(values) => values.copy()
+        None => []
+      }
+    }
     None => []
   }
 }
@@ -2864,7 +2995,25 @@ pub fn Context::form_values(self : Context, name : String) -> Array[String] {
   ) {
     return []
   }
-  collect_values(self.request.body.view(), name)
+  let name_view = name.view()
+  let name_length = name_view.length()
+  let mut needs_raw = false
+  let mut i = 0
+  while i < name_length {
+    let code = name_view.unsafe_get(i)
+    if code == ('%' : UInt16) || code == ('+' : UInt16) {
+      needs_raw = true
+      break
+    }
+    i = i + 1
+  }
+  if needs_raw {
+    return collect_values(self.request.body.view(), name)
+  }
+  match form_values_lookup(self.request.body).get(name) {
+    Some(values) => values.copy()
+    None => []
+  }
 }
 
 ///|
@@ -2876,7 +3025,39 @@ pub fn Context::form_map(self : Context) -> Map[String, String] {
   ) {
     return Map([], capacity=0)
   }
-  parse_urlencoded_view(self.request.body.view())
+  form_map_lookup(self.request.body).copy()
+}
+
+///|
+/// Most recently normalized `Content-Type` header, matched by the identity of
+/// the raw header value so repeated media-type checks within one request skip
+/// re-parsing.
+let last_content_type_header : Ref[String?] = Ref(None)
+let last_content_type_value : Ref[String] = Ref("")
+
+///|
+fn parsed_content_type(header : String) -> String {
+  match last_content_type_header.val {
+    Some(cached_header) =>
+      if physical_equal(cached_header, header) {
+        return last_content_type_value.val
+      }
+    None => ()
+  }
+  let view = header.view()
+  let end = match view.find(";") {
+    Some(index) => index
+    None => view.length()
+  }
+  let value = trim_ascii_space(view[:end])
+  let result = if has_ascii_upper(value) {
+    value.to_lower().to_owned()
+  } else {
+    value.to_owned()
+  }
+  last_content_type_header.val = Some(header)
+  last_content_type_value.val = result
+  result
 }
 
 ///|
@@ -2884,17 +3065,7 @@ pub fn Context::form_map(self : Context) -> Map[String, String] {
 /// `"application/json; charset=utf-8"` becomes `"application/json"`. Returns
 /// `""` when the request has no `Content-Type`.
 pub fn Context::content_type(self : Context) -> String {
-  let header = self.header("Content-Type").view()
-  let end = match header.find(";") {
-    Some(index) => index
-    None => header.length()
-  }
-  let value = trim_ascii_space(header[:end])
-  if has_ascii_upper(value) {
-    value.to_lower().to_owned()
-  } else {
-    value.to_owned()
-  }
+  parsed_content_type(self.header("Content-Type"))
 }
 
 ///|

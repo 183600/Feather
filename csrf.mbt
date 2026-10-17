@@ -111,16 +111,16 @@ pub fn middleware_csrf(
           }
         None => ""
       }
-      let mut provided = trim_ascii_space(ctx.header(header_name).view()).to_owned()
+      let mut provided = trim_ascii_space(ctx.header(header_name).view())
       if provided == "" {
-        provided = trim_ascii_space(ctx.form(field_name).view()).to_owned()
+        provided = trim_ascii_space(ctx.form(field_name).view())
       }
       if provided == "" {
-        provided = trim_ascii_space(ctx.multipart_value(field_name).view()).to_owned()
+        provided = trim_ascii_space(ctx.multipart_value(field_name).view())
       }
       if expected != "" &&
         provided != "" &&
-        csrf_constant_time_equal(provided.view(), expected.view()) {
+        csrf_constant_time_equal(provided, expected.view()) {
         next(ctx)
       } else {
         ctx.text(403, "403 Forbidden")
