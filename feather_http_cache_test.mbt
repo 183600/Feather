@@ -400,6 +400,31 @@ test "mime_type_for covers modern asset types" {
 }
 
 ///|
+test "mime_type_for covers office media and archive types" {
+  assert_eq(@feather.mime_type_for("movie.mkv"), "video/x-matroska")
+  assert_eq(@feather.mime_type_for("clip.m3u8"), "application/vnd.apple.mpegurl")
+  assert_eq(@feather.mime_type_for("track.flac"), "audio/flac")
+  assert_eq(@feather.mime_type_for("voice.opus"), "audio/ogg")
+  assert_eq(@feather.mime_type_for("scan.TIFF"), "image/tiff")
+  assert_eq(@feather.mime_type_for("photo.heic"), "image/heic")
+  assert_eq(
+    @feather.mime_type_for("report.docx"),
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  )
+  assert_eq(
+    @feather.mime_type_for("sheet.xlsx"),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  )
+  assert_eq(@feather.mime_type_for("slides.pptx"), "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+  assert_eq(@feather.mime_type_for("book.epub"), "application/epub+zip")
+  assert_eq(@feather.mime_type_for("events.ics"), "text/calendar")
+  assert_eq(@feather.mime_type_for("subs.vtt"), "text/vtt")
+  assert_eq(@feather.mime_type_for("bundle.7z"), "application/x-7z-compressed")
+  assert_eq(@feather.mime_type_for("archive.zst"), "application/zstd")
+  assert_eq(@feather.mime_type_for("fonts.eot"), "application/vnd.ms-fontobject")
+}
+
+///|
 async test "server ignores ranges when if-range does not match" {
   let dir = @fs.tmpdir(prefix="feather-static-if-range")
   @fs.write_file(dir + "/digits.txt", "0123456789")

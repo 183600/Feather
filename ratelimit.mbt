@@ -121,6 +121,17 @@ pub fn RateLimiter::count(self : RateLimiter) -> Int {
 }
 
 ///|
+/// Forget `key`'s window so its next request starts from a full allowance.
+/// Returns whether a bucket existed. Useful when a client identifies itself
+/// (for example after a successful login) and should not inherit throttling
+/// earned before that.
+pub fn RateLimiter::reset(self : RateLimiter, key : String) -> Bool {
+  let existed = self.buckets.contains(key)
+  self.buckets.remove(key)
+  existed
+}
+
+///|
 /// Drop every bucket whose window has fully elapsed.
 pub fn RateLimiter::sweep(self : RateLimiter) -> Unit {
   let now = @async.now()

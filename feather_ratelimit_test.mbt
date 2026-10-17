@@ -115,3 +115,19 @@ test "rate limit middleware defaults to the client address" {
   handler(other)
   assert_eq(other.response.status, 200)
 }
+
+///|
+test "rate limiter reset restores the allowance" {
+  let limiter = @feather.RateLimiter::new(max=1, window=60_000L)
+  assert_true(limiter.allow("alice"))
+  assert_false(limiter.allow("alice"))
+  assert_eq(limiter.remaining("alice"), 0)
+  assert_false(limiter.reset("bob"))
+  assert_true(limiter.reset("alice"))
+  assert_false(limiter.reset("alice"))
+  assert_eq(limiter.count(), 0)
+  assert_eq(limiter.remaining("alice"), 1)
+  assert_eq(limiter.retry_after("alice"), 0L)
+  assert_true(limiter.allow("alice"))
+  assert_false(limiter.allow("alice"))
+}

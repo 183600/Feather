@@ -234,6 +234,40 @@ test "middleware_recover maps HttpError status" {
 }
 
 ///|
+test "middleware_recover logs unexpected errors when a logger is given" {
+  let lines : Array[String] = []
+  let app = @feather.App::new()
+    .use(@feather.middleware_recover(log=line => lines.push(line)))
+    .get("/boom", fn(_ctx) raise { raise Failure("kaboom") })
+  let response = app.respond({
+    method: "GET",
+    path: "/boom",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 500)
+  assert_eq(lines.length(), 1)
+  assert_true(lines[0].contains("GET /boom"))
+  assert_true(lines[0].contains("kaboom"))
+}
+
+///|
+test "middleware_recover does not log handled HttpErrors" {
+  let lines : Array[String] = []
+  let app = @feather.App::new()
+    .use(@feather.middleware_recover(log=line => lines.push(line)))
+    .get("/no", fn(ctx) raise { ctx.fail(403, "forbidden") })
+  let response = app.respond({
+    method: "GET",
+    path: "/no",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 403)
+  assert_eq(lines.length(), 0)
+}
+
+///|
 test "Context json_body parses request body" {
   let app = @feather.App::new().post("/echo", fn(ctx) raise {
     let data = ctx.json_body()

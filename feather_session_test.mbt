@@ -323,3 +323,46 @@ async test "server sessions survive across requests" {
     assert_eq(client.read_all().text(), "alice")
   })
 }
+
+///|
+test "session json helpers round trip structured values" {
+  let store = @feather.SessionStore::new()
+  let ctx = @feather.create_context()
+  assert_eq(ctx.session_get_json("user"), None)
+  assert_false(ctx.session_set_json("user", Json::object({ "name": "alice" })))
+  ctx.session = Some(store.create())
+  assert_true(
+    ctx.session_set_json("user", Json::object({ "name": "alice", "admin": true })),
+  )
+  let user = ctx.session_get_json("user").unwrap()
+  assert_eq(user.value("name"), Some(Json::string("alice")))
+  assert_eq(user.value("admin"), Some(Json::boolean(true)))
+  assert_eq(ctx.session_get_json("missing"), None)
+  let session = ctx.session.unwrap()
+  session.data.set("broken", "{not json")
+  assert_eq(ctx.session_get_json("broken"), None)
+}
+
+///|
+test "session json helpers persist through the middleware" {
+  let store = @feather.SessionStore::new()
+  let app = @feather
+    .App::new()
+    .use(@feather.middleware_session(store))
+    .get("/set", fn(ctx) {
+      ignore(ctx.session_set_json("cart", Json::array([Json::number(1.0)])))
+      ctx.text(200, "set")
+    })
+    .get("/get", fn(ctx) {
+      match ctx.session_get_json("cart") {
+        Some(cart) => ctx.json_value(200, cart)
+        None => ctx.text(404, "empty")
+      }
+    })
+  let set = app.respond(session_request("/set"))
+  assert_eq(set.cookies.length(), 1)
+  let cookie = "feather_session=" + set.cookies[0].value
+  let get = app.respond(session_request("/get", cookie=cookie))
+  assert_eq(get.status, 200)
+  assert_eq(get.body, "[1]")
+}

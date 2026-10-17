@@ -55,15 +55,19 @@ pub fn middleware_csrf(field? : String, header? : String, key? : String) -> ((Co
 
 pub fn middleware_error_handler() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
+pub fn middleware_https_redirect(permanent? : Bool, host? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
 pub fn middleware_logger(log? : (String) -> Unit, with_duration? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_method_override(field? : String, header? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_rate_limit(RateLimiter, key? : (Context) -> String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
-pub fn middleware_recover() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+pub fn middleware_recover(log? : (String) -> Unit) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_request_id(header? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
-pub fn middleware_secure_headers(content_type_options? : String, frame_options? : String, referrer_policy? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+pub fn middleware_secure_headers(content_type_options? : String, frame_options? : String, referrer_policy? : String, hsts? : String, content_security_policy? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_session(SessionStore, cookie? : String, path? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
@@ -181,6 +185,7 @@ pub fn Context::basic_auth(Self) -> (String, String)?
 pub fn Context::bearer_token(Self) -> String?
 pub fn Context::bytes(Self, Int, Bytes, content_type? : String) -> Unit
 pub fn Context::clear_cookie(Self, String, path? : String) -> Unit
+pub fn Context::content_type(Self) -> String
 pub fn Context::cookie(Self, String) -> String?
 pub fn Context::cookies(Self) -> Map[String, String]
 pub fn Context::csrf_token(Self, key? : String) -> String
@@ -189,6 +194,10 @@ pub fn Context::fail(Self, Int, String) -> Unit raise HttpError
 pub fn Context::fail_with(Self, Int, String, Json) -> Unit raise HttpErrorPayload
 pub fn Context::file(Self, Int, String, content_type? : String, download_name? : String) -> Unit
 pub fn Context::file_response(Self) -> FileResponse?
+pub fn Context::flash(Self, String, category? : String) -> Bool
+pub fn Context::flash_peek(Self, category? : String) -> Array[String]
+pub fn Context::flash_take(Self, category? : String) -> Array[String]
+pub fn Context::flash_take_all(Self) -> Map[String, Array[String]]
 pub fn Context::form(Self, String) -> String
 pub fn Context::form_map(Self) -> Map[String, String]
 pub fn Context::form_values(Self, String) -> Array[String]
@@ -203,6 +212,9 @@ pub fn Context::header(Self, String) -> String
 pub fn Context::host(Self) -> String
 pub fn Context::html(Self, Int, String) -> Unit
 pub fn Context::ip(Self) -> String
+pub fn Context::is_form(Self) -> Bool
+pub fn Context::is_json(Self) -> Bool
+pub fn Context::is_multipart(Self) -> Bool
 pub fn Context::is_secure(Self) -> Bool
 pub fn Context::json(Self, Int, Map[String, String]) -> Unit
 pub fn[T : @json.FromJson] Context::json_as(Self) -> T raise HttpError
@@ -234,16 +246,19 @@ pub fn Context::request_id(Self) -> String
 pub fn Context::session(Self) -> Session?
 pub fn Context::session_destroy(Self) -> Bool
 pub fn Context::session_get(Self, String) -> String
+pub fn Context::session_get_json(Self, String) -> Json?
 pub fn Context::session_id(Self) -> String?
 pub fn Context::session_regenerate(Self) -> Bool
 pub fn Context::session_remove(Self, String) -> Bool
 pub fn Context::session_set(Self, String, String) -> Bool
+pub fn Context::session_set_json(Self, String, Json) -> Bool
 pub fn Context::set(Self, String, String) -> Unit
 pub fn Context::set_cookie(Self, String, String, path? : String, max_age? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> Unit
 pub fn Context::set_header(Self, String, String) -> Unit
 pub fn Context::set_json(Self, String, Json) -> Unit
 pub fn Context::status(Self, Int) -> Unit
 pub fn Context::text(Self, Int, String) -> Unit
+pub fn Context::vary(Self, String) -> Unit
 
 pub(all) struct Feather {
   config : Config
@@ -316,12 +331,13 @@ pub fn RateLimiter::count(Self) -> Int
 pub fn RateLimiter::max(Self) -> Int
 pub fn RateLimiter::new(max~ : Int, window? : Int64) -> Self
 pub fn RateLimiter::remaining(Self, String) -> Int
+pub fn RateLimiter::reset(Self, String) -> Bool
 pub fn RateLimiter::retry_after(Self, String) -> Int64
 pub fn RateLimiter::sweep(Self) -> Unit
 pub fn RateLimiter::window(Self) -> Int64
 
 pub(all) struct Request {
-  method : String
+  mut method : String
   path : String
   headers : Map[String, String]
   body : String

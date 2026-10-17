@@ -193,6 +193,38 @@ pub fn Context::session_set(
 }
 
 ///|
+/// Write a JSON value into the session, serialized as text. This is a thin
+/// wrapper over `Context::session_set` for structured state such as a user
+/// record; read it back with `Context::session_get_json`.
+pub fn Context::session_set_json(
+  self : Context,
+  key : String,
+  value : Json,
+) -> Bool {
+  self.session_set(key, value.stringify())
+}
+
+///|
+/// Read a JSON value previously stored with `Context::session_set_json`.
+/// Returns `None` when there is no session, the key is absent, or the stored
+/// text is not valid JSON.
+pub fn Context::session_get_json(self : Context, key : String) -> Json? {
+  match self.session {
+    Some(session) =>
+      match session.data.get(key) {
+        Some(text) => {
+          let parsed : Json = @json.parse(text) catch {
+            _ => return None
+          }
+          Some(parsed)
+        }
+        None => None
+      }
+    None => None
+  }
+}
+
+///|
 /// Remove a key from the session. Returns whether the key was present.
 pub fn Context::session_remove(self : Context, key : String) -> Bool {
   match self.session {

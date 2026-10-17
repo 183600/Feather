@@ -23,7 +23,7 @@ pub(all) struct Config {
 
 ///|
 pub(all) struct Request {
-  method : String
+  mut method : String
   path : String
   headers : Map[String, String]
   body : String
@@ -391,6 +391,32 @@ fn clean_route_path(path : String) -> String {
 }
 
 ///|
+fn has_ascii_lower(view : StringView) -> Bool {
+  let length = view.length()
+  let mut i = 0
+  while i < length {
+    let value = view.unsafe_get(i)
+    if value >= ('a' : UInt16) && value <= ('z' : UInt16) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+/// HTTP methods are case-sensitive tokens (RFC 9110 §9.1), so registration
+/// and lookup both canonicalize to upper case. This makes `"get"` match both
+/// a `"GET"` route and a real `GET` request.
+fn normalize_method(meth : String) -> String {
+  if has_ascii_lower(meth.view()) {
+    meth.to_upper()
+  } else {
+    meth
+  }
+}
+
+///|
 pub fn Router::add_route(
   self : Router,
   meth : String,
@@ -398,7 +424,7 @@ pub fn Router::add_route(
   handler : Handler,
 ) -> Unit {
   let clean_path = clean_route_path(path)
-  let method_key = meth
+  let method_key = normalize_method(meth)
   let mut node = match self.trees.get(method_key) {
     Some(root) => root
     None => {
@@ -511,7 +537,7 @@ pub fn Router::add_named_route(
 ) -> Unit {
   let clean_path = clean_route_path(path)
   self.add_route(meth, clean_path, handler)
-  self.named.set(name, { method: meth, path: clean_path, })
+  self.named.set(name, { method: normalize_method(meth), path: clean_path, })
 }
 
 ///|
@@ -886,6 +912,7 @@ pub fn Router::route(
   path : String,
 ) -> RouteOutcome {
   let clean_path = clean_path_view(path)
+  let meth = normalize_method(meth)
   match self.match_route(meth, clean_path) {
     MatchFound(node, params, wildcard) =>
       RouteFound({
@@ -909,7 +936,7 @@ pub fn Router::matching(self : Router, meth : String, path : String) -> Route? {
   if self.routes.length() == 0 {
     return Some({
       path,
-      method: meth,
+      method: normalize_method(meth),
       params: Map([], capacity=0),
       wildcard: "",
       wildcard_name: "",
@@ -934,7 +961,8 @@ pub fn Router::dispatch_with(
   fallback : Handler?,
 ) -> Unit raise {
   let clean_path = clean_path_view(ctx.request.path)
-  match self.match_dispatch(ctx.request.method, clean_path) {
+  let meth = normalize_method(ctx.request.method)
+  match self.match_dispatch(meth, clean_path) {
     DispatchFound(node) => {
       bind_route_params(node, clean_path, ctx)
       match node.handler {
@@ -943,7 +971,7 @@ pub fn Router::dispatch_with(
       }
     }
     DispatchMethods(methods) =>
-      if ctx.request.method == "OPTIONS" {
+      if meth == "OPTIONS" {
         respond_options(ctx, methods)
       } else {
         method_not_allowed(ctx, methods)
@@ -2525,6 +2553,61 @@ let mime_table : Map[String, String] = Map([
   ("woff2", "font/woff2"),
   ("ttf", "font/ttf"),
   ("otf", "font/otf"),
+  ("eot", "application/vnd.ms-fontobject"),
+  ("tif", "image/tiff"),
+  ("tiff", "image/tiff"),
+  ("heic", "image/heic"),
+  ("heif", "image/heif"),
+  ("apng", "image/apng"),
+  ("psd", "image/vnd.adobe.photoshop"),
+  ("aac", "audio/aac"),
+  ("flac", "audio/flac"),
+  ("m4a", "audio/mp4"),
+  ("opus", "audio/ogg"),
+  ("mid", "audio/midi"),
+  ("midi", "audio/midi"),
+  ("mpeg", "video/mpeg"),
+  ("mpg", "video/mpeg"),
+  ("avi", "video/x-msvideo"),
+  ("mkv", "video/x-matroska"),
+  ("3gp", "video/3gpp"),
+  ("ts", "video/mp2t"),
+  ("m3u8", "application/vnd.apple.mpegurl"),
+  ("xhtml", "application/xhtml+xml"),
+  ("rss", "application/rss+xml"),
+  ("atom", "application/atom+xml"),
+  ("epub", "application/epub+zip"),
+  ("doc", "application/msword"),
+  (
+    "docx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ),
+  ("xls", "application/vnd.ms-excel"),
+  (
+    "xlsx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ),
+  ("ppt", "application/vnd.ms-powerpoint"),
+  (
+    "pptx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ),
+  ("odt", "application/vnd.oasis.opendocument.text"),
+  ("ods", "application/vnd.oasis.opendocument.spreadsheet"),
+  ("odp", "application/vnd.oasis.opendocument.presentation"),
+  ("rtf", "application/rtf"),
+  ("7z", "application/x-7z-compressed"),
+  ("rar", "application/vnd.rar"),
+  ("tar", "application/x-tar"),
+  ("xz", "application/x-xz"),
+  ("bz2", "application/x-bzip2"),
+  ("zst", "application/zstd"),
+  ("ics", "text/calendar"),
+  ("vtt", "text/vtt"),
+  ("sh", "application/x-sh"),
+  ("sql", "application/sql"),
+  ("ini", "text/plain; charset=utf-8"),
+  ("conf", "text/plain; charset=utf-8"),
 ])
 
 ///|
@@ -2794,6 +2877,44 @@ pub fn Context::form_map(self : Context) -> Map[String, String] {
     return Map([], capacity=0)
   }
   parse_urlencoded_view(self.request.body.view())
+}
+
+///|
+/// The media type of the request body, lowercased and stripped of parameters:
+/// `"application/json; charset=utf-8"` becomes `"application/json"`. Returns
+/// `""` when the request has no `Content-Type`.
+pub fn Context::content_type(self : Context) -> String {
+  let header = self.header("Content-Type").view()
+  let end = match header.find(";") {
+    Some(index) => index
+    None => header.length()
+  }
+  let value = trim_ascii_space(header[:end])
+  if has_ascii_upper(value) {
+    value.to_lower().to_owned()
+  } else {
+    value.to_owned()
+  }
+}
+
+///|
+/// Whether the request body is JSON, including `+json` structured suffixes
+/// such as `application/problem+json`.
+pub fn Context::is_json(self : Context) -> Bool {
+  let media_type = self.content_type()
+  media_type == "application/json" || media_type.has_suffix("+json")
+}
+
+///|
+/// Whether the request body is `application/x-www-form-urlencoded`.
+pub fn Context::is_form(self : Context) -> Bool {
+  self.content_type() == "application/x-www-form-urlencoded"
+}
+
+///|
+/// Whether the request body is `multipart/form-data`.
+pub fn Context::is_multipart(self : Context) -> Bool {
+  self.content_type() == "multipart/form-data"
 }
 
 ///|
@@ -4466,7 +4587,7 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
 
 ///|
 fn Router::is_routable(self : Router, meth : String, path : String) -> Bool {
-  match self.match_dispatch(meth, clean_path_view(path)) {
+  match self.match_dispatch(normalize_method(meth), clean_path_view(path)) {
     DispatchFound(_) => true
     _ => false
   }
@@ -4617,14 +4738,28 @@ pub fn App::respond(self : App, request : Request) -> Response {
 }
 
 ///|
-pub fn middleware_recover() -> Middleware {
+/// Middleware that turns errors escaping the handler chain into responses:
+/// `HttpError` / `HttpErrorPayload` become their status and JSON body, while
+/// any other error becomes a `500` (and is reported through `log` when one is
+/// given, since the client only sees a generic body).
+pub fn middleware_recover(log? : (String) -> Unit) -> Middleware {
   fn(next) {
     fn(ctx) {
       next(ctx) catch {
         HttpError(status, message) => error_response(ctx, status, message)
         HttpErrorPayload(status, message, payload) =>
           error_response_with_payload(ctx, status, message, payload)
-        err => internal_error(ctx, "\{err}")
+        err => {
+          let detail = "\{err}"
+          match log {
+            Some(log) =>
+              log(
+                "\{ctx.request.method} \{ctx.request.path} failed: \{detail}",
+              )
+            None => ()
+          }
+          internal_error(ctx, detail)
+        }
       }
     }
   }
@@ -4709,16 +4844,122 @@ pub fn middleware_request_id(header~ : String = "X-Request-Id") -> Middleware {
 }
 
 ///|
+/// Append `value` to the response's `Vary` header unless it is already listed.
+pub fn Context::vary(self : Context, value : String) -> Unit {
+  match get_header_ignore_case(self.response.headers, "Vary") {
+    Some(existing) =>
+      if !contains_ignore_ascii_case(existing.view(), value.view()) {
+        self.response.headers.set("Vary", existing + ", " + value)
+      }
+    None => self.response.headers.set("Vary", value)
+  }
+}
+
+///|
+/// Middleware that adds hardening headers to every response: `nosniff`,
+/// clickjacking protection and a referrer policy by default.
+///
+/// Pass `hsts` to also advertise `Strict-Transport-Security` (only meaningful
+/// over HTTPS) and `content_security_policy` to lock down which resources the
+/// browser may load.
 pub fn middleware_secure_headers(
   content_type_options~ : String = "nosniff",
   frame_options~ : String = "DENY",
   referrer_policy~ : String = "no-referrer",
+  hsts? : String,
+  content_security_policy? : String,
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
       ctx.response.headers.set("X-Content-Type-Options", content_type_options)
       ctx.response.headers.set("X-Frame-Options", frame_options)
       ctx.response.headers.set("Referrer-Policy", referrer_policy)
+      match hsts {
+        Some(value) =>
+          ctx.response.headers.set("Strict-Transport-Security", value)
+        None => ()
+      }
+      match content_security_policy {
+        Some(value) => ctx.response.headers.set("Content-Security-Policy", value)
+        None => ()
+      }
+      next(ctx)
+    }
+  }
+}
+
+///|
+/// Middleware that redirects requests that did not arrive over HTTPS.
+///
+/// Useful behind a TLS-terminating proxy that sets `X-Forwarded-Proto`
+/// (honored by `Context::is_secure`): requests marked `http` are answered with
+/// a redirect to the same URL under `https`, preserving the method, the host
+/// from the `Host` header (or `host` when given) and the query string.
+/// `permanent` selects `308 Permanent Redirect`; pass `permanent=false` for a
+/// `307 Temporary Redirect` while testing. Requests without a usable `Host`
+/// are passed through untouched so no broken `Location` is produced.
+pub fn middleware_https_redirect(
+  permanent~ : Bool = true,
+  host? : String,
+) -> Middleware {
+  let status : Int32 = if permanent { 308 } else { 307 }
+  let fixed_host = host
+  fn(next) {
+    fn(ctx) raise {
+      if ctx.is_secure() {
+        next(ctx)
+        return
+      }
+      let authority = match fixed_host {
+        Some(value) => value
+        None => trim_ascii_space(ctx.header("Host").view()).to_owned()
+      }
+      if authority == "" {
+        next(ctx)
+        return
+      }
+      ctx.redirect(status, "https://" + authority + ctx.request.path)
+    }
+  }
+}
+
+///|
+/// Middleware that lets HTML forms perform non-`POST` methods.
+///
+/// Browsers can only submit `GET` and `POST` forms, so frameworks commonly
+/// tunnel `PUT` / `PATCH` / `DELETE` through a `POST` carrying an override:
+/// the `header` (default `X-HTTP-Method-Override`) or, when the body is
+/// `application/x-www-form-urlencoded`, the `field` (default `_method`).
+/// Only safe, well-known methods are accepted; anything else is ignored and
+/// the request stays a `POST`. Install it before the router runs, i.e. as any
+/// other `App::use` middleware.
+pub fn middleware_method_override(
+  field~ : String = "_method",
+  header~ : String = "X-HTTP-Method-Override",
+) -> Middleware {
+  let field_name = field
+  let header_name = header
+  fn(next) {
+    fn(ctx) raise {
+      if ctx.request.method == "POST" {
+        let value = {
+          let from_header = trim_ascii_space(ctx.header(header_name).view())
+          if from_header.is_empty() {
+            trim_ascii_space(ctx.form(field_name).view())
+          } else {
+            from_header
+          }
+        }
+        if value.view().equal_ignore_ascii_case("PUT".view()) {
+          ctx.request.method = "PUT"
+        } else if value.view().equal_ignore_ascii_case("PATCH".view()) {
+          ctx.request.method = "PATCH"
+        } else if value.view().equal_ignore_ascii_case("DELETE".view()) {
+          ctx.request.method = "DELETE"
+        } else if value.view().equal_ignore_ascii_case("OPTIONS".view()) {
+          ctx.request.method = "OPTIONS"
+        }
+      }
       next(ctx)
     }
   }
@@ -4741,11 +4982,7 @@ pub fn middleware_cors(
       if echo_origin {
         let origin = if allow_origin != "*" { allow_origin } else { request_origin }
         ctx.response.headers.set("Access-Control-Allow-Origin", origin)
-        let vary = match ctx.response.headers.get("Vary") {
-          Some(existing) if existing != "" => existing + ", Origin"
-          _ => "Origin"
-        }
-        ctx.response.headers.set("Vary", vary)
+        ctx.vary("Origin")
       } else {
         ctx.response.headers.set("Access-Control-Allow-Origin", allow_origin)
       }
