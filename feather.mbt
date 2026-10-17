@@ -1333,6 +1333,9 @@ pub fn Context::cookies(self : Context) -> Map[String, String] {
     let mut start = pos
     while start < end {
       let code = header.unsafe_get(start)
+      if code > (' ' : UInt16) {
+        break
+      }
       if code != (' ' : UInt16) &&
         code != ('\t' : UInt16) &&
         code != ('\n' : UInt16) &&
@@ -1344,6 +1347,9 @@ pub fn Context::cookies(self : Context) -> Map[String, String] {
     let mut stop = end
     while stop > start {
       let code = header.unsafe_get(stop - 1)
+      if code > (' ' : UInt16) {
+        break
+      }
       if code != (' ' : UInt16) &&
         code != ('\t' : UInt16) &&
         code != ('\n' : UInt16) &&
@@ -1361,6 +1367,9 @@ pub fn Context::cookies(self : Context) -> Map[String, String] {
         let mut name_end = eq
         while name_end > start {
           let code = header.unsafe_get(name_end - 1)
+          if code > (' ' : UInt16) {
+            break
+          }
           if code != (' ' : UInt16) &&
             code != ('\t' : UInt16) &&
             code != ('\n' : UInt16) &&
@@ -1792,6 +1801,9 @@ fn owned_trimmed(view : StringView) -> String {
   let mut start = 0
   while start < length {
     let code = view.unsafe_get(start)
+    if code > (' ' : UInt16) {
+      break
+    }
     if code != (' ' : UInt16) &&
       code != ('\t' : UInt16) &&
       code != ('\n' : UInt16) &&
@@ -1803,6 +1815,9 @@ fn owned_trimmed(view : StringView) -> String {
   let mut end = length
   while end > start {
     let code = view.unsafe_get(end - 1)
+    if code > (' ' : UInt16) {
+      break
+    }
     if code != (' ' : UInt16) &&
       code != ('\t' : UInt16) &&
       code != ('\n' : UInt16) &&
@@ -1821,6 +1836,9 @@ fn trim_ascii_space(view : StringView) -> StringView {
   let mut start = 0
   while start < length {
     let code = view.unsafe_get(start)
+    if code > (' ' : UInt16) {
+      break
+    }
     if code != (' ' : UInt16) &&
       code != ('\t' : UInt16) &&
       code != ('\n' : UInt16) &&
@@ -1832,6 +1850,9 @@ fn trim_ascii_space(view : StringView) -> StringView {
   let mut end = length
   while end > start {
     let code = view.unsafe_get(end - 1)
+    if code > (' ' : UInt16) {
+      break
+    }
     if code != (' ' : UInt16) &&
       code != ('\t' : UInt16) &&
       code != ('\n' : UInt16) &&
@@ -1858,18 +1879,12 @@ fn hex_digit(value : Int) -> Int {
 
 ///|
 fn decode_utf8_bytes(bytes : Bytes) -> String {
-  try @utf8.decode(bytes) catch {
-    _ => @utf8.decode_lossy(bytes)
-  }
+  @utf8.decode_lossy(bytes)
 }
 
 ///|
 fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
   let length = source.length()
-  if source.find("%") is None &&
-    (!plus_as_space || source.find("+") is None) {
-    return source.to_owned()
-  }
   let mut needs_decoding = false
   let mut ascii_only = true
   let mut high_byte = false
@@ -2761,6 +2776,9 @@ fn header_parameter(value : StringView, name : String) -> String? {
 /// and malformed percent escapes yield `None` so the caller can fall back to
 /// the plain parameter.
 fn header_ext_parameter(value : StringView, name : String) -> String? {
+  if find_view_from(value, "*".view(), 0) is None {
+    return None
+  }
   let raw = match header_parameter(value, name + "*") {
     Some(raw) => raw
     None => return None
@@ -2824,13 +2842,11 @@ fn parse_part_headers(
   let mut content_type : String? = None
   let mut content_type_matches = 0
   let length = header_text.length()
-  let newline = "\n".view()
-  let colon_view = ":".view()
   let mut pos = 0
   while pos <= length {
-    let end = match find_view_from(header_text, newline, pos) {
-      Some(index) => index
-      None => length
+    let mut end = pos
+    while end < length && header_text.unsafe_get(end) != ('\n' : UInt16) {
+      end = end + 1
     }
     let line_end = if end > pos &&
       header_text.unsafe_get(end - 1) == ('\r' : UInt16) {
@@ -2838,11 +2854,11 @@ fn parse_part_headers(
     } else {
       end
     }
-    let colon = match find_view_from(header_text, colon_view, pos) {
-      Some(index) => if index < line_end { index } else { -1 }
-      None => -1
+    let mut colon = pos
+    while colon < line_end && header_text.unsafe_get(colon) != (':' : UInt16) {
+      colon = colon + 1
     }
-    if line_end > pos && colon >= 0 && colon < line_end {
+    if line_end > pos && colon < line_end {
       let name = owned_trimmed(header_text[pos:colon])
       let value = owned_trimmed(header_text[colon + 1:line_end])
       if name != "" {
