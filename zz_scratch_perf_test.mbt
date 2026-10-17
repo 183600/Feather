@@ -1,15 +1,11 @@
 ///|
-fn scratch_time_it(name : String, iterations : Int, f : () -> Unit) -> Unit {
+fn scratch_time_it(_name : String, iterations : Int, f : () -> Unit) -> Unit {
   for i = 0; i < 200; i = i + 1 {
     f()
   }
-  let start = @async.now()
   for i = 0; i < iterations; i = i + 1 {
     f()
   }
-  let elapsed = @async.now() - start
-  let per_op = elapsed.to_double() * 1000000.0 / iterations.to_double()
-  println("\{name}: \{per_op} ns/op (\{elapsed}ms / \{iterations})")
 }
 
 ///|

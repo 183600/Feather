@@ -1,15 +1,11 @@
 ///|
-fn scratch_time_exp(name : String, iterations : Int, f : () -> Unit) -> Unit {
+fn scratch_time_exp(_name : String, iterations : Int, f : () -> Unit) -> Unit {
   for i = 0; i < 200; i = i + 1 {
     f()
   }
-  let start = @async.now()
   for i = 0; i < iterations; i = i + 1 {
     f()
   }
-  let elapsed = @async.now() - start
-  let per_op = elapsed.to_double() * 1000000.0 / iterations.to_double()
-  println("\{name}: \{per_op} ns/op")
 }
 
 ///|
@@ -164,10 +160,6 @@ fn exp_format_date(builder : StringBuilder, unix_seconds : Int64) -> String {
 ///|
 test "scratch-experiments" {
   let data = @utf8.encode("hello world, this is a test payload for base64")
-  let expect = base64_encode(data)
-  println("b64 builder = \{expect}")
-  println("b64 bytes   = \{exp_base64_encode_bytes(data)}")
-  println("b64 buf     = \{exp_base64_encode_buf(data)}")
   scratch_time_exp("b64-current", 1000000, fn() {
     ignore(base64_encode(data))
   })

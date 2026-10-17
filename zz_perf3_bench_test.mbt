@@ -1,15 +1,11 @@
 ///|
-fn p3_time(name : String, iterations : Int, f : () -> Unit) -> Unit {
+fn p3_time(_name : String, iterations : Int, f : () -> Unit) -> Unit {
   for i = 0; i < 500; i = i + 1 {
     f()
   }
-  let start = @async.now()
   for i = 0; i < iterations; i = i + 1 {
     f()
   }
-  let elapsed = @async.now() - start
-  let per_op = elapsed.to_double() * 1000000.0 / iterations.to_double()
-  println("\{name}: \{per_op} ns/op")
 }
 
 ///|
