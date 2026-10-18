@@ -213,7 +213,7 @@ pub fn Context::preferred_type(
   self : Context,
   offers : ArrayView[String],
 ) -> String? {
-  let entries = parse_accept_entries(self.header("Accept").view())
+  let entries = accept_entries_cached(self.header("Accept"))
   let mut best : String? = None
   let mut best_q = 0
   for offer in offers {
@@ -231,20 +231,20 @@ pub fn Context::preferred_type(
 }
 
 ///|
-/// Quality value (in thousandths) assigned to `coding` by an
-/// `Accept-Encoding` header.
-///
-/// A missing header accepts every coding. An empty header value is treated
-/// like a missing header. When the header is present but neither `coding` nor
-/// `*` is listed, the coding is not acceptable and `0` is returned.
-fn accept_encoding_quality(header : StringView, coding : StringView) -> Int {
-  if trim_ascii_space(header).is_empty() {
-    return 1000
-  }
+/// One parsed `Accept-Encoding` entry: the coding token and its quality value
+/// (in thousandths), in header order.
+priv struct EncodingEntry {
+  token : StringView
+  quality : Int
+}
+
+///|
+/// Parse an `Accept-Encoding` header into its coding entries. The header is
+/// expected to be non-blank; parameters other than `q` are ignored.
+fn parse_encoding_entries(header : StringView) -> Array[EncodingEntry] {
+  let entries : Array[EncodingEntry] = Array(capacity=4)
   let length = header.length()
   let mut pos = 0
-  let mut exact_q = -1
-  let mut star_q = -1
   while pos < length {
     let mut end = pos
     while end < length {
@@ -282,14 +282,29 @@ fn accept_encoding_quality(header : StringView, coding : StringView) -> Int {
         }
       }
     }
-    if token.equal_ignore_ascii_case(coding) {
-      exact_q = quality
-    } else if token == "*" {
-      star_q = quality
-    }
+    entries.push({ token, quality })
     pos = scan
     if pos < length && header.unsafe_get(pos) == (',' : UInt16) {
       pos = pos + 1
+    }
+  }
+  entries
+}
+
+///|
+/// Quality assigned to `coding` by parsed `Accept-Encoding` entries. The last
+/// entry naming `coding` (or `*`) wins, matching `accept_encoding_quality`.
+fn encoding_quality_from(
+  entries : Array[EncodingEntry],
+  coding : StringView,
+) -> Int {
+  let mut exact_q = -1
+  let mut star_q = -1
+  for entry in entries {
+    if entry.token.equal_ignore_ascii_case(coding) {
+      exact_q = entry.quality
+    } else if entry.token == "*" {
+      star_q = entry.quality
     }
   }
   if exact_q >= 0 {
@@ -301,6 +316,20 @@ fn accept_encoding_quality(header : StringView, coding : StringView) -> Int {
   } else {
     0
   }
+}
+
+///|
+/// Quality value (in thousandths) assigned to `coding` by an
+/// `Accept-Encoding` header.
+///
+/// A missing header accepts every coding. An empty header value is treated
+/// like a missing header. When the header is present but neither `coding` nor
+/// `*` is listed, the coding is not acceptable and `0` is returned.
+fn accept_encoding_quality(header : StringView, coding : StringView) -> Int {
+  if trim_ascii_space(header).is_empty() {
+    return 1000
+  }
+  encoding_quality_from(parse_encoding_entries(header), coding)
 }
 
 ///|
@@ -328,10 +357,16 @@ pub fn Context::preferred_encoding(
   offers : ArrayView[String],
 ) -> String? {
   let header = self.header("Accept-Encoding").view()
+  let blank = trim_ascii_space(header).is_empty()
+  let entries = if blank { [] } else { parse_encoding_entries(header) }
   let mut best : String? = None
   let mut best_q = 0
   for offer in offers {
-    let quality = accept_encoding_quality(header, offer.view())
+    let quality = if blank {
+      1000
+    } else {
+      encoding_quality_from(entries, offer.view())
+    }
     if quality > best_q {
       best_q = quality
       best = Some(offer)
@@ -341,22 +376,19 @@ pub fn Context::preferred_encoding(
 }
 
 ///|
-/// Quality value (in thousandths) assigned to `language` by an
-/// `Accept-Language` header.
-///
-/// Matching follows RFC 9110 §12.5.4: a range matches when it is `*`, equals
-/// the tag, or is a prefix of the tag ending at a `-` boundary, so `en`
-/// matches `en-US`. The most specific matching range decides the quality. A
-/// missing or empty header accepts every language.
-fn accept_language_quality(header : StringView, language : StringView) -> Int {
-  if trim_ascii_space(header).is_empty() {
-    return 1000
-  }
+/// One parsed `Accept-Language` entry: the language range and its quality
+/// value (in thousandths), in header order.
+priv struct LanguageEntry {
+  token : StringView
+  quality : Int
+}
+
+///|
+/// Parse an `Accept-Language` header into its non-empty language ranges.
+fn parse_language_entries(header : StringView) -> Array[LanguageEntry] {
+  let entries : Array[LanguageEntry] = Array(capacity=4)
   let length = header.length()
   let mut pos = 0
-  let mut best_q = -1
-  let mut best_specificity = -1
-  let mut saw_entry = false
   while pos < length {
     let mut end = pos
     while end < length {
@@ -395,37 +427,65 @@ fn accept_language_quality(header : StringView, language : StringView) -> Int {
       }
     }
     if !token.is_empty() {
-      saw_entry = true
-      let specificity = if token == "*" {
-        0
-      } else if token.equal_ignore_ascii_case(language) {
-        2
-      } else if language.length() > token.length() &&
-        token.length() > 0 &&
-        language.unsafe_get(token.length()) == ('-' : UInt16) &&
-        starts_with_ignore_ascii_case(language, token) {
-        1
-      } else {
-        -1
-      }
-      if specificity >= 0 && specificity > best_specificity {
-        best_specificity = specificity
-        best_q = quality
-      }
+      entries.push({ token, quality })
     }
     pos = scan
     if pos < length && header.unsafe_get(pos) == (',' : UInt16) {
       pos = pos + 1
     }
   }
-  if !saw_entry {
+  entries
+}
+
+///|
+/// Quality assigned to `language` by parsed `Accept-Language` entries.
+///
+/// Matching follows RFC 9110 §12.5.4: a range matches when it is `*`, equals
+/// the tag, or is a prefix of the tag ending at a `-` boundary, so `en`
+/// matches `en-US`. The most specific matching range decides the quality. With
+/// no entries (a missing or empty header) every language is accepted.
+fn language_quality_from(
+  entries : Array[LanguageEntry],
+  language : StringView,
+) -> Int {
+  if entries.length() == 0 {
     return 1000
+  }
+  let mut best_q = -1
+  let mut best_specificity = -1
+  for entry in entries {
+    let token = entry.token
+    let specificity = if token == "*" {
+      0
+    } else if token.equal_ignore_ascii_case(language) {
+      2
+    } else if language.length() > token.length() &&
+      token.length() > 0 &&
+      language.unsafe_get(token.length()) == ('-' : UInt16) &&
+      starts_with_ignore_ascii_case(language, token) {
+      1
+    } else {
+      -1
+    }
+    if specificity >= 0 && specificity > best_specificity {
+      best_specificity = specificity
+      best_q = entry.quality
+    }
   }
   if best_specificity < 0 {
     0
   } else {
     best_q
   }
+}
+
+///|
+/// Quality value (in thousandths) assigned to `language` by an
+/// `Accept-Language` header.
+///
+/// A missing or empty header accepts every language.
+fn accept_language_quality(header : StringView, language : StringView) -> Int {
+  language_quality_from(parse_language_entries(header), language)
 }
 
 ///|
@@ -449,11 +509,11 @@ pub fn Context::preferred_language(
   self : Context,
   offers : ArrayView[String],
 ) -> String? {
-  let header = self.header("Accept-Language").view()
+  let entries = parse_language_entries(self.header("Accept-Language").view())
   let mut best : String? = None
   let mut best_q = 0
   for offer in offers {
-    let quality = accept_language_quality(header, offer.view())
+    let quality = language_quality_from(entries, offer.view())
     if quality > best_q {
       best_q = quality
       best = Some(offer)

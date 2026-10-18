@@ -116,14 +116,53 @@ fn add_vary_accept_encoding(response : Response) -> Unit {
 }
 
 ///|
+/// A `@io.Writer` that collects every written chunk in memory, so gzip output
+/// can be assembled without routing it through a pipe and a background task.
+priv struct ChunkSink {
+  chunks : Array[Bytes]
+  mut total : Int
+}
+
+///|
+fn ChunkSink::new() -> ChunkSink {
+  { chunks: [], total: 0 }
+}
+
+///|
+#deprecated
+extend ChunkSink with @io.Writer::{write_once, write, write_reader}
+
+///|
+impl @io.Writer for ChunkSink with fn write_once(self, buf, offset~, len~) {
+  if len > 0 {
+    self.chunks.push(buf[offset:offset + len].to_owned())
+    self.total = self.total + len
+  }
+  len
+}
+
+///|
+fn ChunkSink::to_bytes(self : ChunkSink) -> Bytes {
+  match self.chunks.length() {
+    0 => b""
+    1 => self.chunks[0]
+    _ => {
+      let buffer = @buffer.Buffer::Buffer(size_hint=self.total)
+      for chunk in self.chunks {
+        buffer.write_bytes(chunk)
+      }
+      buffer.to_bytes()
+    }
+  }
+}
+
+///|
 async fn gzip_compress(data : Bytes) -> Bytes {
-  let reader = @io.MemoryReader(async fn(writer) {
-    let encoder = @gzip.Encoder::Encoder(writer)
-    encoder.write(data)
-    encoder.end()
-  })
-  defer reader.close()
-  reader.read_all().binary()
+  let sink = ChunkSink::new()
+  let encoder = @gzip.Encoder::Encoder(sink)
+  encoder.write(data)
+  encoder.end()
+  sink.to_bytes()
 }
 
 ///|
@@ -176,6 +215,10 @@ async fn compress_response(
         @utf8.encode(response.body)
       }
   }
+  // Hand the encoded body to the response so the sender (and the ETag pass)
+  // reuse these bytes instead of encoding the same text again.
+  response.body = ""
+  response.data = Some(body_bytes)
   if body_bytes.length() < min_size {
     return
   }

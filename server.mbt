@@ -472,6 +472,38 @@ fn socket_addr_host(addr : @socket.Addr) -> String {
 }
 
 ///|
+/// UTF-8 byte length of a string, matching the size of `@utf8.encode`'s
+/// output without materializing it. Invalid surrogate pairs abort, exactly
+/// like `@utf8.encode`.
+fn utf8_byte_length(view : StringView) -> Int {
+  let length = view.length()
+  let mut total = 0
+  let mut i = 0
+  while i < length {
+    let unit = view.unsafe_get(i)
+    let code = unit.to_int()
+    if code < 0x80 {
+      total = total + 1
+    } else if code < 0x800 {
+      total = total + 2
+    } else if unit.is_leading_surrogate() {
+      if i + 1 < length && view.unsafe_get(i + 1).is_trailing_surrogate() {
+        total = total + 4
+        i = i + 1
+      } else {
+        abort("invalid surrogate pair")
+      }
+    } else if unit.is_trailing_surrogate() {
+      abort("invalid surrogate pair")
+    } else {
+      total = total + 3
+    }
+    i = i + 1
+  }
+  total
+}
+
+///|
 async fn send_response(
   conn : @http.ServerConnection,
   response : Response,
@@ -481,22 +513,21 @@ async fn send_response(
   for name, value in response.headers {
     headers.set(@http.CaseInsensitiveString(name), value)
   }
-  let body_bytes = match response.data {
-    Some(data) => data
-    None =>
-      if response.body.is_empty() {
-        b""
-      } else {
-        @utf8.encode(response.body)
-      }
-  }
   let body_allowed = response.status >= 200 &&
     response.status != 204 &&
     response.status != 205 &&
     response.status != 304
-  let has_body = body_allowed && body_bytes.length() > 0
+  let has_body = body_allowed &&
+    (match response.data {
+      Some(data) => data.length() > 0
+      None => !response.body.is_empty()
+    })
   if has_body && !headers.contains(header_content_length) {
-    headers.set(header_content_length, body_bytes.length().to_string())
+    let body_length = match response.data {
+      Some(data) => data.length()
+      None => utf8_byte_length(response.body.view())
+    }
+    headers.set(header_content_length, body_length.to_string())
   } else if !body_allowed {
     headers.remove(header_content_length)
   }
@@ -511,7 +542,10 @@ async fn send_response(
     cookies=response.cookies,
   )
   if !head && has_body {
-    conn.write(body_bytes)
+    match response.data {
+      Some(data) => conn.write(data)
+      None => conn.write(@utf8.encode(response.body))
+    }
   }
   conn.end_response()
 }
