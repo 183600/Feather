@@ -86,8 +86,7 @@ fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
   if response.status < 200 || response.status >= 300 || response.status == 206 {
     return
   }
-  // `evaluate_preconditions` only consults these four request headers, so skip
-  // building the response validators when none of them is present.
+  // These are the only request headers `evaluate_preconditions` consults.
   if !request.headers.contains(header_if_match) &&
     !request.headers.contains(header_if_none_match) &&
     !request.headers.contains(header_if_modified_since) &&

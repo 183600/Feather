@@ -741,8 +741,8 @@ fn Router::find_node_raw(
       None => None
     }
   }
-  // Dynamic trees resolve every path, static or not, through one lookup in the
-  // per-method dispatch cache so a path is only hashed once per request.
+  // Dynamic trees resolve every path, static or not, through the per-method
+  // dispatch cache.
   let cache = match self.dynamic_caches.get(tree_key) {
     Some(cache) => cache
     None => {

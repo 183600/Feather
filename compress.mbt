@@ -64,8 +64,7 @@ fn accept_encoding_allows_gzip(header : StringView) -> Bool {
 }
 
 ///|
-/// Same check as `accept_encoding_allows_gzip` for a header string, reusing
-/// the cached `Accept-Encoding` parse when the value is already known.
+/// Same check as `accept_encoding_allows_gzip` for a header string.
 fn accept_encoding_allows_gzip_cached(header : String) -> Bool {
   if trim_ascii_space(header.view()).is_empty() {
     return false
@@ -131,8 +130,7 @@ fn add_vary_accept_encoding(response : Response) -> Unit {
 }
 
 ///|
-/// A `@io.Writer` that collects every written chunk in memory, so gzip output
-/// can be assembled without routing it through a pipe and a background task.
+/// A `@io.Writer` that collects every written chunk in memory.
 priv struct ChunkSink {
   chunks : Array[Bytes]
   mut total : Int
@@ -226,8 +224,6 @@ async fn compress_response(
         @utf8.encode(response.body)
       }
   }
-  // Hand the encoded body to the response so the sender (and the ETag pass)
-  // reuse these bytes instead of encoding the same text again.
   response.body = ""
   response.data = Some(body_bytes)
   if body_bytes.length() < min_size {

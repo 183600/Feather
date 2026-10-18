@@ -470,8 +470,6 @@ let cached_peer_host : Ref[String] = Ref("")
 ///
 /// Recorded as the `remote_addr` context state so IP-based logic (logging,
 /// `Context::ip`, rate limiting) keys by client rather than by connection.
-/// Keep-alive requests repeat the same peer address, so the formatted host is
-/// cached and reused without re-encoding the address every time.
 fn socket_addr_host(addr : @socket.Addr) -> String {
   match cached_peer_addr.val {
     Some(cached) =>
@@ -497,8 +495,7 @@ fn socket_addr_host(addr : @socket.Addr) -> String {
 
 ///|
 /// UTF-8 byte length of a string, matching the size of `@utf8.encode`'s
-/// output without materializing it. Invalid surrogate pairs abort, exactly
-/// like `@utf8.encode`.
+/// output. Invalid surrogate pairs abort, exactly like `@utf8.encode`.
 fn utf8_byte_length(view : StringView) -> Int {
   let length = view.length()
   let mut total = 0
@@ -546,8 +543,6 @@ async fn send_response(
       Some(data) => data.length() > 0
       None => !response.body.is_empty()
     })
-  // Encode a textual body at most once: the same bytes feed both the
-  // `Content-Length` header and the response body.
   let body_bytes : Bytes? = if head || !has_body {
     None
   } else {
