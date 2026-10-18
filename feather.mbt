@@ -4292,6 +4292,114 @@ fn etag_header_matches(value : StringView, etag : String) -> Bool {
 }
 
 ///|
+/// Whether an `If-Match` field value satisfies the strong comparison function
+/// (RFC 9110 §13.1.1) against `etag`. The wildcard `*` matches any existing
+/// representation; weak tags never match, because `If-Match` requires strong
+/// comparison.
+fn if_match_header_matches(value : StringView, etag : String) -> Bool {
+  let length = value.length()
+  let etag_view = etag.view()
+  let etag_is_strong = etag != "" && !etag_view.has_prefix("W/")
+  let mut start = 0
+  let mut i = 0
+  let mut in_quotes = false
+  while i <= length {
+    if i == length || (value.unsafe_get(i) == (',' : UInt16) && !in_quotes) {
+      let token = trim_ascii_space(value[start:i])
+      if token == "*" {
+        return true
+      }
+      if etag_is_strong && !token.has_prefix("W/") && token == etag_view {
+        return true
+      }
+      start = i + 1
+    } else if value.unsafe_get(i) == ('"' : UInt16) {
+      in_quotes = !in_quotes
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+/// Whether the `If-Unmodified-Since` condition holds for a representation last
+/// modified at `mtime_secs`. An invalid date or an unknown modification date
+/// is ignored, as is the condition for a modification exactly at the given
+/// second, matching the one-second granularity of HTTP dates.
+fn if_unmodified_since_ok(value : StringView, mtime_secs : Int64) -> Bool {
+  if mtime_secs <= 0L {
+    return true
+  }
+  match parse_http_date(owned_trimmed(value)) {
+    Some(since) => mtime_secs <= since
+    None => true
+  }
+}
+
+///|
+/// Result of evaluating a request's precondition headers against the selected
+/// representation's validators.
+priv enum PreconditionOutcome {
+  PreconditionPass
+  PreconditionNotModified
+  PreconditionFailed
+}
+
+///|
+/// Evaluate `If-Match`, `If-Unmodified-Since`, `If-None-Match` and
+/// `If-Modified-Since` in the order required by RFC 9110 §13.2.2.
+///
+/// `etag` and `mtime_secs` describe the selected representation; either may be
+/// absent (empty tag / `0`). `allows_not_modified` is true for `GET`/`HEAD`,
+/// the only methods that `304 Not Modified` may be sent for.
+fn evaluate_preconditions(
+  request : @http.Request,
+  etag : String,
+  mtime_secs : Int64,
+  allows_not_modified : Bool,
+) -> PreconditionOutcome {
+  match request.headers.get(header_if_match) {
+    Some(value) =>
+      if !if_match_header_matches(value.view(), etag) {
+        return PreconditionFailed
+      }
+    None =>
+      match request.headers.get(header_if_unmodified_since) {
+        Some(value) =>
+          if !if_unmodified_since_ok(value.view(), mtime_secs) {
+            return PreconditionFailed
+          }
+        None => ()
+      }
+  }
+  match request.headers.get(header_if_none_match) {
+    Some(value) =>
+      if etag_header_matches(value.view(), etag) {
+        if allows_not_modified {
+          return PreconditionNotModified
+        } else {
+          return PreconditionFailed
+        }
+      }
+    None =>
+      if allows_not_modified {
+        match request.headers.get(header_if_modified_since) {
+          Some(value) =>
+            match parse_http_date(value) {
+              Some(since) =>
+                if mtime_secs > 0L && mtime_secs <= since {
+                  return PreconditionNotModified
+                }
+              None => ()
+            }
+          None => ()
+        }
+      }
+  }
+  PreconditionPass
+}
+
+///|
 pub fn Context::fresh(self : Context, etag : String) -> Bool {
   if etag == "" {
     return false

@@ -32,7 +32,10 @@ fn fnv1a_hex(data : Bytes) -> String {
 }
 
 ///|
-fn apply_etag(request : @http.Request, response : Response) -> Unit {
+/// Give a successful response a strong `ETag` derived from its body when it
+/// has none. Responses that opt out with `Cache-Control: no-store`, hold no
+/// representation, or already carry a validator are left untouched.
+fn apply_etag(response : Response) -> Unit {
   if response.status < 200 ||
     response.status >= 300 ||
     response.status == 204 ||
@@ -49,52 +52,83 @@ fn apply_etag(request : @http.Request, response : Response) -> Unit {
       }
     None => ()
   }
-  let etag = match get_header_ignore_case(response.headers, "ETag") {
-    Some(existing) => existing
-    None => {
-      let data = match response.data {
-        Some(data) => data
-        None =>
-          if response.body.is_empty() {
-            return
-          } else {
-            let encoded = @utf8.encode(response.body)
-            response.body = ""
-            response.data = Some(encoded)
-            encoded
-          }
-      }
-      let computed = "\"" +
-        data.length().to_string() +
-        "-" +
-        fnv1a_hex(data) +
-        "\""
-      response.headers.set("ETag", computed)
-      computed
-    }
+  if get_header_ignore_case(response.headers, "ETag") is Some(_) {
+    return
   }
-  match request.headers.get(header_if_none_match) {
-    Some(value) =>
-      if etag_header_matches(value.view(), etag) {
-        if request.meth is @http.Get || request.meth is @http.Head {
-          response.status = 304
-          response.body = ""
-          response.data = None
-          ignore(remove_header_ignore_case(response.headers, "Content-Type"))
-          ignore(remove_header_ignore_case(response.headers, "Content-Length"))
-        } else {
-          response.status = 412
-          response.body = "412 Precondition Failed"
-          response.data = None
-          set_header_ignore_case(
-            response.headers,
-            "Content-Type",
-            "text/plain; charset=utf-8",
-          )
-          ignore(remove_header_ignore_case(response.headers, "Content-Length"))
-        }
+  let data = match response.data {
+    Some(data) => data
+    None =>
+      if response.body.is_empty() {
+        return
+      } else {
+        let encoded = @utf8.encode(response.body)
+        response.body = ""
+        response.data = Some(encoded)
+        encoded
+      }
+  }
+  response.headers.set(
+    "ETag",
+    "\"" + data.length().to_string() + "-" + fnv1a_hex(data) + "\"",
+  )
+}
+
+///|
+/// Evaluate the request's precondition headers against the response's `ETag` /
+/// `Last-Modified` validators, turning a successful response into
+/// `304 Not Modified` or `412 Precondition Failed` as RFC 9110 §13 requires.
+///
+/// Preconditions select a representation, so error responses are left
+/// untouched, as are ranged responses, whose `If-Range` handling happens where
+/// the range is computed. Responses that opt out of caching with `no-store`
+/// are treated as unvalidatable.
+fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
+  if response.status < 200 || response.status >= 300 || response.status == 206 {
+    return
+  }
+  match get_header_ignore_case(response.headers, "Cache-Control") {
+    Some(control) =>
+      if contains_ignore_ascii_case(control.view(), "no-store".view()) {
+        return
       }
     None => ()
+  }
+  let etag = match get_header_ignore_case(response.headers, "ETag") {
+    Some(existing) => existing
+    None => ""
+  }
+  let mtime_secs = match get_header_ignore_case(
+    response.headers,
+    "Last-Modified",
+  ) {
+    Some(value) =>
+      match parse_http_date(value) {
+        Some(seconds) => seconds
+        None => 0L
+      }
+    None => 0L
+  }
+  let allows_not_modified = request.meth is @http.Get || request.meth is @http.Head
+  match evaluate_preconditions(request, etag, mtime_secs, allows_not_modified) {
+    PreconditionPass => ()
+    PreconditionNotModified => {
+      response.status = 304
+      response.body = ""
+      response.data = None
+      ignore(remove_header_ignore_case(response.headers, "Content-Type"))
+      ignore(remove_header_ignore_case(response.headers, "Content-Length"))
+    }
+    PreconditionFailed => {
+      response.status = 412
+      response.body = "412 Precondition Failed"
+      response.data = None
+      set_header_ignore_case(
+        response.headers,
+        "Content-Type",
+        "text/plain; charset=utf-8",
+      )
+      ignore(remove_header_ignore_case(response.headers, "Content-Length"))
+    }
   }
 }
 

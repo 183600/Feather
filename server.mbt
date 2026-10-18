@@ -7,8 +7,18 @@ let header_if_none_match : @http.CaseInsensitiveString = @http.CaseInsensitiveSt
 )
 
 ///|
+let header_if_match : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "If-Match",
+)
+
+///|
 let header_if_modified_since : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
   "If-Modified-Since",
+)
+
+///|
+let header_if_unmodified_since : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "If-Unmodified-Since",
 )
 
 ///|
@@ -288,30 +298,6 @@ fn file_validators(
 }
 
 ///|
-/// Whether the request's conditional headers allow answering `304 Not Modified`
-/// for a representation identified by `etag` / `mtime_secs`.
-///
-/// `If-None-Match` takes precedence over `If-Modified-Since`.
-fn conditional_not_modified(
-  request : @http.Request,
-  etag : String,
-  mtime_secs : Int64,
-) -> Bool {
-  match request.headers.get(header_if_none_match) {
-    Some(value) => etag_header_matches(value.view(), etag)
-    None =>
-      match request.headers.get(header_if_modified_since) {
-        Some(value) =>
-          match parse_http_date(value) {
-            Some(since) => mtime_secs > 0L && mtime_secs <= since
-            None => false
-          }
-        None => false
-      }
-  }
-}
-
-///|
 /// Whether an `If-Range` condition still matches the representation, in which
 /// case a `Range` request may be served partially.
 fn if_range_allows(
@@ -377,12 +363,30 @@ async fn send_file_response(
     headers.remove(header_set_cookie)
   }
   let effective_etag = headers.get(header_etag).unwrap_or(etag)
-  if conditional_not_modified(request, effective_etag, mtime_secs) {
-    headers.remove(header_content_length)
-    headers.remove(header_content_type)
-    send_with_date(conn, 304, "Not Modified", headers, cookies=response.cookies)
-    conn.end_response()
-    return
+  match evaluate_preconditions(
+    request,
+    effective_etag,
+    mtime_secs,
+    head || request.meth is @http.Get,
+  ) {
+    PreconditionFailed => {
+      send_simple(conn, 412, "412 Precondition Failed", head)
+      return
+    }
+    PreconditionNotModified => {
+      headers.remove(header_content_length)
+      headers.remove(header_content_type)
+      send_with_date(
+        conn,
+        304,
+        "Not Modified",
+        headers,
+        cookies=response.cookies,
+      )
+      conn.end_response()
+      return
+    }
+    PreconditionPass => ()
   }
   let mut status = response.status
   let mut start = 0L
@@ -697,18 +701,25 @@ async fn serve_static_file(
   let etag_key = header_etag
   let last_modified_key = header_last_modified
   let cache_control_key = header_cache_control
-  if conditional_not_modified(request, etag, mtime_secs) {
-    let headers : @http.Headers = Map([
-      (etag_key, etag),
-      (last_modified_key, last_modified),
-    ])
-    if cache_control != "" {
-      headers.set(cache_control_key, cache_control)
+  match evaluate_preconditions(request, etag, mtime_secs, true) {
+    PreconditionFailed => {
+      send_simple(conn, 412, "412 Precondition Failed", head)
+      return
     }
-    decorate_headers(headers)
-    send_with_date(conn, 304, "Not Modified", headers)
-    conn.end_response()
-    return
+    PreconditionNotModified => {
+      let headers : @http.Headers = Map([
+        (etag_key, etag),
+        (last_modified_key, last_modified),
+      ])
+      if cache_control != "" {
+        headers.set(cache_control_key, cache_control)
+      }
+      decorate_headers(headers)
+      send_with_date(conn, 304, "Not Modified", headers)
+      conn.end_response()
+      return
+    }
+    PreconditionPass => ()
   }
   let range = if head {
     ByteRangeFull
@@ -806,8 +817,11 @@ async fn build_response(
   if file is None && app.compress_enabled {
     compress_response(request, ctx.response, app.compress_min_size)
   }
-  if file is None && app.etag_enabled {
-    apply_etag(request, ctx.response)
+  if file is None {
+    if app.etag_enabled {
+      apply_etag(ctx.response)
+    }
+    apply_preconditions(request, ctx.response)
   }
   (ctx.response, file)
 }
