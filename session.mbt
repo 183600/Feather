@@ -55,15 +55,19 @@ pub fn SessionStore::ttl(self : SessionStore) -> Int64 {
 
 ///|
 fn SessionStore::generate_id(self : SessionStore) -> String {
-  let builder = StringBuilder(size_hint=64)
+  let out = FixedArray::make(32, b'0')
   for i = 0; i < 2; i = i + 1 {
-    let hex = self.rng.uint64().to_string(radix=16)
-    for i = hex.length(); i < 16; i = i + 1 {
-      builder.write_char('0')
+    let value = self.rng.uint64()
+    for j = 0; j < 16; j = j + 1 {
+      let nibble = ((value >> ((15 - j) * 4)) & 15UL).to_int()
+      out[i * 16 + j] = (if nibble < 10 {
+        b'0'.to_int() + nibble
+      } else {
+        b'a'.to_int() + nibble - 10
+      }).to_byte()
     }
-    builder.write_string(hex)
   }
-  builder.to_string()
+  @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes())
 }
 
 ///|
@@ -123,6 +127,10 @@ pub fn SessionStore::clear(self : SessionStore) -> Unit {
 ///|
 /// Drop every expired or destroyed session eagerly.
 pub fn SessionStore::sweep(self : SessionStore) -> Unit {
+  if self.sessions.is_empty() {
+    self.last_sweep = @async.now()
+    return
+  }
   let now = @async.now()
   self.last_sweep = now
   let expired : Array[String] = []

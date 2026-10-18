@@ -122,6 +122,7 @@ pub struct App {
   mut compress_enabled : Bool
   mut compress_min_size : Int
   mut etag_enabled : Bool
+  static_lookup_cache : Map[String, (String, String, Bool)?]
 }
 pub fn App::all(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::compress(Self, min_size? : Int) -> Self

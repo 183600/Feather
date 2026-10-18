@@ -3689,12 +3689,20 @@ pub fn Context::multipart(self : Context) -> Array[MultipartPart] {
 
 ///|
 pub fn Context::multipart_value(self : Context, name : String) -> String {
-  for part in self.multipart() {
-    if part.filename == "" && part.name == name {
-      return part.data
-    }
+  if !self.is_multipart() {
+    return ""
   }
-  ""
+  match multipart_parts_lookup(self.request.body, self.header("Content-Type")) {
+    Some(parts) => {
+      for part in parts {
+        if part.filename == "" && part.name == name {
+          return part.data
+        }
+      }
+      ""
+    }
+    None => ""
+  }
 }
 
 ///|
@@ -4515,6 +4523,7 @@ pub struct App {
   mut compress_enabled : Bool
   mut compress_min_size : Int32
   mut etag_enabled : Bool
+  static_lookup_cache : Map[String, (String, String, Bool)?]
 }
 
 ///|
@@ -4538,6 +4547,7 @@ fn App::fresh(timeout : Int32) -> App {
     compress_enabled: false,
     compress_min_size: 1024,
     etag_enabled: false,
+    static_lookup_cache: Map([]),
   }
 }
 
@@ -4853,6 +4863,7 @@ pub fn App::static_files(
     max_age,
     precompressed,
   })
+  self.static_lookup_cache.clear()
   self
 }
 
@@ -4894,6 +4905,7 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
       precompressed: mount.precompressed,
     })
   }
+  self.static_lookup_cache.clear()
   for path, handler in child.ws_handlers {
     let mounted = join_paths(base, path)
     self.ws_router.add_route("GET", mounted, fn(_ctx) { () })
@@ -4957,9 +4969,39 @@ fn App::best_static_mount(
 }
 
 ///|
+/// Maximum number of request paths memoized by `App::static_lookup`.
+const STATIC_LOOKUP_CACHE_LIMIT : Int = 256
+
+///|
+/// Resolve a static file request to its filesystem path, `Cache-Control` value
+/// and precompressed-serving flag, memoizing the result per application. The
+/// cache is invalidated whenever the static mounts change.
+fn App::static_lookup(
+  self : App,
+  path : String,
+) -> (String, String, Bool)? {
+  match self.static_lookup_cache.get(path) {
+    Some(cached) => cached
+    None => {
+      let result = self.static_lookup_uncached(path)
+      if path.length() <= PARSE_CACHE_MAX_KEY {
+        if self.static_lookup_cache.length() >= STATIC_LOOKUP_CACHE_LIMIT {
+          match self.static_lookup_cache.keys().next() {
+            Some(oldest) => ignore(self.static_lookup_cache.remove(oldest))
+            None => ()
+          }
+        }
+        self.static_lookup_cache.set(path, result)
+      }
+      result
+    }
+  }
+}
+
+///|
 /// Resolve a static file request to its filesystem path, `Cache-Control` value
 /// and precompressed-serving flag in one pass over the configured mounts.
-fn App::static_lookup(
+fn App::static_lookup_uncached(
   self : App,
   path : String,
 ) -> (String, String, Bool)? {

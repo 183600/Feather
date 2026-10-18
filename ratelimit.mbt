@@ -145,6 +145,10 @@ pub fn RateLimiter::reset(self : RateLimiter, key : String) -> Bool {
 ///|
 /// Drop every bucket whose window has fully elapsed.
 pub fn RateLimiter::sweep(self : RateLimiter) -> Unit {
+  if self.buckets.is_empty() {
+    self.last_sweep = @async.now()
+    return
+  }
   let now = @async.now()
   self.last_sweep = now
   let stale : Array[String] = []

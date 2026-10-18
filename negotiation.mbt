@@ -34,101 +34,7 @@ fn accept_quality_for(header : StringView, media_type : StringView) -> Int {
   if trim_ascii_space(header).is_empty() {
     return 1000
   }
-  let length = header.length()
-  let mut pos = 0
-  let mut best_q = -1
-  let mut best_specificity = -1
-  let mut saw_entry = false
-  while pos < length {
-    let mut end = pos
-    while end < length {
-      let code = header.unsafe_get(end)
-      if code == (';' : UInt16) || code == (',' : UInt16) {
-        break
-      }
-      end = end + 1
-    }
-    let token = trim_ascii_space(header[pos:end])
-    let mut quality = 1000
-    let mut scan = end
-    while scan < length && header.unsafe_get(scan) == (';' : UInt16) {
-      scan = scan + 1
-      let parameter_start = scan
-      while scan < length {
-        let code = header.unsafe_get(scan)
-        if code == (';' : UInt16) || code == (',' : UInt16) {
-          break
-        }
-        scan = scan + 1
-      }
-      let parameter = trim_ascii_space(header[parameter_start:scan])
-      if parameter.length() >= 2 &&
-        (parameter.unsafe_get(0) == ('q' : UInt16) ||
-          parameter.unsafe_get(0) == ('Q' : UInt16)) {
-        let mut marker = 1
-        while marker < parameter.length() &&
-          parameter.unsafe_get(marker) == (' ' : UInt16) {
-          marker = marker + 1
-        }
-        if marker < parameter.length() &&
-          parameter.unsafe_get(marker) == ('=' : UInt16) {
-          quality = parse_quality(trim_ascii_space(parameter[marker + 1:]))
-        }
-      }
-    }
-    if !token.is_empty() {
-      let parts = if token == "*" {
-        Some(("*".view(), "*".view()))
-      } else {
-        media_range_parts(token)
-      }
-      match parts {
-        Some((range_type, range_subtype)) => {
-          saw_entry = true
-          if want_type == "*" || want_subtype == "*" {
-            let type_ok = range_type == "*" ||
-              want_type == "*" ||
-              range_type.equal_ignore_ascii_case(want_type)
-            let subtype_ok = range_subtype == "*" ||
-              want_subtype == "*" ||
-              range_subtype.equal_ignore_ascii_case(want_subtype)
-            if type_ok && subtype_ok && quality > best_q {
-              best_specificity = 0
-              best_q = quality
-            }
-          } else {
-            let specificity = if range_type == "*" && range_subtype == "*" {
-              0
-            } else if range_subtype == "*" {
-              if range_type.equal_ignore_ascii_case(want_type) { 1 } else { -1 }
-            } else if range_type.equal_ignore_ascii_case(want_type) &&
-              range_subtype.equal_ignore_ascii_case(want_subtype) {
-              2
-            } else {
-              -1
-            }
-            if specificity >= 0 && specificity > best_specificity {
-              best_specificity = specificity
-              best_q = quality
-            }
-          }
-        }
-        None => ()
-      }
-    }
-    pos = scan
-    if pos < length && header.unsafe_get(pos) == (',' : UInt16) {
-      pos = pos + 1
-    }
-  }
-  if !saw_entry {
-    return 1000
-  }
-  if best_specificity < 0 {
-    0
-  } else {
-    best_q
-  }
+  accept_quality_from(parse_accept_entries(header), want_type, want_subtype)
 }
 
 ///|
@@ -255,13 +161,47 @@ fn accept_quality_from(
 }
 
 ///|
+/// Most recently parsed `Accept` header and its media ranges, so repeated
+/// `Context::accepts` calls during one request reuse the parse.
+let last_accept_header : Ref[String?] = Ref(None)
+
+///|
+let last_accept_entries : Ref[Array[AcceptEntry]?] = Ref(None)
+
+///|
+fn accept_entries_cached(header : String) -> Array[AcceptEntry] {
+  match last_accept_header.val {
+    Some(cached) =>
+      if physical_equal(cached, header) {
+        match last_accept_entries.val {
+          Some(entries) => return entries
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let entries = parse_accept_entries(header.view())
+  last_accept_header.val = Some(header)
+  last_accept_entries.val = Some(entries)
+  entries
+}
+
+///|
 /// Check whether the request's `Accept` header allows `media_type`.
 ///
 /// `media_type` may be a concrete type such as `application/json` or contain
 /// wildcards such as `text/*` or `*/*`. A missing or empty `Accept` header
 /// accepts everything; `q=0` entries reject the matched media type.
 pub fn Context::accepts(self : Context, media_type : String) -> Bool {
-  accept_quality_for(self.header("Accept").view(), media_type.view()) > 0
+  let (want_type, want_subtype) = match media_range_parts(media_type.view()) {
+    Some(parts) => parts
+    None => return false
+  }
+  let header = self.header("Accept")
+  if trim_ascii_space(header.view()).is_empty() {
+    return true
+  }
+  accept_quality_from(accept_entries_cached(header), want_type, want_subtype) > 0
 }
 
 ///|
