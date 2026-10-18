@@ -117,7 +117,10 @@ pub fn Context::flash_take_all(self : Context) -> Map[String, Array[String]] {
         match session.data.remove_and_get(key) {
           Some(text) => {
             session.modified = true
-            result.set(key[FLASH_PREFIX.length():].to_owned(), flash_decode(text))
+            let messages = flash_decode(text)
+            if !messages.is_empty() {
+              result.set(key[FLASH_PREFIX.length():].to_owned(), messages)
+            }
           }
           None => ()
         }

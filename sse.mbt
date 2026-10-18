@@ -54,6 +54,8 @@ fn write_sse_data(builder : StringBuilder, data : String) -> Unit {
     builder.write_string("data: ")
     builder.write_stringview(view[start:])
     builder.write_char('\n')
+  } else {
+    builder.write_string("data: \n")
   }
 }
 
@@ -164,7 +166,8 @@ pub async fn Sse::comment(self : Sse, text : String) -> Unit {
   }
   let builder = StringBuilder(size_hint=text.length() + 4)
   for line in text.view().split("\n") {
-    let trimmed = trim_ascii_space(line)
+    let cleaned = sanitize_sse_field(line.to_owned())
+    let trimmed = trim_ascii_space(cleaned.view())
     builder.write_char(':')
     if !trimmed.is_empty() {
       builder.write_char(' ')

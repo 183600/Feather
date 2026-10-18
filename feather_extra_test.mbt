@@ -15,6 +15,19 @@ test "parse_multipart extracts fields and files" {
 }
 
 ///|
+test "parse_multipart accepts a part with an empty header block" {
+  let body = "--X\r\n\r\nbare\r\n--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nvalue\r\n--X--\r\n"
+  let parts = @feather
+    .parse_multipart(body, "multipart/form-data; boundary=X")
+    .unwrap()
+  assert_eq(parts.length(), 2)
+  assert_eq(parts[0].name, "")
+  assert_eq(parts[0].data, "bare")
+  assert_eq(parts[1].name, "a")
+  assert_eq(parts[1].data, "value")
+}
+
+///|
 test "parse_multipart accepts quoted boundary and ignores trailing data" {
   let body = "--b0\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--b0--\r\nepilogue"
   let parts = @feather
@@ -321,6 +334,19 @@ test "Context cookies parse request header" {
   assert_eq(ctx.cookie("broken"), None)
   assert_eq(ctx.cookie("missing"), None)
   assert_eq(@feather.create_context().cookies().length(), 0)
+}
+
+///|
+test "Context cookies trim whitespace around values" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: { "Cookie": "a= 1; b= \"quoted\"; c=" },
+    body: "",
+  })
+  assert_eq(ctx.cookie("a"), Some("1"))
+  assert_eq(ctx.cookie("b"), Some("quoted"))
+  assert_eq(ctx.cookie("c"), Some(""))
 }
 
 ///|

@@ -172,3 +172,46 @@ async test "feather facade enables etag" {
     ignore(client.read_all())
   })
 }
+
+///|
+async test "precondition failure drops the compressed encoding" {
+  let payload = "feather compression payload ".repeat(64)
+  let app = @feather.App::new()
+    .etag()
+    .compress(min_size=16)
+    .get("/api", fn(ctx) {
+      ctx.set_header("ETag", "\"handler\"")
+      ctx.text(200, payload)
+    })
+  with_server(app, client => {
+    let response = client.get(
+      "/api",
+      extra_headers=Map([
+        (etag_accept_encoding_key, "gzip"),
+        (@http.CaseInsensitiveString("If-Match"), "\"other\""),
+      ]),
+    )
+    assert_eq(response.code, 412)
+    assert_eq(response.headers.get(etag_content_encoding_key), None)
+    assert_eq(client.read_all().text(), "412 Precondition Failed")
+  })
+}
+
+///|
+async test "empty if-none-match elements never match an absent validator" {
+  let app = @feather.App::new().get("/plain", fn(ctx) { ctx.text(200, "hi") })
+  with_server(app, client => {
+    let comma = client.get(
+      "/plain",
+      extra_headers=Map([(if_none_match_key, ",")]),
+    )
+    assert_eq(comma.code, 200)
+    ignore(client.read_all())
+    let empty = client.get(
+      "/plain",
+      extra_headers=Map([(if_none_match_key, "")]),
+    )
+    assert_eq(empty.code, 200)
+    ignore(client.read_all())
+  })
+}

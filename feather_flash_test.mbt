@@ -92,3 +92,16 @@ test "flash survives session serialization between requests" {
   })
   assert_eq(again.body, "[]")
 }
+
+///|
+test "flash_take_all omits categories without messages" {
+  let store = @feather.SessionStore::new()
+  let ctx = @feather.create_context()
+  ctx.session = Some(store.create())
+  let session = ctx.session.unwrap()
+  session.data.set("__flash:error", "[]")
+  ignore(ctx.flash("saved", category="notice"))
+  let all = ctx.flash_take_all()
+  assert_true(all.get("error") is None)
+  assert_eq(all.get("notice"), Some(["saved"]))
+}

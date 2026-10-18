@@ -278,6 +278,15 @@ test "context vary matches whole entries, not substrings" {
 }
 
 ///|
+test "context vary replaces a differently cased existing header" {
+  let ctx = @feather.create_context()
+  ctx.set_header("vary", "Accept-Encoding")
+  ctx.vary("Origin")
+  assert_eq(ctx.response.headers.length(), 1)
+  assert_eq(ctx.response.headers.get("Vary"), Some("Accept-Encoding, Origin"))
+}
+
+///|
 test "router normalizes method casing when registering" {
   let app = @feather
     .App::new()

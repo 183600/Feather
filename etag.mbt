@@ -128,6 +128,7 @@ fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
         "text/plain; charset=utf-8",
       )
       ignore(remove_header_ignore_case(response.headers, "Content-Length"))
+      ignore(remove_header_ignore_case(response.headers, "Content-Encoding"))
     }
   }
 }

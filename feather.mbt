@@ -1473,7 +1473,11 @@ fn parse_cookie_map(header : StringView) -> Map[String, String] {
         }
         if name_end > start {
           let name = header[start:name_end].to_owned()
-          let raw_start = eq + 1
+          let mut raw_start = eq + 1
+          while raw_start < stop &&
+            is_cookie_whitespace(header.unsafe_get(raw_start)) {
+            raw_start = raw_start + 1
+          }
           let value = if stop - raw_start >= 2 &&
             header.unsafe_get(raw_start) == ('"' : UInt16) &&
             header.unsafe_get(stop - 1) == ('"' : UInt16) {
@@ -3691,17 +3695,25 @@ pub fn parse_multipart(
           None => break
         }
     }
-    let header_end = match find_header_end(view, pos) {
-      Some(index) => index
-      None => break
-    }
-    if header_end >= data_end {
-      break
-    }
-    let separator_length = if view.unsafe_get(header_end) == ('\r' : UInt16) {
-      4
+    // A part may carry no headers at all, in which case its blank line comes
+    // immediately after the delimiter line.
+    let (header_end, separator_length) = if pos + 1 < view.length() &&
+      view.unsafe_get(pos) == ('\r' : UInt16) &&
+      view.unsafe_get(pos + 1) == ('\n' : UInt16) {
+      (pos, 2)
+    } else if pos < view.length() &&
+      view.unsafe_get(pos) == ('\n' : UInt16) {
+      (pos, 1)
     } else {
-      2
+      match find_header_end(view, pos) {
+        Some(index) =>
+          if view.unsafe_get(index) == ('\r' : UInt16) {
+            (index, 4)
+          } else {
+            (index, 2)
+          }
+        None => break
+      }
     }
     if header_end + separator_length > data_end {
       break
@@ -4290,7 +4302,7 @@ fn etag_header_matches(value : StringView, etag : String) -> Bool {
       } else {
         token
       }
-      if token_opaque == etag_opaque {
+      if !token_opaque.is_empty() && token_opaque == etag_opaque {
         return true
       }
       start = i + 1
@@ -5443,7 +5455,11 @@ pub fn Context::vary(self : Context, value : String) -> Unit {
   match get_header_ignore_case(self.response.headers, "Vary") {
     Some(existing) =>
       if !header_list_has_token(existing.view(), value.view()) {
-        self.response.headers.set("Vary", existing + ", " + value)
+        set_header_ignore_case(
+          self.response.headers,
+          "Vary",
+          existing + ", " + value,
+        )
       }
     None => self.response.headers.set("Vary", value)
   }

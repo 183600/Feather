@@ -366,3 +366,48 @@ test "session json helpers persist through the middleware" {
   assert_eq(get.status, 200)
   assert_eq(get.body, "[1]")
 }
+
+///|
+test "session writes refresh the cookie on later requests" {
+  let store = @feather.SessionStore::new()
+  let app = @feather.App::new()
+    .use(@feather.middleware_session(store))
+    .get("/set", fn(ctx) {
+      ignore(ctx.session_set("u", "a"))
+      ctx.text(200, "set")
+    })
+    .get("/touch", fn(ctx) {
+      ignore(ctx.session_set("u", "b"))
+      ctx.text(200, "touch")
+    })
+    .get("/read", fn(ctx) { ctx.text(200, ctx.session_get("u")) })
+  let first = app.respond(session_request("/set"))
+  let id = first.cookies[0].value
+  let touch = app.respond(
+    session_request("/touch", cookie="feather_session=" + id),
+  )
+  assert_eq(touch.cookies.length(), 1)
+  assert_eq(touch.cookies[0].value, id)
+  let read = app.respond(
+    session_request("/read", cookie="feather_session=" + id),
+  )
+  assert_eq(read.cookies.length(), 0)
+  assert_eq(read.body, "b")
+}
+
+///|
+test "session destroy clears a cookie with no live session" {
+  let store = @feather.SessionStore::new()
+  let app = @feather.App::new()
+    .use(@feather.middleware_session(store))
+    .get("/logout", fn(ctx) {
+      assert_true(ctx.session_destroy())
+      ctx.text(200, "bye")
+    })
+  let response = app.respond(
+    session_request("/logout", cookie="feather_session=deadbeef"),
+  )
+  assert_eq(response.cookies.length(), 1)
+  assert_eq(response.cookies[0].value, "")
+  assert_eq(response.cookies[0].max_age, Some(0L))
+}

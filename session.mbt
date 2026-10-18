@@ -337,17 +337,19 @@ pub fn middleware_session(
   }
   fn(next) {
     fn(ctx) raise {
-      let existing = match ctx.cookie(cookie_name) {
+      let cookie_id = ctx.cookie(cookie_name)
+      let existing = match cookie_id {
         Some(id) => store.get(id)
         None => None
       }
       let is_new = existing is None
-      ctx.session = Some(
-        match existing {
-          Some(session) => session
-          None => store.create()
-        },
-      )
+      let had_cookie = cookie_id is Some(_)
+      let session = match existing {
+        Some(session) => session
+        None => store.create()
+      }
+      session.modified = false
+      ctx.session = Some(session)
       let send_cookie = fn(id : String) {
         ctx.set_cookie(
           cookie_name,
@@ -365,7 +367,7 @@ pub fn middleware_session(
           Some(session) =>
             if session.destroyed {
               store.destroy(session.id)
-              if !is_new {
+              if had_cookie {
                 ctx.set_cookie(
                   cookie_name,
                   "",
@@ -388,13 +390,7 @@ pub fn middleware_session(
               session.regenerate = false
               if session.modified || rotated is Some(_) {
                 store.save(session)
-                let current = match ctx.cookie(cookie_name) {
-                  Some(value) => value
-                  None => ""
-                }
-                if rotated is Some(_) || is_new || current != session.id {
-                  send_cookie(session.id)
-                }
+                send_cookie(session.id)
               }
             }
         }

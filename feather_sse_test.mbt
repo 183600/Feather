@@ -209,3 +209,25 @@ async test "sse handler failure tears the stream down" {
     assert_eq(client.read_all().text(), "data: before\n\n")
   })
 }
+
+///|
+async test "sse comments strip carriage returns" {
+  let app = @feather.App::new().sse("/events", async fn(_ctx, sse) {
+    sse.comment("x\rdata: forged")
+  })
+  with_sse_server(app, client => {
+    ignore(client.get("/events"))
+    assert_eq(client.read_all().text(), ": xdata: forged\n")
+  })
+}
+
+///|
+async test "sse data keeps a trailing line break" {
+  let app = @feather.App::new().sse("/events", async fn(_ctx, sse) {
+    sse.send("line\n")
+  })
+  with_sse_server(app, client => {
+    ignore(client.get("/events"))
+    assert_eq(client.read_all().text(), "data: line\ndata: \n\n")
+  })
+}
