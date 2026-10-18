@@ -187,7 +187,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
 
-      - name: Run agent loop for ~5 hours (4 phases per iteration)
+      - name: Run agent loop for ~5 hours (5 phases per iteration)
         timeout-minutes: 300
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
@@ -199,17 +199,20 @@ jobs:
           OUT=/tmp/oc_out.log
           DEADLINE=$(( $(date +%s) + 5*3600 - 900 ))
 
-          # ================= 四阶段提示词（perf -> bug -> improve -> clean） =================
+          # ================= 五阶段提示词（perf -> bug -> improve -> complete -> clean） =================
           # improve 阶段承接 ada-squash 原 apply 阶段的位置：任务为「改进这个项目」。
+          # complete 阶段：确保项目功能完整（核对已声明的功能是否真的可用并补齐）。
           PROMPT_PERF='优化代码的性能和资源占用，可以改进算法、数据结构、缓存与内存布局，但不得改变对外的功能语义。每次改动后运行 bash moon test 自检，不通过就自己修好。不要输出或写入“优化了哪些内容”的报告。另外，.github 目录是 CI 配置，绝对不要删除、修改或移动其中任何文件；LICENSE、README*.md（含所有语言版本的 README）同样绝对不能删除、修改或移动；PLAN.md 是项目规划文档，不能删除；测试代码不能删除或削弱。'
           PROMPT_BUG='仔细检查代码中是否存在bug，如果有就修改代码。修复必须保持原有功能语义不变，不得借修复之名做无意义的等价重写；不得削弱或删除测试。每次改动后运行 bash moon test 自检，不通过就自己修好。另外，.github 目录是 CI 配置，绝对不要删除、修改或移动其中任何文件；LICENSE、README*.md（含所有语言版本的 README）同样绝对不能删除、修改或移动；PLAN.md 是项目规划文档，不能删除；测试代码不能删除或削弱。'
           PROMPT_IMPROVE='改进这个项目。先通读 README.md、PLAN.md 和现有代码，理解项目目标与当前进度，然后做出实质性的改进：补全缺失的功能、完善核心实现、提升代码质量与可用性，让项目向目标推进。每次改动后运行 bash moon test 自检，不通过就自己修好。不要输出或写入“改进了哪些内容”的报告。另外，.github 目录是 CI 配置，绝对不要删除、修改或移动其中任何文件；LICENSE、README*.md（含所有语言版本的 README）同样绝对不能删除、修改或移动；PLAN.md 是项目规划文档，不能删除；测试代码不能删除或削弱。'
           PROMPT_CLEAN='确保远程仓库里没有实验结果文件、REPORT*.md、临时调试脚本与调试输出等杂物；确保仓库中没有任何关于修复了哪些bug、优化或改进了哪些内容的记录（包括注释）。删除所有其他多余的内容。注意：.github 目录是 CI 配置，必须原样保留，绝对不能删除、修改或移动其中任何文件，它不属于“多余的内容”；LICENSE 是开源许可证文件，同样必须原样保留，也不属于“多余的内容”；README*.md（含所有语言版本的 README）是项目说明文档，同样必须原样保留，不能删除或移动；PLAN.md 是项目规划文档，不能删除；测试代码不能删除或削弱；仍被项目引用的数据文件不属于“多余的内容”，必须保留。'
+          PROMPT_COMPLETE='确保项目功能完整。先通读 README.md、PLAN.md 与现有代码，逐项核对项目声明的功能是否真的完整可用：补齐未实现或只做了一半的路径，修好跑不通的入口，让核心功能端到端可用。每次改动后运行 bash moon test 自检，不通过就自己修好。不要输出或写入“补齐了哪些内容”的报告。另外，.github 目录是 CI 配置，绝对不要删除、修改或移动其中任何文件；LICENSE、README*.md（含所有语言版本的 README）同样绝对不能删除、修改或移动；PLAN.md 是项目规划文档，不能删除；测试代码不能删除或削弱。'
 
           # 每阶段单次调用的最大时长（秒）
           PERF_TIMEOUT=$((60*60))     # 1h
           BUG_TIMEOUT=$((60*60))      # 1h
           IMPROVE_TIMEOUT=$((45*60))   # 45m（改进这个项目）
+          COMPLETE_TIMEOUT=$((45*60))  # 45m（确保项目功能完整）
           CLEAN_TIMEOUT=$((30*60))    # 30m
 
           # ================= 动态模型池（不写死，实时读取线上目录） =================
@@ -787,13 +790,14 @@ jobs:
               break
             fi
 
-            # ----- 四个阶段：perf -> bug -> improve -> clean -----
-            for phase in perf bug improve clean; do
+            # ----- 五个阶段：perf -> bug -> improve -> complete -> clean -----
+            for phase in perf bug improve complete clean; do
               case "$phase" in
-                perf)    P="$PROMPT_PERF";    T="$PERF_TIMEOUT"    ;;
-                bug)     P="$PROMPT_BUG";     T="$BUG_TIMEOUT"     ;;
-                improve) P="$PROMPT_IMPROVE"; T="$IMPROVE_TIMEOUT" ;;
-                clean)   P="$PROMPT_CLEAN";   T="$CLEAN_TIMEOUT"   ;;
+                perf)     P="$PROMPT_PERF";     T="$PERF_TIMEOUT"     ;;
+                bug)      P="$PROMPT_BUG";      T="$BUG_TIMEOUT"      ;;
+                improve)  P="$PROMPT_IMPROVE";  T="$IMPROVE_TIMEOUT"  ;;
+                complete) P="$PROMPT_COMPLETE"; T="$COMPLETE_TIMEOUT" ;;
+                clean)    P="$PROMPT_CLEAN";    T="$CLEAN_TIMEOUT"    ;;
               esac
 
               # 收窄到剩余时间
