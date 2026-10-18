@@ -16,6 +16,40 @@ async fn with_server(
 }
 
 ///|
+/// Like `with_server`, but hands the test a raw TCP connection so it can
+/// drive partial requests and observe the bytes the server actually sends.
+async fn with_raw_server(
+  app : @feather.App,
+  run : async (@socket.Tcp) -> Unit,
+) -> Unit {
+  @async.with_task_group(group => {
+    let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
+    let addr = server.addr
+    group.spawn_bg(no_wait=true, () => app.serve_with(server))
+    @async.sleep(50)
+    let conn = @socket.Tcp::connect(
+      @socket.Addr::parse("127.0.0.1:\{addr.port()}"),
+    )
+    defer conn.close()
+    run(conn)
+    server.close()
+  })
+}
+
+///|
+/// Read from a raw connection until the end of the response head.
+async fn read_http_head(conn : @socket.Tcp) -> String {
+  let buffer = @buffer.Buffer::Buffer(size_hint=1024)
+  while !@utf8.decode_lossy(buffer.to_bytes()).contains("\r\n\r\n") {
+    match conn.read_some() {
+      Some(chunk) => buffer.write_bytes(chunk)
+      None => break
+    }
+  }
+  @utf8.decode_lossy(buffer.to_bytes())
+}
+
+///|
 async test "server serves text route" {
   let app = @feather.App::new().get("/hello", fn(ctx) {
     ctx.text(200, "hello world")
@@ -155,6 +189,61 @@ async test "server rejects oversized bodies" {
     let response = client.post("/upload", "x".repeat(2000))
     assert_eq(response.code, 413)
     ignore(client.read_all())
+  })
+}
+
+///|
+async test "server answers expect 100-continue before reading the body" {
+  let app = @feather.App::new().post("/upload", fn(ctx) {
+    ctx.text(200, ctx.request.body)
+  })
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "POST /upload HTTP/1.1\r\nHost: test\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n",
+      ),
+    )
+    let interim = try @async.with_timeout(2000, () => read_http_head(conn)) catch {
+      _ => ""
+    }
+    assert_true(interim.has_prefix("HTTP/1.1 100"))
+    conn.write(@utf8.encode("ping"))
+    let final = try @async.with_timeout(2000, () => read_http_head(conn)) catch {
+      _ => ""
+    }
+    assert_true(final.has_prefix("HTTP/1.1 200"))
+  })
+}
+
+///|
+async test "server closes the connection after an oversized body" {
+  let app = @feather.App::new().post("/upload", fn(ctx) {
+    ctx.text(200, ctx.request.body)
+  })
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "POST /upload HTTP/1.1\r\nHost: test\r\nContent-Length: 2000\r\n\r\n",
+      ),
+    )
+    conn.write(@utf8.encode("x".repeat(2000)))
+    let head = read_http_head(conn)
+    assert_true(head.has_prefix("HTTP/1.1 413"))
+    let closed = try {
+      @async.with_timeout(2000, () => {
+        let mut done = false
+        while !done {
+          match conn.read_some() {
+            Some(_) => ()
+            None => done = true
+          }
+        }
+      })
+      true
+    } catch {
+      _ => false
+    }
+    assert_true(closed)
   })
 }
 

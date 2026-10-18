@@ -95,11 +95,10 @@ fn content_type_is_compressible(content_type : StringView) -> Bool {
   } else {
     value
   }
-  lower.has_prefix("application/json") ||
-  lower.has_prefix("application/javascript") ||
-  lower.has_prefix("application/xml") ||
-  lower.has_prefix("application/x-www-form-urlencoded") ||
-  lower.has_prefix("image/svg+xml") ||
+  lower == ("application/json" : StringView) ||
+  lower == ("application/javascript" : StringView) ||
+  lower == ("application/xml" : StringView) ||
+  lower == ("application/x-www-form-urlencoded" : StringView) ||
   lower.has_suffix("+json") ||
   lower.has_suffix("+xml")
 }

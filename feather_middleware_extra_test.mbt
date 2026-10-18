@@ -287,6 +287,15 @@ test "context vary replaces a differently cased existing header" {
 }
 
 ///|
+test "context set_header replaces a differently cased header" {
+  let ctx = @feather.create_context()
+  ctx.set_header("X-Test", "one")
+  ctx.set_header("x-test", "two")
+  assert_eq(ctx.response.headers.length(), 1)
+  assert_eq(ctx.response.headers.get("x-test"), Some("two"))
+}
+
+///|
 test "router normalizes method casing when registering" {
   let app = @feather
     .App::new()

@@ -1225,7 +1225,7 @@ pub fn Context::set_header(
   key : String,
   value : String,
 ) -> Unit {
-  self.response.headers.set(key, value)
+  set_header_ignore_case(self.response.headers, key, value)
 }
 
 ///|
@@ -1956,6 +1956,182 @@ fn strip_control_characters(value : String) -> String {
 }
 
 ///|
+/// Whether `unit` may not appear in a cookie name or value.
+///
+/// Besides control characters, the RFC 6265 cookie-octet set excludes `;`,
+/// `,`, `"` and `\`, and a cookie name may not contain whitespace or `=`.
+/// Dropping these characters keeps a caller-supplied value from forging
+/// additional `Set-Cookie` attributes such as `Domain` or `Secure`.
+fn is_cookie_character_unsafe(unit : UInt16, drop_space : Bool) -> Bool {
+  let code = unit.to_int()
+  code < 0x20 ||
+  code == 0x7F ||
+  unit == (';' : UInt16) ||
+  unit == (',' : UInt16) ||
+  unit == ('=' : UInt16) ||
+  unit == ('"' : UInt16) ||
+  unit == ('\\' : UInt16) ||
+  (drop_space && code == 0x20)
+}
+
+///|
+/// Drop characters that are invalid or dangerous in a cookie name/value.
+fn sanitize_cookie_token(value : String, drop_space : Bool) -> String {
+  let view = value.view()
+  let length = view.length()
+  let mut i = 0
+  let mut needs_clean = false
+  while i < length {
+    if is_cookie_character_unsafe(view.unsafe_get(i), drop_space) {
+      needs_clean = true
+      break
+    }
+    i = i + 1
+  }
+  if !needs_clean {
+    return value
+  }
+  let builder = StringBuilder(size_hint=length)
+  let mut index = 0
+  while index < length {
+    let unit = view.unsafe_get(index)
+    if !is_cookie_character_unsafe(unit, drop_space) {
+      builder.write_char(unit.to_int().unsafe_to_char())
+    }
+    index = index + 1
+  }
+  builder.to_string()
+}
+
+///|
+/// Drop characters that would break a cookie attribute value, such as the
+/// `;` that separates the attributes in a `Set-Cookie` header.
+fn sanitize_cookie_attribute(value : String) -> String {
+  let view = value.view()
+  let length = view.length()
+  let mut i = 0
+  let mut needs_clean = false
+  while i < length {
+    let unit = view.unsafe_get(i)
+    let code = unit.to_int()
+    if code < 0x20 ||
+      code == 0x7F ||
+      unit == (';' : UInt16) ||
+      unit == (',' : UInt16) {
+      needs_clean = true
+      break
+    }
+    i = i + 1
+  }
+  if !needs_clean {
+    return value
+  }
+  let builder = StringBuilder(size_hint=length)
+  let mut index = 0
+  while index < length {
+    let unit = view.unsafe_get(index)
+    let code = unit.to_int()
+    if !(code < 0x20 ||
+      code == 0x7F ||
+      unit == (';' : UInt16) ||
+      unit == (',' : UInt16)) {
+      builder.write_char(code.unsafe_to_char())
+    }
+    index = index + 1
+  }
+  builder.to_string()
+}
+
+///|
+/// Restrict a cookie `Domain` attribute to the characters that can appear in
+/// a host name or an IP literal.
+fn sanitize_cookie_domain(value : String) -> String {
+  let view = value.view()
+  let length = view.length()
+  let builder = StringBuilder(size_hint=length)
+  let mut i = 0
+  while i < length {
+    let unit = view.unsafe_get(i)
+    let code = unit.to_int()
+    let keep = (code >= 'a' && code <= 'z') ||
+      (code >= 'A' && code <= 'Z') ||
+      (code >= '0' && code <= '9') ||
+      unit == ('.' : UInt16) ||
+      unit == ('-' : UInt16) ||
+      unit == ('_' : UInt16) ||
+      unit == (':' : UInt16) ||
+      unit == ('[' : UInt16) ||
+      unit == (']' : UInt16)
+    if keep {
+      builder.write_char(code.unsafe_to_char())
+    }
+    i = i + 1
+  }
+  builder.to_string()
+}
+
+///|
+/// Canonical spelling of a valid `SameSite` attribute value, or `None` when
+/// the value is not one of the three tokens browsers understand.
+fn canonical_same_site(value : String) -> String? {
+  let trimmed = trim_ascii_space(value.view())
+  if trimmed.equal_ignore_ascii_case("strict".view()) {
+    Some("Strict")
+  } else if trimmed.equal_ignore_ascii_case("lax".view()) {
+    Some("Lax")
+  } else if trimmed.equal_ignore_ascii_case("none".view()) {
+    Some("None")
+  } else {
+    None
+  }
+}
+
+///|
+/// Build a cookie with every name, value and attribute sanitized, so caller
+/// input cannot forge additional `Set-Cookie` attributes or header bytes.
+fn build_cookie(
+  name : String,
+  value : String,
+  path? : String,
+  max_age? : Int64,
+  domain? : String,
+  same_site? : String,
+  http_only : Bool,
+  secure : Bool,
+) -> @http.Cookie {
+  let clean_path = match path {
+    Some(value) => Some(sanitize_cookie_attribute(value))
+    None => None
+  }
+  let clean_domain = match domain {
+    Some(value) => {
+      let cleaned = sanitize_cookie_domain(value)
+      if cleaned == "" { None } else { Some(cleaned) }
+    }
+    None => None
+  }
+  let extensions : Array[String] = []
+  match same_site {
+    Some(value) =>
+      match canonical_same_site(value) {
+        Some(token) => extensions.push("SameSite=" + token)
+        None => ()
+      }
+    None => ()
+  }
+  @http.Cookie(
+    sanitize_cookie_token(name, true),
+    sanitize_cookie_token(value, false),
+    path?=clean_path,
+    max_age?=max_age,
+    domain?=clean_domain,
+    http_only=http_only,
+    secure=secure,
+    extensions~,
+  )
+}
+
+///|
 pub fn Context::add_cookie(
   self : Context,
   name : String,
@@ -1967,28 +2143,8 @@ pub fn Context::add_cookie(
   http_only~ : Bool = false,
   secure~ : Bool = false,
 ) -> Unit {
-  let clean_path = match path {
-    Some(value) => Some(strip_control_characters(value))
-    None => None
-  }
-  let clean_domain = match domain {
-    Some(value) => Some(strip_control_characters(value))
-    None => None
-  }
   self.response.cookies.push(
-    @http.Cookie(
-      strip_control_characters(name),
-      strip_control_characters(value),
-      path?=clean_path,
-      max_age?=max_age,
-      domain?=clean_domain,
-      http_only=http_only,
-      secure=secure,
-      extensions=match same_site {
-        Some(value) => ["SameSite=" + strip_control_characters(value)]
-        None => []
-      },
-    ),
+    build_cookie(name, value, path?, max_age?, domain?, same_site?, http_only, secure),
   )
 }
 
@@ -2046,26 +2202,15 @@ pub fn Context::set_cookie(
   http_only~ : Bool = false,
   secure~ : Bool = false,
 ) -> Unit {
-  let clean_path = match path {
-    Some(value) => Some(strip_control_characters(value))
-    None => None
-  }
-  let clean_domain = match domain {
-    Some(value) => Some(strip_control_characters(value))
-    None => None
-  }
-  let cookie = @http.Cookie(
-    strip_control_characters(name),
-    strip_control_characters(value),
-    path?=clean_path,
-    max_age?=max_age,
-    domain?=clean_domain,
-    http_only=http_only,
-    secure=secure,
-    extensions=match same_site {
-      Some(value) => ["SameSite=" + strip_control_characters(value)]
-      None => []
-    },
+  let cookie = build_cookie(
+    name,
+    value,
+    path?,
+    max_age?,
+    domain?,
+    same_site?,
+    http_only,
+    secure,
   )
   self.response.headers.set("Set-Cookie", render_cookie(cookie))
   self.response.cookies.push(cookie)
@@ -3586,58 +3731,66 @@ fn find_view_ignore_ascii_case(
 }
 
 ///|
-fn is_parameter_boundary(value : UInt16) -> Bool {
-  value == (' ' : UInt16) ||
-  value == (';' : UInt16) ||
-  value == ('\t' : UInt16)
-}
-
-///|
+/// Look up a `;`-separated parameter such as `boundary` or `filename` in a
+/// header value, honoring quoted string values.
+///
+/// The first segment (the media type or disposition itself) is skipped and
+/// attribute names are read as whole tokens, so a name that only appears
+/// inside another quoted value is never mistaken for a parameter.
 fn header_parameter(value : StringView, name : String) -> String? {
-  let target = name.view()
-  let name_length = name.length()
   let length = value.length()
-  let mut start = 0
-  let mut result : String? = None
-  let mut done = false
-  while !done {
-    let index = match find_view_ignore_ascii_case(value, target, start) {
-      Some(index) => index
-      None => {
-        done = true
-        continue
-      }
+  let target = name.view()
+  let mut pos = 0
+  while pos < length && value.unsafe_get(pos) != (';' : UInt16) {
+    pos = pos + 1
+  }
+  while pos < length {
+    pos = pos + 1
+    while pos < length &&
+      (value.unsafe_get(pos) == (' ' : UInt16) ||
+        value.unsafe_get(pos) == ('\t' : UInt16)) {
+      pos = pos + 1
     }
-    let after = index + name_length
-    let at_boundary = index == 0 ||
-      is_parameter_boundary(value.unsafe_get(index - 1))
-    if at_boundary &&
-      after < length &&
-      value.unsafe_get(after) == ('=' : UInt16) {
-      let mut pos = after + 1
-      while pos < length && value.unsafe_get(pos) == (' ' : UInt16) {
+    let name_start = pos
+    while pos < length &&
+      value.unsafe_get(pos) != ('=' : UInt16) &&
+      value.unsafe_get(pos) != (';' : UInt16) {
+      pos = pos + 1
+    }
+    let attribute = trim_ascii_space(value[name_start:pos])
+    if pos < length && value.unsafe_get(pos) == ('=' : UInt16) {
+      pos = pos + 1
+      while pos < length &&
+        (value.unsafe_get(pos) == (' ' : UInt16) ||
+          value.unsafe_get(pos) == ('\t' : UInt16)) {
         pos = pos + 1
       }
-      if pos < length && value.unsafe_get(pos) == ('"' : UInt16) {
+      let parsed : String? = if pos < length &&
+        value.unsafe_get(pos) == ('"' : UInt16) {
         let quoted_start = pos + 1
         let mut end = quoted_start
         while end < length && value.unsafe_get(end) != ('"' : UInt16) {
           end = end + 1
         }
-        result = Some(value[quoted_start:end].to_owned())
+        let result = value[quoted_start:end].to_owned()
+        pos = if end < length { end + 1 } else { end }
+        Some(result)
       } else {
-        let mut end = pos
-        while end < length && value.unsafe_get(end) != (';' : UInt16) {
-          end = end + 1
+        let value_start = pos
+        while pos < length && value.unsafe_get(pos) != (';' : UInt16) {
+          pos = pos + 1
         }
-        result = Some(trim_ascii_space(value[pos:end]).to_owned())
+        Some(trim_ascii_space(value[value_start:pos]).to_owned())
       }
-      done = true
-    } else {
-      start = index + 1
+      if attribute.equal_ignore_ascii_case(target) {
+        return parsed
+      }
+    }
+    while pos < length && value.unsafe_get(pos) != (';' : UInt16) {
+      pos = pos + 1
     }
   }
-  result
+  None
 }
 
 ///|
@@ -3674,12 +3827,13 @@ fn header_ext_parameter(value : StringView, name : String) -> String? {
 ///|
 pub fn multipart_boundary(content_type : String) -> String? {
   let view = content_type.view()
-  let is_multipart = starts_with_ignore_ascii_case(
-    view,
-    "multipart/form-data".view(),
-  ) ||
-    find_view_ignore_ascii_case(view, "multipart/form-data".view(), 0) is Some(_)
-  if is_multipart {
+  let length = view.length()
+  let mut pos = 0
+  while pos < length && view.unsafe_get(pos) != (';' : UInt16) {
+    pos = pos + 1
+  }
+  let media_type = trim_ascii_space(view[:pos])
+  if media_type.equal_ignore_ascii_case("multipart/form-data".view()) {
     header_parameter(view, "boundary")
   } else {
     None
@@ -5945,6 +6099,10 @@ pub fn middleware_cors(
           ctx.response.data = None
           ctx.response.body = ""
           ctx.response.headers.remove("Content-Type")
+          // The preflight answer depends on the two request headers, so shared
+          // caches must key on them as well (Fetch: Vary considerations).
+          ctx.vary("Access-Control-Request-Method")
+          ctx.vary("Access-Control-Request-Headers")
         } else {
           next(ctx)
         }

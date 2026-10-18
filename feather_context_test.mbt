@@ -143,6 +143,26 @@ test "cookies strip control characters from values and attributes" {
 }
 
 ///|
+test "cookies strip separators from names and attribute values" {
+  let ctx = @feather.create_context()
+  ctx.set_cookie("a;b c=d", "v", path="/p;q")
+  assert_eq(ctx.response.headers.get("Set-Cookie"), Some("abcd=v; Path=/pq"))
+}
+
+///|
+test "cookies drop invalid same-site values and sanitize domains" {
+  let ctx = @feather.create_context()
+  ctx.set_cookie("sid", "v", domain="a;b=c d", same_site="lax y")
+  assert_eq(ctx.response.headers.get("Set-Cookie"), Some("sid=v; Domain=abcd"))
+  let strict = @feather.create_context()
+  strict.set_cookie("sid", "v", same_site=" STRICT ")
+  assert_eq(
+    strict.response.headers.get("Set-Cookie"),
+    Some("sid=v; SameSite=Strict"),
+  )
+}
+
+///|
 test "url_encode encodes supplementary pairs and replaces lone surrogates" {
   let pair = String::from_array([
     Char::from_int(0xD83D),

@@ -364,17 +364,19 @@ fn accept_encoding_quality(header : StringView, coding : StringView) -> Int {
 ///|
 /// Check whether the request's `Accept-Encoding` header allows `encoding`.
 ///
-/// A missing or empty header accepts every encoding; `q=0` entries reject the
-/// matched encoding, and an encoding that is neither listed nor matched by
-/// `*` is not acceptable. The `identity` coding is the exception: it is
-/// acceptable by default whenever the header does not explicitly reject it
-/// (RFC 9110 §12.5.3).
+/// A request without the header has no stated preference, so every encoding is
+/// accepted. An empty header value requests no content coding at all, so only
+/// `identity` (the absence of a coding) remains acceptable. `q=0` entries
+/// reject the matched encoding, and an encoding that is neither listed nor
+/// matched by `*` is not acceptable; `identity` is the exception and stays
+/// acceptable whenever it is not explicitly rejected (RFC 9110 §12.5.3).
 pub fn Context::accepts_encoding(self : Context, encoding : String) -> Bool {
-  let header = self.header("Accept-Encoding")
-  if trim_ascii_space(header.view()).is_empty() {
-    return true
+  match get_header_ignore_case(self.request.headers, "Accept-Encoding") {
+    None => true
+    Some(header) =>
+      encoding_quality_from(encoding_entries_cached(header), encoding.view()) >
+      0
   }
-  encoding_quality_from(encoding_entries_cached(header), encoding.view()) > 0
 }
 
 ///|
@@ -388,23 +390,28 @@ pub fn Context::preferred_encoding(
   self : Context,
   offers : ArrayView[String],
 ) -> String? {
-  let header = self.header("Accept-Encoding")
-  let blank = trim_ascii_space(header.view()).is_empty()
-  let entries = if blank { [] } else { encoding_entries_cached(header) }
-  let mut best : String? = None
-  let mut best_q = 0
-  for offer in offers {
-    let quality = if blank {
-      1000
-    } else {
-      encoding_quality_from(entries, offer.view())
-    }
-    if quality > best_q {
-      best_q = quality
-      best = Some(offer)
+  match get_header_ignore_case(self.request.headers, "Accept-Encoding") {
+    None =>
+      // No stated preference: keep the server's own order.
+      if offers.length() > 0 {
+        Some(offers[0])
+      } else {
+        None
+      }
+    Some(header) => {
+      let entries = encoding_entries_cached(header)
+      let mut best : String? = None
+      let mut best_q = 0
+      for offer in offers {
+        let quality = encoding_quality_from(entries, offer.view())
+        if quality > best_q {
+          best_q = quality
+          best = Some(offer)
+        }
+      }
+      best
     }
   }
-  best
 }
 
 ///|

@@ -109,6 +109,10 @@ test "cors preflight short-circuits without running the handler" {
     Some("GET, POST"),
   )
   assert_eq(response.headers.get("Access-Control-Max-Age"), Some("60"))
+  assert_eq(
+    response.headers.get("Vary"),
+    Some("Access-Control-Request-Method, Access-Control-Request-Headers"),
+  )
 }
 
 ///|
@@ -330,6 +334,72 @@ async test "compression leaves ranged responses alone" {
       Some("bytes 4-6/10"),
     )
     assert_eq(client.read_all().text(), "456")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "static mounts run the middleware chain" {
+  let dir = @fs.tmpdir(prefix="feather-static-middleware")
+  @fs.write_file(dir + "/secret.txt", "classified")
+  let app = @feather.App::new()
+    .static_files("/assets", dir)
+    .use(@feather.middleware_cors())
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_cookie("seen", "yes", path="/")
+        if ctx.header("Authorization") != "Bearer key" {
+          ctx.text(401, "unauthorized")
+          return
+        }
+        next(ctx)
+      }
+    })
+  with_server(app, client => {
+    let denied = client.get("/assets/secret.txt")
+    assert_eq(denied.code, 401)
+    assert_eq(denied.cookies.length(), 1)
+    assert_eq(client.read_all().text(), "unauthorized")
+    let allowed = client.get(
+      "/assets/secret.txt",
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("Authorization"), "Bearer key"),
+      ]),
+    )
+    assert_eq(allowed.code, 200)
+    assert_eq(allowed.cookies.length(), 1)
+    assert_eq(
+      allowed.headers.get(
+        @http.CaseInsensitiveString("Access-Control-Allow-Origin"),
+      ),
+      Some("*"),
+    )
+    assert_eq(client.read_all().text(), "classified")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "static misses keep middleware headers and cookies" {
+  let dir = @fs.tmpdir(prefix="feather-static-missing")
+  let app = @feather.App::new()
+    .static_files("/assets", dir)
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_header("X-App", "feather")
+        ctx.set_cookie("seen", "yes", path="/")
+        next(ctx)
+      }
+    })
+  with_server(app, client => {
+    let missing = client.get("/assets/missing.css")
+    assert_eq(missing.code, 404)
+    assert_eq(
+      missing.headers.get(@http.CaseInsensitiveString("X-App")),
+      Some("feather"),
+    )
+    assert_eq(missing.cookies.length(), 1)
+    assert_eq(client.read_all().text(), "404 Not Found")
   })
   @fs.rmdir(dir, recursive=true)
 }

@@ -152,6 +152,21 @@ test "accepts_encoding treats a missing header as accepting everything" {
 }
 
 ///|
+test "an explicitly empty accept-encoding rejects every coding" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([("Accept-Encoding", "")]),
+    body: "",
+  })
+  assert_false(ctx.accepts_encoding("gzip"))
+  assert_false(ctx.accepts_encoding("br"))
+  assert_true(ctx.accepts_encoding("identity"))
+  assert_eq(ctx.preferred_encoding(["gzip", "br", "identity"]), Some("identity"))
+  assert_eq(ctx.preferred_encoding(["gzip"]), None)
+}
+
+///|
 test "accepts_encoding rejects codings that are not listed" {
   assert_false(encoding_ctx("identity").accepts_encoding("gzip"))
   assert_false(encoding_ctx("gzip;q=0").accepts_encoding("gzip"))

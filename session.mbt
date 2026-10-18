@@ -23,12 +23,20 @@ pub const DEFAULT_SESSION_TTL : Int64 = 86_400_000L
 const SESSION_SWEEP_INTERVAL : Int64 = 60_000L
 
 ///|
+/// Hard upper bound on retained sessions. When the store is full and no
+/// session has expired yet, the session closest to expiry (the least recently
+/// saved one) is dropped so unauthenticated traffic cannot grow the store
+/// without bound within a TTL window.
+const SESSION_STORE_MAX_SESSIONS : Int = 10_000
+
+///|
 /// In-memory session storage for a single server process.
 ///
 /// New session ids come from a ChaCha8 generator seeded with platform entropy
 /// when the host provides it. Expired sessions are dropped when they are read
-/// and, at most once a minute, whenever the store is written to; call
-/// `SessionStore::sweep` to collect them eagerly.
+/// and, at most once a minute, whenever the store is written to; the store is
+/// also capped at `SESSION_STORE_MAX_SESSIONS` entries. Call
+/// `SessionStore::sweep` to collect expired sessions eagerly.
 pub struct SessionStore {
   sessions : Map[String, Session]
   rng : @random.Rand
@@ -133,8 +141,38 @@ pub fn SessionStore::get(self : SessionStore, id : String) -> Session? {
 /// Store a session, refreshing its expiry to `ttl` from now.
 pub fn SessionStore::save(self : SessionStore, session : Session) -> Unit {
   session.expires_at = @async.now() + self.ttl
-  self.maybe_sweep()
+  if !self.sessions.contains(session.id) {
+    self.maybe_sweep()
+    if self.sessions.length() >= SESSION_STORE_MAX_SESSIONS {
+      self.evict_closest_to_expiry()
+    }
+  }
   self.sessions.set(session.id, session)
+}
+
+///|
+/// Drop the session that will expire first, which is the one least recently
+/// written, keeping the store under its cap when nothing has expired yet.
+fn SessionStore::evict_closest_to_expiry(self : SessionStore) -> Unit {
+  let mut oldest_id : String? = None
+  let mut oldest_expiry = 0L
+  for id, session in self.sessions {
+    match oldest_id {
+      Some(_) =>
+        if session.expires_at < oldest_expiry {
+          oldest_expiry = session.expires_at
+          oldest_id = Some(id)
+        }
+      None => {
+        oldest_expiry = session.expires_at
+        oldest_id = Some(id)
+      }
+    }
+  }
+  match oldest_id {
+    Some(id) => ignore(self.sessions.remove(id))
+    None => ()
+  }
 }
 
 ///|

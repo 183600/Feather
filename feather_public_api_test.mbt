@@ -46,6 +46,32 @@ test "multipart_boundary reads quoted and bare boundary parameters" {
 }
 
 ///|
+test "multipart_boundary requires the exact multipart/form-data media type" {
+  assert_eq(
+    @feather.multipart_boundary("text/plain; boundary=abc"),
+    None,
+  )
+  assert_eq(
+    @feather.multipart_boundary("text/plain; x=multipart/form-data; boundary=abc"),
+    None,
+  )
+  assert_eq(
+    @feather.multipart_boundary("multipart/form-dataz; boundary=abc"),
+    None,
+  )
+  assert_eq(
+    @feather.multipart_boundary("multipart/form-data; x=1; boundary=abc"),
+    Some("abc"),
+  )
+  assert_eq(
+    @feather.multipart_boundary(
+      "multipart/form-data; note=\"x; boundary=evil\"; boundary=real",
+    ),
+    Some("real"),
+  )
+}
+
+///|
 test "json_object stringifies string keyed objects" {
   let json = @feather.json_object(Map([("ok", "true")]))
   assert_eq(json.stringify(), "{\"ok\":\"true\"}")

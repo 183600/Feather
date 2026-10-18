@@ -10,14 +10,21 @@ struct RateBucket {
 const RATE_LIMIT_SWEEP_INTERVAL : Int64 = 60_000L
 
 ///|
+/// Hard upper bound on retained buckets. When the map is full and nothing has
+/// expired yet, the least recently started window is dropped so attacker
+/// chosen keys cannot grow the limiter without bound.
+const RATE_LIMIT_MAX_BUCKETS : Int = 4096
+
+///|
 /// A bounded in-memory fixed-window rate limiter.
 ///
 /// Each key gets a window of `window` milliseconds that allows at most `max`
 /// requests; once the window elapses the counter resets. Buckets for keys that
-/// have been idle for a full window are swept periodically so long-running
-/// servers do not grow without bound. All state is per process, which is the
-/// right default for a single server; share a store through another mechanism
-/// when running several instances.
+/// have been idle for a full window are swept periodically, and the map is
+/// capped at `RATE_LIMIT_MAX_BUCKETS` entries so long-running servers do not
+/// grow without bound. All state is per process, which is the right default
+/// for a single server; share a store through another mechanism when running
+/// several instances.
 pub struct RateLimiter {
   max : Int
   window : Int64
@@ -74,6 +81,9 @@ fn RateLimiter::allow_with_remaining(
       }
     None => {
       self.maybe_sweep(now)
+      if self.buckets.length() >= RATE_LIMIT_MAX_BUCKETS {
+        self.evict_oldest()
+      }
       self.buckets.set(key, { start: now, count: 1 })
       (true, self.max - 1)
     }
@@ -159,6 +169,31 @@ pub fn RateLimiter::sweep(self : RateLimiter) -> Unit {
   }
   for key in stale {
     ignore(self.buckets.remove(key))
+  }
+}
+
+///|
+/// Drop the bucket whose window started first, keeping the limiter under
+/// `RATE_LIMIT_MAX_BUCKETS` when no bucket has expired yet.
+fn RateLimiter::evict_oldest(self : RateLimiter) -> Unit {
+  let mut oldest_key : String? = None
+  let mut oldest_start = 0L
+  for key, bucket in self.buckets {
+    match oldest_key {
+      Some(_) =>
+        if bucket.start < oldest_start {
+          oldest_start = bucket.start
+          oldest_key = Some(key)
+        }
+      None => {
+        oldest_start = bucket.start
+        oldest_key = Some(key)
+      }
+    }
+  }
+  match oldest_key {
+    Some(key) => ignore(self.buckets.remove(key))
+    None => ()
   }
 }
 

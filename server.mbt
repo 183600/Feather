@@ -92,6 +92,11 @@ let header_x_accel_buffering : @http.CaseInsensitiveString = @http.CaseInsensiti
 )
 
 ///|
+let header_expect : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Expect",
+)
+
+///|
 /// Raised when a request body declares a content coding but cannot be decoded.
 priv suberror MalformedRequestBody
 
@@ -626,6 +631,51 @@ async fn send_simple(
 }
 
 ///|
+/// Answer with a plain-text error and close the connection.
+///
+/// Used when the request body may still be unread: the per-connection loop
+/// would otherwise block draining bytes the client may never send, letting a
+/// stalled upload pin a connection indefinitely. Closing the connection after
+/// the error is explicitly allowed for 413 (RFC 9110 §15.5.14) and keeps the
+/// server from accumulating stuck tasks.
+async fn send_error_and_close(
+  conn : @http.ServerConnection,
+  code : Int32,
+  body : String,
+  head : Bool,
+) -> Unit {
+  send_simple(conn, code, body, head) catch {
+    _ => ()
+  }
+  conn.close()
+}
+
+///|
+/// Answer an `Expect: 100-continue` handshake with the interim `100 Continue`
+/// response (RFC 9110 §10.1.1), so clients that wait for it before uploading
+/// a body are not left blocked until they time out. The final response is sent
+/// as usual once the body has been read.
+async fn send_continue_if_expected(
+  request : @http.Request,
+  conn : @http.ServerConnection,
+) -> Unit {
+  match request.headers.get(header_expect) {
+    Some(value) =>
+      if trim_ascii_space(value.view()).equal_ignore_ascii_case(
+        "100-continue".view(),
+      ) {
+        conn.send_response(100, "Continue") catch {
+          _ => ()
+        }
+        conn.end_response() catch {
+          _ => ()
+        }
+      }
+    None => ()
+  }
+}
+
+///|
 fn append_trailing_slash(path : String) -> String {
   match path.find("?") {
     Some(index) => path[:index].to_owned() + "/" + path[index:].to_owned()
@@ -696,6 +746,10 @@ fn add_vary_header(headers : @http.Headers, value : String) -> Unit {
 }
 
 ///|
+/// Serve a static file, seeding every response with the headers and cookies a
+/// request context accumulated (middleware and handler output), so static
+/// responses carry the same security, CORS and session headers as dynamic
+/// ones.
 async fn serve_static_file(
   conn : @http.ServerConnection,
   file_path : String,
@@ -703,7 +757,34 @@ async fn serve_static_file(
   request : @http.Request,
   cache_control : String,
   precompressed : Bool,
+  extra_headers : Map[String, String],
+  cookies : Array[@http.Cookie],
 ) -> Unit {
+  let base_headers = fn(capacity : Int) -> @http.Headers {
+    let headers : @http.Headers = Map(
+      [],
+      capacity=extra_headers.length() + capacity,
+    )
+    for name, value in extra_headers {
+      if cookies.length() > 0 &&
+        name.view().equal_ignore_ascii_case("set-cookie".view()) {
+        continue
+      }
+      headers.set(@http.CaseInsensitiveString(name), value)
+    }
+    headers
+  }
+  let send_error = async fn(code : Int32, body : String) {
+    let bytes = @utf8.encode(body)
+    let headers = base_headers(2)
+    headers.set(header_content_type, "text/plain; charset=utf-8")
+    headers.set(header_content_length, bytes.length().to_string())
+    send_with_date(conn, code, status_text(code), headers, cookies~)
+    if !head {
+      conn.write(bytes)
+    }
+    conn.end_response()
+  }
   let mut precompressed_handle : @fs.File? = None
   if precompressed {
     match request.headers.get(header_accept_encoding) {
@@ -719,7 +800,7 @@ async fn serve_static_file(
     Some(handle) => handle
     None => @fs.open(file_path, mode=@fs.ReadOnly) catch {
       _ => {
-        send_simple(conn, 404, "404 Not Found", head)
+        send_error(404, "404 Not Found")
         return
       }
     }
@@ -727,10 +808,9 @@ async fn serve_static_file(
   defer file.close()
   if file.kind() is @fs.Directory {
     let location = append_trailing_slash(request.path)
-    let headers : @http.Headers = Map([
-      (@http.CaseInsensitiveString("Location"), location),
-    ])
-    send_with_date(conn, 301, "Moved Permanently", headers)
+    let headers = base_headers(1)
+    headers.set(@http.CaseInsensitiveString("Location"), location)
+    send_with_date(conn, 301, "Moved Permanently", headers, cookies~)
     conn.end_response()
     return
   }
@@ -760,19 +840,18 @@ async fn serve_static_file(
   let cache_control_key = header_cache_control
   match evaluate_preconditions(request, etag, mtime_secs, true) {
     PreconditionFailed => {
-      send_simple(conn, 412, "412 Precondition Failed", head)
+      send_error(412, "412 Precondition Failed")
       return
     }
     PreconditionNotModified => {
-      let headers : @http.Headers = Map([
-        (etag_key, etag),
-        (last_modified_key, last_modified),
-      ])
+      let headers = base_headers(2)
+      headers.set(etag_key, etag)
+      headers.set(last_modified_key, last_modified)
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
       }
       decorate_headers(headers)
-      send_with_date(conn, 304, "Not Modified", headers)
+      send_with_date(conn, 304, "Not Modified", headers, cookies~)
       conn.end_response()
       return
     }
@@ -797,59 +876,142 @@ async fn serve_static_file(
   let accept_ranges_key = header_accept_ranges
   match range {
     ByteRangeInvalid => {
-      let headers : @http.Headers = Map([
-        (content_range_key, "bytes */" + size.to_string()),
-        (accept_ranges_key, "bytes"),
-      ])
+      let headers = base_headers(2)
+      headers.set(content_range_key, "bytes */" + size.to_string())
+      headers.set(accept_ranges_key, "bytes")
       decorate_headers(headers)
-      send_with_date(conn, 416, "Range Not Satisfiable", headers)
+      send_with_date(conn, 416, "Range Not Satisfiable", headers, cookies~)
       conn.end_response()
     }
     ByteRangeSpec(start, end) => {
       let length = end - start + 1L
-      let headers : @http.Headers = Map([
-        (content_type_key, content_type_value),
-        (content_length_key, length.to_string()),
-        (
-          content_range_key,
-          "bytes " +
-          start.to_string() +
-          "-" +
-          end.to_string() +
-          "/" +
-          size.to_string(),
-        ),
-        (etag_key, etag),
-        (last_modified_key, last_modified),
-        (accept_ranges_key, "bytes"),
-      ])
+      let headers = base_headers(6)
+      headers.set(content_type_key, content_type_value)
+      headers.set(content_length_key, length.to_string())
+      headers.set(
+        content_range_key,
+        "bytes " +
+        start.to_string() +
+        "-" +
+        end.to_string() +
+        "/" +
+        size.to_string(),
+      )
+      headers.set(etag_key, etag)
+      headers.set(last_modified_key, last_modified)
+      headers.set(accept_ranges_key, "bytes")
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
       }
       decorate_headers(headers)
-      send_with_date(conn, 206, "Partial Content", headers)
+      send_with_date(conn, 206, "Partial Content", headers, cookies~)
       if !head {
         write_file_range(conn, file, start, length)
       }
       conn.end_response()
     }
     ByteRangeFull => {
-      let headers : @http.Headers = Map([
-        (content_type_key, content_type_value),
-        (content_length_key, size.to_string()),
-        (etag_key, etag),
-        (last_modified_key, last_modified),
-        (accept_ranges_key, "bytes"),
-      ])
+      let headers = base_headers(5)
+      headers.set(content_type_key, content_type_value)
+      headers.set(content_length_key, size.to_string())
+      headers.set(etag_key, etag)
+      headers.set(last_modified_key, last_modified)
+      headers.set(accept_ranges_key, "bytes")
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
       }
       decorate_headers(headers)
-      send_with_date(conn, 200, "OK", headers)
+      send_with_date(conn, 200, "OK", headers, cookies~)
       if !head {
         conn.write_reader(file)
       }
       conn.end_response()
+    }
+  }
+}
+
+///|
+/// Serve a static mount after running the application middleware chain.
+///
+/// Middleware used to be skipped for static mounts, so authentication, CORS,
+/// security headers, request ids and sessions silently did not apply to
+/// assets. The chain now wraps the static lookup: middleware that
+/// short-circuits (for example an authenticator) decides the response, while
+/// middleware that calls through gets its response headers and cookies merged
+/// into the file response.
+async fn handle_static(
+  app : App,
+  request : @http.Request,
+  body : &@io.Reader,
+  conn : @http.ServerConnection,
+  file_path : String,
+  cache_control : String,
+  precompressed : Bool,
+  head : Bool,
+) -> Unit {
+  if app.middlewares.length() == 0 {
+    serve_static_file(
+      conn,
+      file_path,
+      head,
+      request,
+      cache_control,
+      precompressed,
+      Map([]),
+      [],
+    )
+    return
+  }
+  let req = request_from_http(request, body, app.max_body_size) catch {
+    PayloadTooLarge => {
+      send_error_and_close(conn, 413, "413 Payload Too Large", head)
+      return
+    }
+    MalformedRequestBody => {
+      send_simple(conn, 400, "400 Bad Request", head)
+      return
+    }
+    _ => {
+      send_error_and_close(conn, 500, "500 Internal Server Error", head)
+      return
+    }
+  }
+  let ctx = Context::new(req)
+  defer ctx.run_cleanups()
+  ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
+  let passed_through = Ref(false)
+  let terminal : Handler = fn(_ctx) { passed_through.val = true }
+  let chain = apply_middleware(app.middlewares, terminal)
+  chain(ctx) catch {
+    HttpError(status, message) => error_response(ctx, status, message)
+    HttpErrorPayload(status, message, payload) =>
+      error_response_with_payload(ctx, status, message, payload)
+    err => internal_error(ctx, "\{err}")
+  }
+  if passed_through.val {
+    serve_static_file(
+      conn,
+      file_path,
+      head,
+      request,
+      cache_control,
+      precompressed,
+      ctx.response.headers,
+      ctx.response.cookies,
+    )
+  } else {
+    match ctx.file_response() {
+      Some(file) => send_file_response(conn, ctx.response, file, head, request)
+      None => {
+        if app.compress_enabled {
+          compress_response(request, ctx.response, app.compress_min_size)
+        }
+        if app.etag_enabled {
+          apply_etag(ctx.response)
+        }
+        apply_preconditions(request, ctx.response)
+        send_response(conn, ctx.response, head)
+      }
     }
   }
 }
@@ -894,7 +1056,7 @@ async fn handle_websocket(
 ) -> Unit {
   let req = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
-      send_simple(conn, 413, "413 Payload Too Large", false)
+      send_error_and_close(conn, 413, "413 Payload Too Large", false)
       return
     }
     MalformedRequestBody => {
@@ -902,7 +1064,7 @@ async fn handle_websocket(
       return
     }
     _ => {
-      send_simple(conn, 500, "500 Internal Server Error", false)
+      send_error_and_close(conn, 500, "500 Internal Server Error", false)
       return
     }
   }
@@ -938,7 +1100,7 @@ async fn handle_sse(
 ) -> Unit {
   let req = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
-      send_simple(conn, 413, "413 Payload Too Large", false)
+      send_error_and_close(conn, 413, "413 Payload Too Large", false)
       return
     }
     MalformedRequestBody => {
@@ -946,7 +1108,7 @@ async fn handle_sse(
       return
     }
     _ => {
-      send_simple(conn, 500, "500 Internal Server Error", false)
+      send_error_and_close(conn, 500, "500 Internal Server Error", false)
       return
     }
   }
@@ -994,7 +1156,7 @@ async fn handle_stream(
 ) -> Unit {
   let req = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
-      send_simple(conn, 413, "413 Payload Too Large", false)
+      send_error_and_close(conn, 413, "413 Payload Too Large", false)
       return
     }
     MalformedRequestBody => {
@@ -1002,7 +1164,7 @@ async fn handle_stream(
       return
     }
     _ => {
-      send_simple(conn, 500, "500 Internal Server Error", false)
+      send_error_and_close(conn, 500, "500 Internal Server Error", false)
       return
     }
   }
@@ -1022,6 +1184,13 @@ async fn handle_stream(
     send_simple(conn, 500, "500 Internal Server Error", false) catch {
       _ => conn.close()
     }
+  } else if failed {
+    // The response header is already on the wire and the handler failed
+    // halfway through, so the chunked body cannot be terminated cleanly.
+    // Closing without the final chunk lets the client detect the truncation
+    // instead of accepting a partial body as a successful response.
+    stream.abort()
+    conn.close()
   } else {
     stream.close() catch {
       _ => conn.close()
@@ -1036,6 +1205,7 @@ async fn handle_request(
   body : &@io.Reader,
   conn : @http.ServerConnection,
 ) -> Unit {
+  send_continue_if_expected(request, conn)
   let head = request.meth is @http.Head
   if request.meth is @http.Get {
     match app.resolve_websocket(request.path) {
@@ -1070,13 +1240,15 @@ async fn handle_request(
       !app.has_stream(request.path) {
       match app.static_lookup(request.path) {
         Some((file_path, cache_control, precompressed)) => {
-          serve_static_file(
+          handle_static(
+            app,
+            request,
+            body,
             conn,
             file_path,
-            head,
-            request,
             cache_control,
             precompressed,
+            head,
           )
           return
         }
@@ -1089,11 +1261,11 @@ async fn handle_request(
       build_response(app, request, body, conn)
     }) catch {
       @async.TimeoutError => {
-        send_simple(conn, 504, "504 Gateway Timeout", head)
+        send_error_and_close(conn, 504, "504 Gateway Timeout", head)
         return
       }
       PayloadTooLarge => {
-        send_simple(conn, 413, "413 Payload Too Large", head)
+        send_error_and_close(conn, 413, "413 Payload Too Large", head)
         return
       }
       MalformedRequestBody => {
@@ -1102,14 +1274,14 @@ async fn handle_request(
       }
       err => {
         ignore(err)
-        send_simple(conn, 500, "500 Internal Server Error", head)
+        send_error_and_close(conn, 500, "500 Internal Server Error", head)
         return
       }
     }
   } else {
     build_response(app, request, body, conn) catch {
       PayloadTooLarge => {
-        send_simple(conn, 413, "413 Payload Too Large", head)
+        send_error_and_close(conn, 413, "413 Payload Too Large", head)
         return
       }
       MalformedRequestBody => {
@@ -1118,7 +1290,7 @@ async fn handle_request(
       }
       err => {
         ignore(err)
-        send_simple(conn, 500, "500 Internal Server Error", head)
+        send_error_and_close(conn, 500, "500 Internal Server Error", head)
         return
       }
     }

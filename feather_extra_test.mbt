@@ -28,6 +28,30 @@ test "parse_multipart accepts a part with an empty header block" {
 }
 
 ///|
+test "parse_multipart requires the multipart/form-data media type" {
+  let body = "--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--X--\r\n"
+  assert_eq(
+    @feather.parse_multipart(body, "text/plain; boundary=X"),
+    None,
+  )
+  assert_eq(
+    @feather.parse_multipart(body, "multipart/form-dataz; boundary=X"),
+    None,
+  )
+}
+
+///|
+test "parse_multipart reads attributes around quoted separators" {
+  let body = "--X\r\nContent-Disposition: form-data; filename=\"a; name=evil.txt\"; name=\"real\"\r\n\r\n1\r\n--X--\r\n"
+  let parts = @feather
+    .parse_multipart(body, "multipart/form-data; boundary=X")
+    .unwrap()
+  assert_eq(parts.length(), 1)
+  assert_eq(parts[0].name, "real")
+  assert_eq(parts[0].filename, "a; name=evil.txt")
+}
+
+///|
 test "parse_multipart accepts quoted boundary and ignores trailing data" {
   let body = "--b0\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--b0--\r\nepilogue"
   let parts = @feather

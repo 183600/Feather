@@ -54,6 +54,20 @@ test "compressible content types" {
 }
 
 ///|
+test "compressible content types require the exact registered media type" {
+  assert_false(content_type_is_compressible("application/jsonx".view()))
+  assert_false(content_type_is_compressible("application/javascriptx".view()))
+  assert_false(content_type_is_compressible("application/xmlx".view()))
+  assert_false(content_type_is_compressible("application/x-www-form-urlencodedx".view()))
+  assert_false(content_type_is_compressible("image/svg+xmlish".view()))
+  assert_true(
+    content_type_is_compressible("Text/Plain; Charset=UTF-8".view()),
+  )
+  assert_true(content_type_is_compressible("application/vnd.x+json".view()))
+  assert_true(content_type_is_compressible("application/atom+xml".view()))
+}
+
+///|
 test "contains ignore ascii case" {
   assert_true(contains_ignore_ascii_case("Accept-Encoding".view(), "encoding".view()))
   assert_true(contains_ignore_ascii_case("origin".view(), "ORIGIN".view()))

@@ -181,7 +181,14 @@ async test "stream handler failure tears the stream down" {
   with_stream_server(app, client => {
     let response = client.get("/feed")
     assert_eq(response.code, 200)
-    assert_eq(client.read_all().text(), "before")
+    // The handler failed after the header went out, so the response is
+    // truncated before its terminating chunk: the client must see the failure
+    // rather than accept a partial body as a complete one.
+    let mut truncated = false
+    ignore(client.read_all()) catch {
+      _ => truncated = true
+    }
+    assert_true(truncated)
   })
 }
 
