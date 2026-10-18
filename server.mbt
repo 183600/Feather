@@ -259,25 +259,32 @@ async fn request_from_http(
 }
 
 ///|
-/// Identity of the most recently built validators.
-let validator_size : Ref[Int64] = Ref(-1L)
-let validator_mtime_secs : Ref[Int64] = Ref(-1L)
-let validator_mtime_nanos : Ref[Int] = Ref(-1)
-let validator_value : Ref[(String, String)?] = Ref(None)
+/// Bounded cache of the most recently built validators, keyed by file path.
+/// Each entry records the `(size, mtime)` it was built from, so a changed
+/// file replaces its stale validators on the next request.
+let validators_cache : Map[
+  String,
+  (Int64, Int64, Int, (String, String)),
+] = Map([])
+
+///|
+/// Maximum number of files tracked by `validators_cache`.
+const VALIDATORS_CACHE_LIMIT : Int = 64
 
 ///|
 /// Build the `ETag` and `Last-Modified` validators for a file from its size
 /// and modification time.
 fn file_validators(
+  path : String,
   size : Int64,
   mtime_secs : Int64,
   mtime_nanos : Int,
 ) -> (String, String) {
-  match validator_value.val {
-    Some(value) =>
-      if validator_size.val == size &&
-        validator_mtime_secs.val == mtime_secs &&
-        validator_mtime_nanos.val == mtime_nanos {
+  match validators_cache.get(path) {
+    Some((cached_size, cached_secs, cached_nanos, value)) =>
+      if cached_size == size &&
+        cached_secs == mtime_secs &&
+        cached_nanos == mtime_nanos {
         return value
       }
     None => ()
@@ -290,10 +297,13 @@ fn file_validators(
     mtime_nanos.to_string() +
     "\""
   let value = (etag, format_http_date(mtime_secs))
-  validator_size.val = size
-  validator_mtime_secs.val = mtime_secs
-  validator_mtime_nanos.val = mtime_nanos
-  validator_value.val = Some(value)
+  if validators_cache.length() >= VALIDATORS_CACHE_LIMIT {
+    match validators_cache.keys().next() {
+      Some(oldest) => validators_cache.remove(oldest)
+      None => ()
+    }
+  }
+  validators_cache.set(path, (size, mtime_secs, mtime_nanos, value))
   value
 }
 
@@ -345,7 +355,12 @@ async fn send_file_response(
     _ => (0L, 0)
   }
   let (mtime_secs, mtime_nanos) = mtime
-  let (etag, last_modified) = file_validators(size, mtime_secs, mtime_nanos)
+  let (etag, last_modified) = file_validators(
+    file.path,
+    size,
+    mtime_secs,
+    mtime_nanos,
+  )
   let headers : @http.Headers = Map([], capacity=response.headers.length() + 4)
   for name, value in response.headers {
     headers.set(@http.CaseInsensitiveString(name), value)
@@ -726,7 +741,12 @@ async fn serve_static_file(
     _ => (0L, 0)
   }
   let (mtime_secs, mtime_nanos) = mtime
-  let (etag, last_modified) = file_validators(size, mtime_secs, mtime_nanos)
+  let (etag, last_modified) = file_validators(
+    file_path,
+    size,
+    mtime_secs,
+    mtime_nanos,
+  )
   let etag_key = header_etag
   let last_modified_key = header_last_modified
   let cache_control_key = header_cache_control

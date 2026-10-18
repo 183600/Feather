@@ -1353,20 +1353,19 @@ pub fn Context::header(self : Context, key : String) -> String {
 ///|
 /// The host name from the `Host` header, without the port.
 pub fn Context::host(self : Context) -> String {
-  let authority = trim_ascii_space(self.header("Host").view()).to_owned()
+  let authority = trim_ascii_space(self.header("Host").view())
   if authority == "" {
     return ""
   }
-  let view = authority.view()
-  if view.unsafe_get(0) == ('[' : UInt16) {
-    match view.find("]") {
-      Some(index) => return view[:index + 1].to_owned()
-      None => return authority
+  if authority.unsafe_get(0) == ('[' : UInt16) {
+    match authority.find("]") {
+      Some(index) => return authority[:index + 1].to_owned()
+      None => return authority.to_owned()
     }
   }
-  match view.find(":") {
-    Some(index) => view[:index].to_owned()
-    None => authority
+  match authority.find(":") {
+    Some(index) => authority[:index].to_owned()
+    None => authority.to_owned()
   }
 }
 
