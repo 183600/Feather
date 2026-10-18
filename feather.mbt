@@ -50,7 +50,7 @@ pub(all) struct Context {
   response : Response
   state : Map[String, String]
   json_state : Map[String, Json]
-  cleanups : Array[() -> Unit]
+  cleanups : Array[() -> Unit raise]
   mut file : FileResponse?
   mut session : Session?
 }
@@ -2105,7 +2105,10 @@ pub fn Context::get_json(self : Context, key : String) -> Json? {
 }
 
 ///|
-pub fn Context::defer_cleanup(self : Context, cleanup : () -> Unit) -> Unit {
+/// Register `cleanup` to run when the request finishes, whether the handler
+/// succeeded or failed. Cleanups run in reverse registration order and are
+/// best-effort: a cleanup that raises does not stop the others.
+pub fn Context::defer_cleanup(self : Context, cleanup : () -> Unit raise) -> Unit {
   self.cleanups.push(cleanup)
 }
 
@@ -2144,10 +2147,16 @@ fn content_disposition_attachment(name : String) -> String {
 }
 
 ///|
-fn Context::run_cleanups(self : Context) -> Unit {
+/// Run the cleanups registered with `Context::defer_cleanup`, last
+/// registered first. A cleanup that raises does not prevent the remaining
+/// cleanups from running: the error is swallowed and the loop continues, so
+/// resource release is best-effort and never masks the request outcome.
+pub fn Context::run_cleanups(self : Context) -> Unit {
   while self.cleanups.length() > 0 {
     match self.cleanups.pop() {
-      Some(cleanup) => cleanup()
+      Some(cleanup) => cleanup() catch {
+        _ => ()
+      }
       None => ()
     }
   }
