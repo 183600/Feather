@@ -105,10 +105,11 @@ fn contains_ignore_ascii_case(haystack : StringView, needle : StringView) -> Boo
 }
 
 ///|
+/// Append `Accept-Encoding` to the `Vary` header unless it is already listed.
 fn add_vary_accept_encoding(response : Response) -> Unit {
   match get_header_ignore_case(response.headers, "Vary") {
     Some(existing) =>
-      if !contains_ignore_ascii_case(existing.view(), "accept-encoding".view()) {
+      if !header_list_has_token(existing.view(), "accept-encoding".view()) {
         response.headers.set("Vary", existing + ", Accept-Encoding")
       }
     None => response.headers.set("Vary", "Accept-Encoding")

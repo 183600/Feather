@@ -5299,11 +5299,31 @@ pub fn middleware_request_id(header~ : String = "X-Request-Id") -> Middleware {
 }
 
 ///|
+/// Whether a comma-separated header list such as `Vary` contains `token` as a
+/// complete entry, compared case-insensitively. Checking element boundaries
+/// keeps `Accept` from matching an existing `Accept-Encoding` entry.
+fn header_list_has_token(list : StringView, token : StringView) -> Bool {
+  let length = list.length()
+  let mut start = 0
+  let mut i = 0
+  while i <= length {
+    if i == length || list.unsafe_get(i) == (',' : UInt16) {
+      if trim_ascii_space(list[start:i]).equal_ignore_ascii_case(token) {
+        return true
+      }
+      start = i + 1
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
 /// Append `value` to the response's `Vary` header unless it is already listed.
 pub fn Context::vary(self : Context, value : String) -> Unit {
   match get_header_ignore_case(self.response.headers, "Vary") {
     Some(existing) =>
-      if !contains_ignore_ascii_case(existing.view(), value.view()) {
+      if !header_list_has_token(existing.view(), value.view()) {
         self.response.headers.set("Vary", existing + ", " + value)
       }
     None => self.response.headers.set("Vary", value)

@@ -262,6 +262,22 @@ test "context vary appends entries once" {
 }
 
 ///|
+test "context vary matches whole entries, not substrings" {
+  let ctx = @feather.create_context()
+  ctx.vary("Accept-Encoding")
+  ctx.vary("Accept")
+  assert_eq(
+    ctx.response.headers.get("Vary"),
+    Some("Accept-Encoding, Accept"),
+  )
+  ctx.vary("accept-encoding")
+  assert_eq(
+    ctx.response.headers.get("Vary"),
+    Some("Accept-Encoding, Accept"),
+  )
+}
+
+///|
 test "router normalizes method casing when registering" {
   let app = @feather
     .App::new()

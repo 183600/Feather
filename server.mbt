@@ -632,7 +632,7 @@ async fn open_precompressed_gzip(file_path : String) -> @fs.File? {
 fn add_vary_header(headers : @http.Headers, value : String) -> Unit {
   match headers.get(header_vary) {
     Some(existing) =>
-      if !contains_ignore_ascii_case(existing.view(), value.view()) {
+      if !header_list_has_token(existing.view(), value.view()) {
         headers.set(header_vary, existing + ", " + value)
       }
     None => headers.set(header_vary, value)
