@@ -1339,13 +1339,10 @@ pub fn Context::header(self : Context, key : String) -> String {
     None => {
       let target = key.view()
       let target_length = target.length()
-      for name in self.request.headers.keys() {
+      for name, value in self.request.headers {
         if name.length() == target_length &&
           name.view().equal_ignore_ascii_case(target) {
-          match self.request.headers.get(name) {
-            Some(value) => return value
-            None => ()
-          }
+          return value
         }
       }
       ""
@@ -3519,13 +3516,10 @@ fn get_header_ignore_case(
   }
   let target = name.view()
   let target_length = target.length()
-  for key in headers.keys() {
+  for key, value in headers {
     if key.length() == target_length &&
       key.view().equal_ignore_ascii_case(target) {
-      match headers.get(key) {
-        Some(value) => return Some(value)
-        None => ()
-      }
+      return Some(value)
     }
   }
   None
@@ -5205,18 +5199,19 @@ fn App::static_lookup(
   self : App,
   path : String,
 ) -> (String, String, Bool)? {
-  match self.static_lookup_cache.get(path) {
+  let clean = clean_path_view(path)
+  match self.static_lookup_cache.get_from_string(clean) {
     Some(cached) => cached
     None => {
-      let result = self.static_lookup_uncached(path)
-      if path.length() <= PARSE_CACHE_MAX_KEY {
+      let result = self.static_lookup_uncached(clean)
+      if clean.length() <= PARSE_CACHE_MAX_KEY {
         if self.static_lookup_cache.length() >= STATIC_LOOKUP_CACHE_LIMIT {
           match self.static_lookup_cache.keys().next() {
             Some(oldest) => ignore(self.static_lookup_cache.remove(oldest))
             None => ()
           }
         }
-        self.static_lookup_cache.set(path, result)
+        self.static_lookup_cache.set(clean.to_owned(), result)
       }
       result
     }
@@ -5228,9 +5223,8 @@ fn App::static_lookup(
 /// and precompressed-serving flag in one pass over the configured mounts.
 fn App::static_lookup_uncached(
   self : App,
-  path : String,
+  path_view : StringView,
 ) -> (String, String, Bool)? {
-  let path_view = clean_path_view(path)
   match self.best_static_mount(path_view) {
     None => None
     Some(mount) => {
@@ -5614,7 +5608,7 @@ pub fn middleware_cors(
         // the handler. Other OPTIONS requests (including explicit OPTIONS
         // routes) pass through to the router and are only decorated with the
         // CORS headers below.
-        let preflight = ctx.header("Origin") != "" &&
+        let preflight = request_origin != "" &&
           ctx.header("Access-Control-Request-Method") != ""
         if preflight {
           ctx.response.status = 204

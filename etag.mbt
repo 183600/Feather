@@ -86,6 +86,14 @@ fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
   if response.status < 200 || response.status >= 300 || response.status == 206 {
     return
   }
+  // `evaluate_preconditions` only consults these four request headers, so skip
+  // building the response validators when none of them is present.
+  if !request.headers.contains(header_if_match) &&
+    !request.headers.contains(header_if_none_match) &&
+    !request.headers.contains(header_if_modified_since) &&
+    !request.headers.contains(header_if_unmodified_since) {
+    return
+  }
   match get_header_ignore_case(response.headers, "Cache-Control") {
     Some(control) =>
       if contains_ignore_ascii_case(control.view(), "no-store".view()) {
