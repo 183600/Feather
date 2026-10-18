@@ -1131,7 +1131,9 @@ pub fn Feather::listen_address(self : Feather) -> String {
 
 ///|
 pub async fn Feather::serve(self : Feather) -> Unit {
-  let addr = @socket.Addr::parse(self.listen_address())
+  let addr = @socket.Addr::parse(self.listen_address()) catch {
+    _ => @socket.Addr::parse("127.0.0.1:" + self.config.port.to_string())
+  }
   self.app.serve(addr)
 }
 
