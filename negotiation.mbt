@@ -161,8 +161,7 @@ fn accept_quality_from(
 }
 
 ///|
-/// Most recently parsed `Accept` header and its media ranges, so repeated
-/// `Context::accepts` calls during one request reuse the parse.
+/// Most recently parsed `Accept` header and its media ranges.
 let last_accept_header : Ref[String?] = Ref(None)
 
 ///|

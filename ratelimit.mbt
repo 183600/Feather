@@ -54,7 +54,7 @@ pub fn RateLimiter::window(self : RateLimiter) -> Int64 {
 
 ///|
 /// Record a request for `key` and report whether it fits in the current
-/// window, together with the remaining allowance in the same lookup.
+/// window, together with the remaining allowance.
 fn RateLimiter::allow_with_remaining(
   self : RateLimiter,
   key : String,

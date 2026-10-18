@@ -43,8 +43,7 @@ let seed_counter : Ref[Int64] = Ref(0L)
 
 ///|
 /// Build a 32-byte seed from the current time when no platform entropy is
-/// available. Splitting the clock through an LCG keeps successive processes
-/// from sharing a stream; it is a fallback, not a replacement for entropy.
+/// available.
 fn time_seed() -> Bytes {
   let out = FixedArray::make(32, b'\x00')
   seed_counter.val = seed_counter.val + 1L
@@ -61,10 +60,6 @@ fn time_seed() -> Bytes {
 
 ///|
 /// ChaCha8 generator seeded from platform entropy when the host provides it.
-///
-/// Without entropy the core fallback would use a public fixed seed, making
-/// session ids and CSRF tokens predictable; on those targets the clock is
-/// mixed in instead so independent processes diverge.
 fn platform_rand() -> @random.Rand {
   match @env.rand(32) {
     Some(seed) => @random.Rand::chacha8(seed~)

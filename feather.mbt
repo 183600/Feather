@@ -5055,13 +5055,12 @@ fn App::best_static_mount(
 }
 
 ///|
-/// Maximum number of request paths memoized by `App::static_lookup`.
+/// Maximum number of request paths kept by `App::static_lookup`.
 const STATIC_LOOKUP_CACHE_LIMIT : Int = 256
 
 ///|
 /// Resolve a static file request to its filesystem path, `Cache-Control` value
-/// and precompressed-serving flag, memoizing the result per application. The
-/// cache is invalidated whenever the static mounts change.
+/// and precompressed-serving flag.
 fn App::static_lookup(
   self : App,
   path : String,
