@@ -121,8 +121,6 @@ fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
       }
     None => ()
   }
-  // Only resolve the validators the present precondition headers compare
-  // against; parsing a `Last-Modified` the request never consults is wasted.
   let etag = if has_if_match || has_if_none_match {
     match get_header_ignore_case(response.headers, "ETag") {
       Some(existing) => existing
