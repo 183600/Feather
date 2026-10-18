@@ -37,11 +37,47 @@ pub struct SessionStore {
 }
 
 ///|
+/// Counter mixed into `time_seed` so generators created within the same
+/// millisecond still diverge.
+let seed_counter : Ref[Int64] = Ref(0L)
+
+///|
+/// Build a 32-byte seed from the current time when no platform entropy is
+/// available. Splitting the clock through an LCG keeps successive processes
+/// from sharing a stream; it is a fallback, not a replacement for entropy.
+fn time_seed() -> Bytes {
+  let out = FixedArray::make(32, b'\x00')
+  seed_counter.val = seed_counter.val + 1L
+  let mut state = @async.now() + seed_counter.val * 6364136223846793005L
+  for i = 0; i < 4; i = i + 1 {
+    state = state * 6364136223846793005L + 1442695040888963407L
+    let value = state
+    for j = 0; j < 8; j = j + 1 {
+      out[i * 8 + j] = (((value >> (j * 8)) & 255L).to_int()).to_byte()
+    }
+  }
+  out.unsafe_reinterpret_as_bytes()
+}
+
+///|
+/// ChaCha8 generator seeded from platform entropy when the host provides it.
+///
+/// Without entropy the core fallback would use a public fixed seed, making
+/// session ids and CSRF tokens predictable; on those targets the clock is
+/// mixed in instead so independent processes diverge.
+fn platform_rand() -> @random.Rand {
+  match @env.rand(32) {
+    Some(seed) => @random.Rand::chacha8(seed~)
+    None => @random.Rand::chacha8(seed=time_seed())
+  }
+}
+
+///|
 /// Create an empty store whose sessions live for `ttl` milliseconds.
 pub fn SessionStore::new(ttl~ : Int64 = DEFAULT_SESSION_TTL) -> SessionStore {
   {
     sessions: Map([]),
-    rng: @random.Rand(),
+    rng: platform_rand(),
     ttl: if ttl <= 0L { DEFAULT_SESSION_TTL } else { ttl },
     last_sweep: 0L,
   }

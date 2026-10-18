@@ -321,7 +321,7 @@ fn if_range_allows(
 ) -> Bool {
   match request.headers.get(header_if_range) {
     Some(value) =>
-      value == etag ||
+      trim_ascii_space(value.view()) == etag.view() ||
       (match parse_http_date(value) {
         Some(since) => mtime_secs > 0L && mtime_secs <= since
         None => false
@@ -387,7 +387,7 @@ async fn send_file_response(
   let mut status = response.status
   let mut start = 0L
   let mut length = size
-  if response.status == 200 && !head {
+  if response.status == 200 && request.meth is @http.Get {
     match request.headers.get(header_range) {
       Some(value) =>
         if if_range_allows(request, effective_etag, mtime_secs) {
@@ -430,7 +430,7 @@ async fn send_file_response(
   if !headers.contains(header_accept_ranges) {
     headers.set(header_accept_ranges, "bytes")
   }
-  let body_allowed = status != 204 && status != 304
+  let body_allowed = status != 204 && status != 205 && status != 304
   if body_allowed {
     headers.set(header_content_length, length.to_string())
   } else {
@@ -492,6 +492,7 @@ async fn send_response(
   }
   let body_allowed = response.status >= 200 &&
     response.status != 204 &&
+    response.status != 205 &&
     response.status != 304
   let has_body = body_allowed && body_bytes.length() > 0
   if has_body && !headers.contains(header_content_length) {
@@ -522,12 +523,14 @@ async fn send_simple(
   body : String,
   head : Bool,
 ) -> Unit {
+  let bytes = @utf8.encode(body)
   let headers : @http.Headers = Map([
     (@http.CaseInsensitiveString("Content-Type"), "text/plain; charset=utf-8"),
+    (header_content_length, bytes.length().to_string()),
   ])
   send_with_date(conn, code, status_text(code), headers)
   if !head {
-    conn.write_string(body)
+    conn.write(bytes)
   }
   conn.end_response()
 }
@@ -902,11 +905,19 @@ async fn handle_stream(
     ctx.state.set(PARAM_PREFIX + name, value)
   }
   let stream = Stream::new(conn)
+  let mut failed = false
   handler(ctx, stream) catch {
-    _ => ()
+    _ => failed = true
   }
-  stream.close() catch {
-    _ => conn.close()
+  if failed && !stream.is_started() {
+    stream.abort()
+    send_simple(conn, 500, "500 Internal Server Error", false) catch {
+      _ => conn.close()
+    }
+  } else {
+    stream.close() catch {
+      _ => conn.close()
+    }
   }
 }
 
@@ -944,7 +955,10 @@ async fn handle_request(
   if (head || request.meth is @http.Get) && !app.static_mounts.is_empty() {
     match app.static_lookup(request.path) {
       Some((file_path, cache_control, precompressed)) =>
-        if !app.has_route(if head { "HEAD" } else { "GET" }, request.path) {
+        if !app.has_route(if head { "HEAD" } else { "GET" }, request.path) &&
+          !app.has_websocket(request.path) &&
+          !app.has_sse(request.path) &&
+          !app.has_stream(request.path) {
           serve_static_file(
             conn,
             file_path,

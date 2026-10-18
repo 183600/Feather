@@ -548,22 +548,21 @@ pub fn Router::route_name(self : Router, name : String) -> NamedRoute? {
 }
 
 ///|
+/// Percent-encode a wildcard capture for URL generation. Empty segments are
+/// dropped and the rest joined with a single `/`, mirroring how route matching
+/// reads a wildcard back (`join_wildcard`), so `url_for` round-trips.
 fn encode_wildcard_path(value : String) -> String {
-  let view = value.view()
-  let length = view.length()
-  let builder = StringBuilder(size_hint=length)
-  let mut start = 0
-  let mut i = 0
-  while i < length {
-    if view.unsafe_get(i) == ('/' : UInt16) {
-      builder.write_string(url_encode(view[start:i].to_owned()))
-      builder.write_char('/')
-      start = i + 1
+  let builder = StringBuilder(size_hint=value.length())
+  let mut written = false
+  for segment in value.view().split("/") {
+    if segment.is_empty() {
+      continue
     }
-    i = i + 1
-  }
-  if start < length {
-    builder.write_string(url_encode(view[start:].to_owned()))
+    if written {
+      builder.write_char('/')
+    }
+    builder.write_string(url_encode(segment.to_owned()))
+    written = true
   }
   builder.to_string()
 }
@@ -640,6 +639,9 @@ pub fn Router::url_for(
           None => return None
         }
       }
+      // Registration stops at `*`, so segments after it never match; do not
+      // render them into a URL that would bind different parameters.
+      break
     } else {
       builder.write_stringview(segment)
     }
@@ -1964,8 +1966,9 @@ pub fn Context::clear_cookie(
   self : Context,
   name : String,
   path? : String,
+  domain? : String,
 ) -> Unit {
-  self.set_cookie(name, "", path?, max_age=0L)
+  self.set_cookie(name, "", path?, max_age=0L, domain?)
 }
 
 ///|
@@ -3505,6 +3508,65 @@ fn get_header_ignore_case(
 }
 
 ///|
+/// Set a header under its canonical spelling, dropping any existing entry whose
+/// name differs only by case so the outgoing response has exactly one of it.
+fn set_header_ignore_case(
+  headers : Map[String, String],
+  name : String,
+  value : String,
+) -> Unit {
+  let target = name.view()
+  let target_length = target.length()
+  let mut stale : String? = None
+  if !headers.contains(name) {
+    for key in headers.keys() {
+      if key.length() == target_length &&
+        key.view().equal_ignore_ascii_case(target) {
+        stale = Some(key)
+        break
+      }
+    }
+  }
+  match stale {
+    Some(key) => ignore(headers.remove(key))
+    None => ()
+  }
+  headers.set(name, value)
+}
+
+///|
+/// Remove a header by name regardless of case. Returns whether one was found.
+fn remove_header_ignore_case(
+  headers : Map[String, String],
+  name : String,
+) -> Bool {
+  match headers.get(name) {
+    Some(_) => {
+      headers.remove(name)
+      return true
+    }
+    None => ()
+  }
+  let target = name.view()
+  let target_length = target.length()
+  let mut stale : String? = None
+  for key in headers.keys() {
+    if key.length() == target_length &&
+      key.view().equal_ignore_ascii_case(target) {
+      stale = Some(key)
+      break
+    }
+  }
+  match stale {
+    Some(key) => {
+      ignore(headers.remove(key))
+      true
+    }
+    None => false
+  }
+}
+
+///|
 fn parse_part_headers(
   header_text : StringView,
 ) -> (Map[String, String], String?, Int, String?, Int) {
@@ -3788,6 +3850,22 @@ pub fn status_text(code : Int32) -> String {
 }
 
 ///|
+/// Number of days in `month` (1-12) of `year`, or 0 for an invalid month.
+fn days_in_month(year : Int64, month : Int) -> Int {
+  match month {
+    1 | 3 | 5 | 7 | 8 | 10 | 12 => 31
+    4 | 6 | 9 | 11 => 30
+    2 =>
+      if year % 4L == 0L && (year % 100L != 0L || year % 400L == 0L) {
+        29
+      } else {
+        28
+      }
+    _ => 0
+  }
+}
+
+///|
 fn days_from_civil(year : Int64, month : Int, day : Int) -> Int64 {
   let y = if month <= 2 { year - 1 } else { year }
   let era = (if y >= 0 { y } else { y - 399 }) / 400
@@ -4047,7 +4125,12 @@ fn parse_imf_fixdate(view : StringView) -> Int64? {
   if day < 0 || year < 0 || hour < 0 || minute < 0 || second < 0 {
     return None
   }
-  if day < 1 || day > 31 || year < 1970 || hour > 23 || minute > 59 || second > 60 {
+  if day < 1 ||
+    day > days_in_month(year.to_int64(), month) ||
+    year < 1970 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 60 {
     return None
   }
   Some(
@@ -4155,7 +4238,7 @@ pub fn parse_http_date(value : String) -> Int64? {
       None => return None
     }
   }
-  if day < 1 || day > 31 || year < 1970 {
+  if day < 1 || day > days_in_month(year, month) || year < 1970 {
     return None
   }
   let seconds_of_day = match parse_time_of_day(time) {
@@ -5363,9 +5446,21 @@ pub fn middleware_cors(
         ctx.response.headers.set("Access-Control-Allow-Credentials", "true")
       }
       if ctx.request.method == "OPTIONS" {
-        ctx.response.status = 204
-        ctx.response.data = None
-        ctx.response.body = ""
+        // A real CORS preflight carries both `Origin` and
+        // `Access-Control-Request-Method` and is answered here without running
+        // the handler. Other OPTIONS requests (including explicit OPTIONS
+        // routes) pass through to the router and are only decorated with the
+        // CORS headers below.
+        let preflight = ctx.header("Origin") != "" &&
+          ctx.header("Access-Control-Request-Method") != ""
+        if preflight {
+          ctx.response.status = 204
+          ctx.response.data = None
+          ctx.response.body = ""
+          ctx.response.headers.remove("Content-Type")
+        } else {
+          next(ctx)
+        }
         ctx.response.headers.set("Access-Control-Allow-Methods", allow_methods)
         ctx.response.headers.set("Access-Control-Allow-Headers", allow_headers)
         if max_age > 0 {

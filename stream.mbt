@@ -115,6 +115,15 @@ pub async fn Stream::flush(self : Stream) -> Unit {
 }
 
 ///|
+/// Abandon the stream before its header was sent, so the caller can answer with
+/// an error response instead. Once the header was sent the bytes are already on
+/// the wire; `abort` then just marks the stream closed.
+fn Stream::abort(self : Stream) -> Unit {
+  self.closed = true
+  self.started = true
+}
+
+///|
 /// Finish the response. The header is sent first when nothing was written, so
 /// an empty stream still yields a valid `200 OK`. Calling `close` more than
 /// once, or after the handler already returned, is a no-op.

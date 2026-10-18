@@ -132,10 +132,17 @@ async fn compress_response(
   response : Response,
   min_size : Int32,
 ) -> Unit {
-  if response.status < 200 || response.status == 204 || response.status == 304 {
+  if response.status < 200 ||
+    response.status == 204 ||
+    response.status == 205 ||
+    response.status == 304 ||
+    response.status == 206 {
     return
   }
   if get_header_ignore_case(response.headers, "Content-Encoding") is Some(_) {
+    return
+  }
+  if get_header_ignore_case(response.headers, "Content-Range") is Some(_) {
     return
   }
   match get_header_ignore_case(response.headers, "Cache-Control") {
@@ -180,6 +187,13 @@ async fn compress_response(
   response.data = Some(compressed)
   response.headers.set("Content-Encoding", "gzip")
   response.headers.remove("Content-Length")
+  match get_header_ignore_case(response.headers, "ETag") {
+    Some(existing) =>
+      if !existing.has_prefix("W/") {
+        set_header_ignore_case(response.headers, "ETag", "W/" + existing)
+      }
+    None => ()
+  }
 }
 
 ///|

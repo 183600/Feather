@@ -33,7 +33,13 @@ fn fnv1a_hex(data : Bytes) -> String {
 
 ///|
 fn apply_etag(request : @http.Request, response : Response) -> Unit {
-  if response.status < 200 || response.status >= 300 || response.status == 204 {
+  if response.status < 200 ||
+    response.status >= 300 ||
+    response.status == 204 ||
+    response.status == 205 {
+    return
+  }
+  if get_header_ignore_case(response.headers, "Content-Range") is Some(_) {
     return
   }
   match get_header_ignore_case(response.headers, "Cache-Control") {
@@ -70,11 +76,23 @@ fn apply_etag(request : @http.Request, response : Response) -> Unit {
   match request.headers.get(header_if_none_match) {
     Some(value) =>
       if etag_header_matches(value.view(), etag) {
-        response.status = 304
-        response.body = ""
-        response.data = None
-        response.headers.remove("Content-Type")
-        response.headers.remove("Content-Length")
+        if request.meth is @http.Get || request.meth is @http.Head {
+          response.status = 304
+          response.body = ""
+          response.data = None
+          ignore(remove_header_ignore_case(response.headers, "Content-Type"))
+          ignore(remove_header_ignore_case(response.headers, "Content-Length"))
+        } else {
+          response.status = 412
+          response.body = "412 Precondition Failed"
+          response.data = None
+          set_header_ignore_case(
+            response.headers,
+            "Content-Type",
+            "text/plain; charset=utf-8",
+          )
+          ignore(remove_header_ignore_case(response.headers, "Content-Length"))
+        }
       }
     None => ()
   }

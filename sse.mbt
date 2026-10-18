@@ -58,6 +58,37 @@ fn write_sse_data(builder : StringBuilder, data : String) -> Unit {
 }
 
 ///|
+/// Strip carriage returns and line feeds from a single-line SSE field so a
+/// caller-supplied value cannot inject extra fields or forge a whole event.
+fn sanitize_sse_field(value : String) -> String {
+  let view = value.view()
+  let length = view.length()
+  let mut i = 0
+  let mut needs_clean = false
+  while i < length {
+    let code = view.unsafe_get(i)
+    if code == ('\n' : UInt16) || code == ('\r' : UInt16) {
+      needs_clean = true
+      break
+    }
+    i = i + 1
+  }
+  if !needs_clean {
+    return value
+  }
+  let builder = StringBuilder(size_hint=length)
+  let mut index = 0
+  while index < length {
+    let code = view.unsafe_get(index)
+    if code != ('\n' : UInt16) && code != ('\r' : UInt16) {
+      builder.write_char(code.unsafe_to_char())
+    }
+    index = index + 1
+  }
+  builder.to_string()
+}
+
+///|
 /// Send one event. `event` names the event type (clients listen with
 /// `addEventListener`), `id` sets the last event id used for reconnection
 /// (`Last-Event-ID`), and `retry` is the reconnection delay in milliseconds.
@@ -74,29 +105,34 @@ pub async fn Sse::send(
   }
   let builder = StringBuilder(size_hint=data.length() + 32)
   match event {
-    Some(name) =>
-      if name != "" {
+    Some(name) => {
+      let clean = sanitize_sse_field(name)
+      if clean != "" {
         builder.write_string("event: ")
-        builder.write_string(name)
+        builder.write_string(clean)
         builder.write_char('\n')
       }
+    }
     None => ()
   }
   match id {
-    Some(value) =>
-      if value != "" {
+    Some(value) => {
+      let clean = sanitize_sse_field(value)
+      if clean != "" {
         builder.write_string("id: ")
-        builder.write_string(value)
+        builder.write_string(clean)
         builder.write_char('\n')
       }
+    }
     None => ()
   }
   match retry {
-    Some(millis) => {
-      builder.write_string("retry: ")
-      builder.write_string(millis.to_string())
-      builder.write_char('\n')
-    }
+    Some(millis) =>
+      if millis >= 0 {
+        builder.write_string("retry: ")
+        builder.write_string(millis.to_string())
+        builder.write_char('\n')
+      }
     None => ()
   }
   write_sse_data(builder, data)

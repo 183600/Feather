@@ -8,8 +8,9 @@ const CSRF_TOKEN_KEY : String = "_csrf"
 const CSRF_TOKEN_LENGTH : Int32 = 32
 
 ///|
-/// Shared generator for CSRF tokens, seeded from platform entropy.
-let csrf_rng : @random.Rand = @random.Rand()
+/// Shared generator for CSRF tokens, seeded from platform entropy (falling
+/// back to a clock-derived seed where entropy is unavailable).
+let csrf_rng : @random.Rand = platform_rand()
 
 ///|
 /// Generate a fresh random CSRF token: 32 lowercase hex characters.
@@ -97,7 +98,8 @@ pub fn middleware_csrf(
       let meth = ctx.get_method()
       if meth.view().equal_ignore_ascii_case("GET".view()) ||
         meth.view().equal_ignore_ascii_case("HEAD".view()) ||
-        meth.view().equal_ignore_ascii_case("OPTIONS".view()) {
+        meth.view().equal_ignore_ascii_case("OPTIONS".view()) ||
+        meth.view().equal_ignore_ascii_case("TRACE".view()) {
         next(ctx)
         return
       }
