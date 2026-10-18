@@ -904,6 +904,7 @@ async fn handle_websocket(
   defer conn.close()
   defer socket.close()
   let ctx = Context::new(req)
+  defer ctx.run_cleanups()
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
@@ -954,6 +955,7 @@ async fn handle_sse(
     }
   }
   let ctx = Context::new(req)
+  defer ctx.run_cleanups()
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
@@ -997,6 +999,7 @@ async fn handle_stream(
     }
   }
   let ctx = Context::new(req)
+  defer ctx.run_cleanups()
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)

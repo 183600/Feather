@@ -284,7 +284,9 @@ fn parse_encoding_entries(header : StringView) -> Array[EncodingEntry] {
         }
       }
     }
-    entries.push({ token, quality })
+    if !token.is_empty() {
+      entries.push({ token, quality })
+    }
     pos = scan
     if pos < length && header.unsafe_get(pos) == (',' : UInt16) {
       pos = pos + 1

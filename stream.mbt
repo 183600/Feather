@@ -109,8 +109,8 @@ pub async fn Stream::write_reader(self : Stream, reader : &@io.Reader) -> Unit {
 }
 
 ///|
-/// Write one JSON-encoded value to the response body, which is convenient for
-/// newline-delimited streaming APIs.
+/// Write one compact JSON-encoded value to the response body, which is
+/// convenient for streaming APIs that emit a sequence of JSON documents.
 pub async fn[T : @json.ToJson] Stream::write_json(
   self : Stream,
   value : T,

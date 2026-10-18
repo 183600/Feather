@@ -67,6 +67,9 @@ fn apply_etag(response : Response) -> Unit {
         encoded
       }
   }
+  if data.length() == 0 {
+    return
+  }
   response.headers.set(
     "ETag",
     {
@@ -91,7 +94,11 @@ fn apply_etag(response : Response) -> Unit {
 /// the range is computed. Responses that opt out of caching with `no-store`
 /// are treated as unvalidatable.
 fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
-  if response.status < 200 || response.status >= 300 || response.status == 206 {
+  if response.status < 200 ||
+    response.status >= 300 ||
+    response.status == 204 ||
+    response.status == 205 ||
+    response.status == 206 {
     return
   }
   // These are the only request headers `evaluate_preconditions` consults.
@@ -158,6 +165,41 @@ fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
       ignore(remove_header_ignore_case(response.headers, "Content-Length"))
       ignore(remove_header_ignore_case(response.headers, "Content-Encoding"))
     }
+  }
+}
+
+///|
+/// Map a method string from the facade request onto the async HTTP crate's
+/// method type. Unknown methods map to `POST` so `304 Not Modified` is never
+/// produced for them (`apply_preconditions` only allows it for GET/HEAD).
+fn request_method_from_string(meth : String) -> @http.RequestMethod {
+  match meth.to_upper() {
+    "GET" => @http.Get
+    "HEAD" => @http.Head
+    "POST" => @http.Post
+    "PUT" => @http.Put
+    "DELETE" => @http.Delete
+    "CONNECT" => @http.Connect
+    "OPTIONS" => @http.Options
+    "TRACE" => @http.Trace
+    "PATCH" => @http.Patch
+    _ => @http.Post
+  }
+}
+
+///|
+/// Adapt the facade's request to the `@http.Request` shape
+/// `apply_preconditions` consumes, so the offline `App::respond` path
+/// evaluates conditional requests like the server does.
+fn precondition_request(request : Request) -> @http.Request {
+  let headers : @http.Headers = Map([])
+  for name, value in request.headers {
+    headers.set(@http.CaseInsensitiveString(name), value)
+  }
+  {
+    meth: request_method_from_string(request.method),
+    path: request.path,
+    headers,
   }
 }
 

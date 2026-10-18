@@ -5334,14 +5334,8 @@ pub fn App::static_file_for(self : App, path : String) -> String? {
 
 ///|
 pub fn App::static_cache_control_for(self : App, path : String) -> String {
-  let path_view = clean_path_view(path)
-  match self.best_static_mount(path_view) {
-    Some(mount) =>
-      if mount.max_age > 0 {
-        "public, max-age=" + mount.max_age.to_string()
-      } else {
-        ""
-      }
+  match self.static_lookup(path) {
+    Some((_, cache_control, _)) => cache_control
     None => ""
   }
 }
@@ -5385,6 +5379,12 @@ pub fn App::respond(self : App, request : Request) -> Response {
     HttpErrorPayload(status, message, payload) =>
       error_response_with_payload(ctx, status, message, payload)
     err => internal_error(ctx, "\{err}")
+  }
+  if ctx.file_response() is None {
+    if self.etag_enabled {
+      apply_etag(ctx.response)
+    }
+    apply_preconditions(precondition_request(ctx.request), ctx.response)
   }
   ctx.response
 }
