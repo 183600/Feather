@@ -141,32 +141,33 @@ async fn read_body_bytes(reader : &@io.Reader, limit : Int32) -> Bytes {
   if first_length > limit {
     raise PayloadTooLarge
   }
-  match reader.read_some(max_len=8192) {
-    None => first
-    Some(second) => {
-      let mut total = first_length + second.length()
-      if total > limit {
-        raise PayloadTooLarge
-      }
-      let buffer = @buffer.Buffer::Buffer(size_hint=total)
-      buffer.write_bytes(first)
-      buffer.write_bytes(second)
-      let mut done = false
-      while !done {
-        match reader.read_some(max_len=8192) {
-          None => done = true
-          Some(chunk) => {
-            total = total + chunk.length()
-            if total > limit {
-              raise PayloadTooLarge
-            }
-            buffer.write_bytes(chunk)
-          }
+  let second = match reader.read_some(max_len=8192) {
+    None => return first
+    Some(chunk) => chunk
+  }
+  let mut total = first_length + second.length()
+  if total > limit {
+    raise PayloadTooLarge
+  }
+  let chunks : Array[Bytes] = [first, second]
+  let mut done = false
+  while !done {
+    match reader.read_some(max_len=8192) {
+      None => done = true
+      Some(chunk) => {
+        total = total + chunk.length()
+        if total > limit {
+          raise PayloadTooLarge
         }
+        chunks.push(chunk)
       }
-      buffer.to_bytes()
     }
   }
+  let buffer = @buffer.Buffer::Buffer(size_hint=total)
+  for chunk in chunks {
+    buffer.write_bytes(chunk)
+  }
+  buffer.to_bytes()
 }
 
 ///|
@@ -186,7 +187,7 @@ async fn decode_gzip_body(data : Bytes, limit : Int32) -> Bytes {
   })
   defer reader.close()
   let decoder = @gzip.Decoder::Decoder(reader)
-  let buffer = @buffer.Buffer::Buffer(size_hint=data.length())
+  let buffer = @buffer.Buffer::Buffer(size_hint=data.length() * 4)
   let mut total = 0
   let mut done = false
   while !done {
@@ -261,31 +262,37 @@ async fn request_from_http(
 ///|
 /// Bounded cache of the most recently built validators, keyed by file path.
 /// Each entry records the `(size, mtime)` it was built from, so a changed
-/// file replaces its stale validators on the next request.
+/// file replaces its stale validators on the next request. The `Content-Type`
+/// derived from the path is cached alongside them.
 let validators_cache : Map[
   String,
-  (Int64, Int64, Int, (String, String)),
+  (Int64, Int64, Int, (String, String), String),
 ] = Map([])
+
+///|
+/// Recency ticks for `validators_cache`, driving the shared LRU eviction.
+let validators_cache_ages : Map[String, Int] = Map([])
 
 ///|
 /// Maximum number of files tracked by `validators_cache`.
 const VALIDATORS_CACHE_LIMIT : Int = 64
 
 ///|
-/// Build the `ETag` and `Last-Modified` validators for a file from its size
-/// and modification time.
+/// Build the `ETag`, `Last-Modified` and `Content-Type` for a file from its
+/// path, size and modification time.
 fn file_validators(
   path : String,
   size : Int64,
   mtime_secs : Int64,
   mtime_nanos : Int,
-) -> (String, String) {
+) -> (String, String, String) {
   match validators_cache.get(path) {
-    Some((cached_size, cached_secs, cached_nanos, value)) =>
+    Some((cached_size, cached_secs, cached_nanos, value, content_type)) =>
       if cached_size == size &&
         cached_secs == mtime_secs &&
         cached_nanos == mtime_nanos {
-        return value
+        cache_touch(validators_cache_ages, path)
+        return (value.0, value.1, content_type)
       }
     None => ()
   }
@@ -297,14 +304,15 @@ fn file_validators(
     mtime_nanos.to_string() +
     "\""
   let value = (etag, format_http_date(mtime_secs))
-  if validators_cache.length() >= VALIDATORS_CACHE_LIMIT {
-    match validators_cache.keys().next() {
-      Some(oldest) => validators_cache.remove(oldest)
-      None => ()
-    }
-  }
-  validators_cache.set(path, (size, mtime_secs, mtime_nanos, value))
-  value
+  let content_type = mime_type_for(path)
+  cache_set(
+    validators_cache,
+    validators_cache_ages,
+    VALIDATORS_CACHE_LIMIT,
+    path,
+    (size, mtime_secs, mtime_nanos, value, content_type),
+  )
+  (etag, value.1, content_type)
 }
 
 ///|
@@ -355,7 +363,7 @@ async fn send_file_response(
     _ => (0L, 0)
   }
   let (mtime_secs, mtime_nanos) = mtime
-  let (etag, last_modified) = file_validators(
+  let (etag, last_modified, _) = file_validators(
     file.path,
     size,
     mtime_secs,
@@ -700,7 +708,7 @@ async fn serve_static_file(
   if precompressed {
     match request.headers.get(header_accept_encoding) {
       Some(value) =>
-        if accept_encoding_allows_gzip(value.view()) {
+        if accept_encoding_allows_gzip_cached(value) {
           precompressed_handle = open_precompressed_gzip(file_path)
         }
       None => ()
@@ -741,7 +749,7 @@ async fn serve_static_file(
     _ => (0L, 0)
   }
   let (mtime_secs, mtime_nanos) = mtime
-  let (etag, last_modified) = file_validators(
+  let (etag, last_modified, content_type_value) = file_validators(
     file_path,
     size,
     mtime_secs,
@@ -800,7 +808,7 @@ async fn serve_static_file(
     ByteRangeSpec(start, end) => {
       let length = end - start + 1L
       let headers : @http.Headers = Map([
-        (content_type_key, mime_type_for(file_path)),
+        (content_type_key, content_type_value),
         (content_length_key, length.to_string()),
         (
           content_range_key,
@@ -827,7 +835,7 @@ async fn serve_static_file(
     }
     ByteRangeFull => {
       let headers : @http.Headers = Map([
-        (content_type_key, mime_type_for(file_path)),
+        (content_type_key, content_type_value),
         (content_length_key, size.to_string()),
         (etag_key, etag),
         (last_modified_key, last_modified),
@@ -1053,12 +1061,15 @@ async fn handle_request(
     }
   }
   if (head || request.meth is @http.Get) && !app.static_mounts.is_empty() {
-    match app.static_lookup(request.path) {
-      Some((file_path, cache_control, precompressed)) =>
-        if !app.has_route(if head { "HEAD" } else { "GET" }, request.path) &&
-          !app.has_websocket(request.path) &&
-          !app.has_sse(request.path) &&
-          !app.has_stream(request.path) {
+    // Dynamic routes take precedence over static mounts, so check them first
+    // and skip the static lookup (and cache bookkeeping) entirely when the
+    // request is handled elsewhere.
+    if !app.has_route(if head { "HEAD" } else { "GET" }, request.path) &&
+      !app.has_websocket(request.path) &&
+      !app.has_sse(request.path) &&
+      !app.has_stream(request.path) {
+      match app.static_lookup(request.path) {
+        Some((file_path, cache_control, precompressed)) => {
           serve_static_file(
             conn,
             file_path,
@@ -1069,7 +1080,8 @@ async fn handle_request(
           )
           return
         }
-      None => ()
+        None => ()
+      }
     }
   }
   let (response, file) = if app.timeout > 0 {

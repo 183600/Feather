@@ -93,7 +93,11 @@ fn apply_etag(response : Response) -> Unit {
 /// untouched, as are ranged responses, whose `If-Range` handling happens where
 /// the range is computed. Responses that opt out of caching with `no-store`
 /// are treated as unvalidatable.
-fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
+fn apply_preconditions_input(
+  input : PreconditionInput,
+  allows_not_modified : Bool,
+  response : Response,
+) -> Unit {
   if response.status < 200 ||
     response.status >= 300 ||
     response.status == 204 ||
@@ -101,13 +105,10 @@ fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
     response.status == 206 {
     return
   }
-  // These are the only request headers `evaluate_preconditions` consults.
-  let has_if_match = request.headers.contains(header_if_match)
-  let has_if_none_match = request.headers.contains(header_if_none_match)
-  let has_if_modified_since = request.headers.contains(header_if_modified_since)
-  let has_if_unmodified_since = request.headers.contains(
-    header_if_unmodified_since,
-  )
+  let has_if_match = input.if_match is Some(_)
+  let has_if_none_match = input.if_none_match is Some(_)
+  let has_if_modified_since = input.if_modified_since is Some(_)
+  let has_if_unmodified_since = input.if_unmodified_since is Some(_)
   if !has_if_match &&
     !has_if_none_match &&
     !has_if_modified_since &&
@@ -141,8 +142,7 @@ fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
   } else {
     0L
   }
-  let allows_not_modified = request.meth is @http.Get || request.meth is @http.Head
-  match evaluate_preconditions(request, etag, mtime_secs, allows_not_modified) {
+  match evaluate_preconditions_input(input, etag, mtime_secs, allows_not_modified) {
     PreconditionPass => ()
     PreconditionNotModified => {
       response.status = 304
@@ -167,49 +167,26 @@ fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
 }
 
 ///|
-/// Map a method string from the facade request onto the async HTTP crate's
-/// method type. Unknown methods map to `POST` so `304 Not Modified` is never
-/// produced for them (`apply_preconditions` only allows it for GET/HEAD).
-fn request_method_from_string(meth : String) -> @http.RequestMethod {
-  match meth.to_upper() {
-    "GET" => @http.Get
-    "HEAD" => @http.Head
-    "POST" => @http.Post
-    "PUT" => @http.Put
-    "DELETE" => @http.Delete
-    "CONNECT" => @http.Connect
-    "OPTIONS" => @http.Options
-    "TRACE" => @http.Trace
-    "PATCH" => @http.Patch
-    _ => @http.Post
-  }
+/// Apply the preconditions of a server request.
+fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
+  apply_preconditions_input(
+    precondition_input_from_http(request),
+    request.meth is @http.Get || request.meth is @http.Head,
+    response,
+  )
 }
 
 ///|
-/// Whether the facade request carries any precondition header that
-/// `apply_preconditions` consults. Checked before adapting the request so
-/// unconditional requests avoid building a header map.
-fn request_has_preconditions(request : Request) -> Bool {
-  get_header_ignore_case(request.headers, "If-Match") is Some(_) ||
-  get_header_ignore_case(request.headers, "If-None-Match") is Some(_) ||
-  get_header_ignore_case(request.headers, "If-Modified-Since") is Some(_) ||
-  get_header_ignore_case(request.headers, "If-Unmodified-Since") is Some(_)
-}
-
-///|
-/// Adapt the facade's request to the `@http.Request` shape
-/// `apply_preconditions` consumes, so the offline `App::respond` path
-/// evaluates conditional requests like the server does.
-fn precondition_request(request : Request) -> @http.Request {
-  let headers : @http.Headers = Map([])
-  for name, value in request.headers {
-    headers.set(@http.CaseInsensitiveString(name), value)
-  }
-  {
-    meth: request_method_from_string(request.method),
-    path: request.path,
-    headers,
-  }
+/// Apply the preconditions of a facade request (the offline `App::respond`
+/// path), reading the headers in place instead of copying them into a
+/// `@http.Headers` map.
+fn apply_preconditions_facade(request : Request, response : Response) -> Unit {
+  let method = request.method.to_upper()
+  apply_preconditions_input(
+    precondition_input_from_map(request.headers),
+    method == "GET" || method == "HEAD",
+    response,
+  )
 }
 
 ///|

@@ -130,39 +130,29 @@ fn add_vary_accept_encoding(response : Response) -> Unit {
 }
 
 ///|
-/// A `@io.Writer` that collects every written chunk in memory.
+/// A `@io.Writer` that collects every written chunk in one growable buffer, so
+/// the compressed result is copied exactly once instead of once per chunk plus
+/// a final concatenation.
 priv struct ChunkSink {
-  chunks : Array[Bytes]
-  mut total : Int
+  buffer : @buffer.Buffer
 }
 
 ///|
 fn ChunkSink::new() -> ChunkSink {
-  { chunks: [], total: 0 }
+  { buffer: @buffer.Buffer::Buffer(size_hint=1024) }
 }
 
 ///|
 impl @io.Writer for ChunkSink with fn write_once(self, buf, offset~, len~) {
   if len > 0 {
-    self.chunks.push(buf[offset:offset + len].to_owned())
-    self.total = self.total + len
+    self.buffer.write_bytes(buf[offset:offset + len])
   }
   len
 }
 
 ///|
 fn ChunkSink::to_bytes(self : ChunkSink) -> Bytes {
-  match self.chunks.length() {
-    0 => b""
-    1 => self.chunks[0]
-    _ => {
-      let buffer = @buffer.Buffer::Buffer(size_hint=self.total)
-      for chunk in self.chunks {
-        buffer.write_bytes(chunk)
-      }
-      buffer.to_bytes()
-    }
-  }
+  self.buffer.to_bytes()
 }
 
 ///|

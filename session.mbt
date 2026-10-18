@@ -321,6 +321,72 @@ pub fn Context::session_regenerate(self : Context) -> Bool {
 /// removed from the store. Sessions are keyed by an unguessable random id, but
 /// the id itself is not signed; deploy behind HTTPS and treat the store as
 /// server-local state.
+priv struct SessionCookieConfig {
+  name : String
+  path : String
+  same_site : String
+  http_only : Bool
+  secure : Bool
+  max_age : Int64?
+}
+
+///|
+/// Send the session cookie for `id` with the middleware's cookie attributes.
+fn session_send_cookie(
+  ctx : Context,
+  config : SessionCookieConfig,
+  id : String,
+  max_age : Int64?,
+) -> Unit {
+  ctx.set_cookie(
+    config.name,
+    id,
+    path=config.path,
+    max_age?,
+    same_site=config.same_site,
+    http_only=config.http_only,
+    secure=config.secure,
+  )
+}
+
+///|
+/// Save, rotate or destroy the request's session and send or clear its cookie.
+/// Kept as a plain function so the middleware does not allocate a closure per
+/// request.
+fn session_persist(
+  ctx : Context,
+  store : SessionStore,
+  config : SessionCookieConfig,
+  had_cookie : Bool,
+  is_new : Bool,
+) -> Unit {
+  match ctx.session {
+    None => ()
+    Some(session) =>
+      if session.destroyed {
+        store.destroy(session.id)
+        if had_cookie {
+          session_send_cookie(ctx, config, "", Some(0L))
+        }
+      } else {
+        let rotated : String? = if session.regenerate && !is_new {
+          let old_id = session.id
+          session.id = store.generate_id()
+          store.destroy(old_id)
+          Some(session.id)
+        } else {
+          None
+        }
+        session.regenerate = false
+        if session.modified || rotated is Some(_) {
+          store.save(session)
+          session_send_cookie(ctx, config, session.id, config.max_age)
+        }
+      }
+  }
+}
+
+///|
 pub fn middleware_session(
   store : SessionStore,
   cookie~ : String = "feather_session",
@@ -329,15 +395,21 @@ pub fn middleware_session(
   http_only~ : Bool = true,
   secure~ : Bool = false,
 ) -> Middleware {
-  let cookie_name = cookie
-  let max_age : Int64? = if store.ttl() >= 1000L {
-    Some(store.ttl() / 1000L)
-  } else {
-    None
+  let config : SessionCookieConfig = {
+    name: cookie,
+    path,
+    same_site,
+    http_only,
+    secure,
+    max_age: if store.ttl() >= 1000L {
+      Some(store.ttl() / 1000L)
+    } else {
+      None
+    },
   }
   fn(next) {
     fn(ctx) raise {
-      let cookie_id = ctx.cookie(cookie_name)
+      let cookie_id = ctx.cookie(config.name)
       let existing = match cookie_id {
         Some(id) => store.get(id)
         None => None
@@ -350,54 +422,9 @@ pub fn middleware_session(
       }
       session.modified = false
       ctx.session = Some(session)
-      let send_cookie = fn(id : String) {
-        ctx.set_cookie(
-          cookie_name,
-          id,
-          path~,
-          max_age?,
-          same_site~,
-          http_only~,
-          secure~,
-        )
-      }
-      let persist = fn() {
-        match ctx.session {
-          None => ()
-          Some(session) =>
-            if session.destroyed {
-              store.destroy(session.id)
-              if had_cookie {
-                ctx.set_cookie(
-                  cookie_name,
-                  "",
-                  path~,
-                  max_age=0L,
-                  same_site~,
-                  http_only~,
-                  secure~,
-                )
-              }
-            } else {
-              let rotated : String? = if session.regenerate && !is_new {
-                let old_id = session.id
-                session.id = store.generate_id()
-                store.destroy(old_id)
-                Some(session.id)
-              } else {
-                None
-              }
-              session.regenerate = false
-              if session.modified || rotated is Some(_) {
-                store.save(session)
-                send_cookie(session.id)
-              }
-            }
-        }
-      }
-      errdefer persist()
+      errdefer session_persist(ctx, store, config, had_cookie, is_new)
       next(ctx)
-      persist()
+      session_persist(ctx, store, config, had_cookie, is_new)
     }
   }
 }

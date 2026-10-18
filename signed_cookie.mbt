@@ -121,17 +121,47 @@ fn sha256_compress(state : FixedArray[UInt], block : Bytes, offset : Int) -> Uni
 let sha256_tail_bytes : FixedArray[Byte] = FixedArray::make(128, b'\x00')
 
 ///|
-/// Compute the SHA-256 digest of `data`, returning 32 bytes.
-pub fn sha256(data : Bytes) -> Bytes {
-  let state = FixedArray::make(8, 0U)
+/// Reusable hash state for `sha256` / `hmac_sha256`. Compression never yields
+/// and the async runtime is single threaded, matching the shared
+/// `sha256_schedule` scratch above.
+let sha256_work_state : FixedArray[UInt] = FixedArray::make(8, 0U)
+
+///|
+/// Reusable key block for the two `hmac_sha256` hashes.
+let sha256_hmac_key_block : FixedArray[Byte] = FixedArray::make(64, b'\x00')
+
+///|
+/// Reusable inner-digest scratch for `hmac_sha256`.
+let sha256_hmac_inner_digest : FixedArray[Byte] = FixedArray::make(32, b'\x00')
+
+///|
+fn sha256_state_reset(state : FixedArray[UInt]) -> Unit {
   for i = 0; i < 8; i = i + 1 {
     state[i] = sha256_initial_state[i]
   }
-  let length = data.length()
-  let full_blocks = length / 64
+}
+
+///|
+/// Compress every full 64-byte block of `data` into `state`.
+fn sha256_update(state : FixedArray[UInt], data : Bytes) -> Unit {
+  let full_blocks = data.length() / 64
   for block = 0; block < full_blocks; block = block + 1 {
     sha256_compress(state, data, block * 64)
   }
+}
+
+///|
+/// Pad `data` and write the 32-byte digest of `state` into `out`. The
+/// `prefix_length` bytes already compressed before `data` count toward the
+/// message length encoded in the padding.
+fn sha256_finish_into(
+  state : FixedArray[UInt],
+  data : Bytes,
+  prefix_length : Int,
+  out : FixedArray[Byte],
+) -> Unit {
+  let length = data.length()
+  let full_blocks = length / 64
   let remainder = length - full_blocks * 64
   let tail_length = if remainder < 56 { 64 } else { 128 }
   let tail = sha256_tail_bytes
@@ -142,7 +172,8 @@ pub fn sha256(data : Bytes) -> Bytes {
     tail[i] = data[full_blocks * 64 + i]
   }
   tail[remainder] = b'\x80'
-  let bit_length = (length.to_int64() * 8L).reinterpret_as_uint64()
+  let bit_length = ((prefix_length + length).to_int64() * 8L)
+    .reinterpret_as_uint64()
   for i = 0; i < 8; i = i + 1 {
     let shift = (7 - i) * 8
     tail[tail_length - 8 + i] = ((bit_length >> shift) & 0xFFUL)
@@ -154,41 +185,58 @@ pub fn sha256(data : Bytes) -> Bytes {
   for block = 0; block < tail_length / 64; block = block + 1 {
     sha256_compress(state, tail_bytes, block * 64)
   }
-  let digest = FixedArray::make(32, b'\x00')
   for i = 0; i < 8; i = i + 1 {
     let word = state[i]
-    digest[i * 4] = ((word >> 24) & 0xFFU).reinterpret_as_int().to_byte()
-    digest[i * 4 + 1] = ((word >> 16) & 0xFFU).reinterpret_as_int().to_byte()
-    digest[i * 4 + 2] = ((word >> 8) & 0xFFU).reinterpret_as_int().to_byte()
-    digest[i * 4 + 3] = (word & 0xFFU).reinterpret_as_int().to_byte()
+    out[i * 4] = ((word >> 24) & 0xFFU).reinterpret_as_int().to_byte()
+    out[i * 4 + 1] = ((word >> 16) & 0xFFU).reinterpret_as_int().to_byte()
+    out[i * 4 + 2] = ((word >> 8) & 0xFFU).reinterpret_as_int().to_byte()
+    out[i * 4 + 3] = (word & 0xFFU).reinterpret_as_int().to_byte()
   }
+}
+
+///|
+/// Compute the SHA-256 digest of `data`, returning 32 bytes.
+pub fn sha256(data : Bytes) -> Bytes {
+  let state = sha256_work_state
+  sha256_state_reset(state)
+  sha256_update(state, data)
+  let digest = FixedArray::make(32, b'\x00')
+  sha256_finish_into(state, data, 0, digest)
   digest.unsafe_reinterpret_as_bytes()
 }
 
 ///|
 /// HMAC-SHA256 as specified by RFC 2104 and RFC 4231.
+///
+/// The inner and outer hashes are streamed into the shared `sha256_update` /
+/// `sha256_finish_into` helpers, so only the returned digest is allocated.
 pub fn hmac_sha256(key : Bytes, message : Bytes) -> Bytes {
   let normalized = if key.length() > 64 { sha256(key) } else { key }
   let key_length = normalized.length()
-  let message_length = message.length()
-  let inner = FixedArray::make(64 + message_length, b'\x00')
+  let state = sha256_work_state
+  let block = sha256_hmac_key_block
   for i = 0; i < 64; i = i + 1 {
     let byte = if i < key_length { normalized[i] } else { b'\x00' }
-    inner[i] = byte ^ b'\x36'
+    block[i] = byte ^ b'\x36'
   }
-  for i = 0; i < message_length; i = i + 1 {
-    inner[64 + i] = message[i]
-  }
-  let inner_digest = sha256(inner.unsafe_reinterpret_as_bytes())
-  let outer = FixedArray::make(96, b'\x00')
+  sha256_state_reset(state)
+  sha256_compress(state, block.unsafe_reinterpret_as_bytes(), 0)
+  sha256_update(state, message)
+  sha256_finish_into(state, message, 64, sha256_hmac_inner_digest)
   for i = 0; i < 64; i = i + 1 {
     let byte = if i < key_length { normalized[i] } else { b'\x00' }
-    outer[i] = byte ^ b'\x5c'
+    block[i] = byte ^ b'\x5c'
   }
-  for i = 0; i < 32; i = i + 1 {
-    outer[64 + i] = inner_digest[i]
-  }
-  sha256(outer.unsafe_reinterpret_as_bytes())
+  sha256_state_reset(state)
+  sha256_compress(state, block.unsafe_reinterpret_as_bytes(), 0)
+  let digest = FixedArray::make(32, b'\x00')
+  sha256_finish_into(
+    state,
+    sha256_hmac_inner_digest.unsafe_reinterpret_as_bytes(),
+    64,
+    digest,
+  )
+  digest.unsafe_reinterpret_as_bytes()
 }
 
 ///|

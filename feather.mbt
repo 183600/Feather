@@ -1334,19 +1334,9 @@ pub fn Context::get_path(self : Context) -> String {
 
 ///|
 pub fn Context::header(self : Context, key : String) -> String {
-  match self.request.headers.get(key) {
+  match get_header_ignore_case(self.request.headers, key) {
     Some(value) => value
-    None => {
-      let target = key.view()
-      let target_length = target.length()
-      for name, value in self.request.headers {
-        if name.length() == target_length &&
-          name.view().equal_ignore_ascii_case(target) {
-          return value
-        }
-      }
-      ""
-    }
+    None => ""
   }
 }
 
@@ -1501,18 +1491,76 @@ const PARSE_CACHE_LIMIT : Int = 128
 const PARSE_CACHE_MAX_KEY : Int = 4096
 
 ///|
-fn[K : Hash + Eq, V] parse_cache_set(
+/// Monotonic tick used by the bounded caches to approximate LRU eviction.
+let cache_clock : Ref[Int] = Ref(0)
+
+///|
+/// Return a fresh tick, marking the entry that uses it as most recent.
+fn cache_advance() -> Int {
+  cache_clock.val = cache_clock.val + 1
+  cache_clock.val
+}
+
+///|
+/// Record `key` as the most recently used entry of a bounded cache.
+fn[K : Hash + Eq] cache_touch(ages : Map[K, Int], key : K) -> Unit {
+  ages.set(key, cache_advance())
+}
+
+///|
+/// Evict the least recently used entry of a bounded cache.
+fn[K : Hash + Eq, V] cache_evict(cache : Map[K, V], ages : Map[K, Int]) -> Unit {
+  let mut oldest : K? = None
+  let mut oldest_tick = 0
+  for key, tick in ages {
+    let replace = match oldest {
+      None => true
+      Some(_) => tick < oldest_tick
+    }
+    if replace {
+      oldest = Some(key)
+      oldest_tick = tick
+    }
+  }
+  match oldest {
+    Some(key) => {
+      ignore(cache.remove(key))
+      ignore(ages.remove(key))
+    }
+    None =>
+      match cache.keys().next() {
+        Some(key) => ignore(cache.remove(key))
+        None => ()
+      }
+  }
+}
+
+///|
+/// Insert into a bounded cache, evicting the least recently used entry when
+/// the cache is full.
+fn[K : Hash + Eq, V] cache_set(
   cache : Map[K, V],
+  ages : Map[K, Int],
+  limit : Int,
   key : K,
   value : V,
 ) -> Unit {
-  if cache.length() >= PARSE_CACHE_LIMIT {
-    match cache.keys().next() {
-      Some(oldest) => ignore(cache.remove(oldest))
-      None => ()
-    }
+  if cache.length() >= limit && !cache.contains(key) {
+    cache_evict(cache, ages)
   }
   cache.set(key, value)
+  ages.set(key, cache_advance())
+}
+
+///|
+/// Insert into one of the parse caches.
+fn[K : Hash + Eq, V] parse_cache_set(
+  cache : Map[K, V],
+  ages : Map[K, Int],
+  key : K,
+  value : V,
+) -> Unit {
+  cache_set(cache, ages, PARSE_CACHE_LIMIT, key, value)
 }
 
 ///|
@@ -1520,8 +1568,16 @@ fn[K : Hash + Eq, V] parse_cache_set(
 let cookies_cache : Map[String, Map[String, String]] = Map([])
 
 ///|
+/// Recency ticks for `cookies_cache`.
+let cookies_cache_ages : Map[String, Int] = Map([])
+
+///|
 /// Last parsed query strings, keyed by the raw text after `?`.
 let queries_cache : Map[StringView, Map[String, String]] = Map([])
+
+///|
+/// Recency ticks for `queries_cache`.
+let queries_cache_ages : Map[StringView, Int] = Map([])
 
 ///|
 /// Most recently resolved `Cookie` header and its parsed map.
@@ -1541,11 +1597,14 @@ fn cookie_map_lookup(header : String) -> Map[String, String] {
     None => ()
   }
   let parsed = match cookies_cache.get(header) {
-    Some(cached) => cached
+    Some(cached) => {
+      cache_touch(cookies_cache_ages, header)
+      cached
+    }
     None => {
       let parsed = parse_cookie_map(header.view())
       if header.length() <= PARSE_CACHE_MAX_KEY {
-        parse_cache_set(cookies_cache, header, parsed)
+        parse_cache_set(cookies_cache, cookies_cache_ages, header, parsed)
       }
       parsed
     }
@@ -1575,11 +1634,14 @@ fn query_map_lookup(path : String, index : Int) -> Map[String, String] {
   }
   let source = path.view()[index + 1:]
   let parsed = match queries_cache.get(source) {
-    Some(cached) => cached
+    Some(cached) => {
+      cache_touch(queries_cache_ages, source)
+      cached
+    }
     None => {
       let parsed = parse_urlencoded_view(source)
       if source.length() <= PARSE_CACHE_MAX_KEY {
-        parse_cache_set(queries_cache, source, parsed)
+        parse_cache_set(queries_cache, queries_cache_ages, source, parsed)
       }
       parsed
     }
@@ -1601,6 +1663,10 @@ let last_query_multi_map : Ref[Map[String, Array[String]]?] = Ref(None)
 let queries_multi_cache : Map[StringView, Map[String, Array[String]]] = Map([])
 
 ///|
+/// Recency ticks for `queries_multi_cache`.
+let queries_multi_cache_ages : Map[StringView, Int] = Map([])
+
+///|
 fn query_multi_lookup(path : String, index : Int) -> Map[String, Array[String]] {
   match last_query_multi_path.val {
     Some(cached_path) =>
@@ -1614,11 +1680,14 @@ fn query_multi_lookup(path : String, index : Int) -> Map[String, Array[String]] 
   }
   let source = path.view()[index + 1:]
   let parsed = match queries_multi_cache.get(source) {
-    Some(cached) => cached
+    Some(cached) => {
+      cache_touch(queries_multi_cache_ages, source)
+      cached
+    }
     None => {
       let parsed = parse_urlencoded_multi(source)
       if source.length() <= PARSE_CACHE_MAX_KEY {
-        parse_cache_set(queries_multi_cache, source, parsed)
+        parse_cache_set(queries_multi_cache, queries_multi_cache_ages, source, parsed)
       }
       parsed
     }
@@ -1639,6 +1708,10 @@ let last_form_map : Ref[Map[String, String]?] = Ref(None)
 let forms_cache : Map[String, Map[String, String]] = Map([])
 
 ///|
+/// Recency ticks for `forms_cache`.
+let forms_cache_ages : Map[String, Int] = Map([])
+
+///|
 fn form_map_lookup(body : String) -> Map[String, String] {
   match last_form_body.val {
     Some(cached_body) =>
@@ -1651,11 +1724,14 @@ fn form_map_lookup(body : String) -> Map[String, String] {
     None => ()
   }
   let parsed = match forms_cache.get(body) {
-    Some(cached) => cached
+    Some(cached) => {
+      cache_touch(forms_cache_ages, body)
+      cached
+    }
     None => {
       let parsed = parse_urlencoded_view(body.view())
       if body.length() <= PARSE_CACHE_MAX_KEY {
-        parse_cache_set(forms_cache, body, parsed)
+        parse_cache_set(forms_cache, forms_cache_ages, body, parsed)
       }
       parsed
     }
@@ -1675,6 +1751,10 @@ let last_form_values_map : Ref[Map[String, Array[String]]?] = Ref(None)
 let forms_multi_cache : Map[String, Map[String, Array[String]]] = Map([])
 
 ///|
+/// Recency ticks for `forms_multi_cache`.
+let forms_multi_cache_ages : Map[String, Int] = Map([])
+
+///|
 fn form_values_lookup(body : String) -> Map[String, Array[String]] {
   match last_form_values_body.val {
     Some(cached_body) =>
@@ -1687,11 +1767,14 @@ fn form_values_lookup(body : String) -> Map[String, Array[String]] {
     None => ()
   }
   let parsed = match forms_multi_cache.get(body) {
-    Some(cached) => cached
+    Some(cached) => {
+      cache_touch(forms_multi_cache_ages, body)
+      cached
+    }
     None => {
       let parsed = parse_urlencoded_multi(body.view())
       if body.length() <= PARSE_CACHE_MAX_KEY {
-        parse_cache_set(forms_multi_cache, body, parsed)
+        parse_cache_set(forms_multi_cache, forms_multi_cache_ages, body, parsed)
       }
       parsed
     }
@@ -1713,18 +1796,28 @@ let last_multipart_parts : Ref[Array[MultipartPart]?] = Ref(None)
 let multipart_cache : Map[String, (String, Array[MultipartPart])] = Map([])
 
 ///|
+/// Recency ticks for `multipart_cache`.
+let multipart_cache_ages : Map[String, Int] = Map([])
+
+///|
+/// Copy one parsed part so callers get their own header map.
+fn copy_multipart_part(part : MultipartPart) -> MultipartPart {
+  {
+    name: part.name,
+    filename: part.filename,
+    content_type: part.content_type,
+    headers: part.headers.copy(),
+    data: part.data,
+  }
+}
+
+///|
 /// Copy a parsed multipart result so callers get their own array and header
 /// maps.
 fn copy_multipart_parts(parts : Array[MultipartPart]) -> Array[MultipartPart] {
   let copy : Array[MultipartPart] = Array(capacity=parts.length())
   for part in parts {
-    copy.push({
-      name: part.name,
-      filename: part.filename,
-      content_type: part.content_type,
-      headers: part.headers.copy(),
-      data: part.data,
-    })
+    copy.push(copy_multipart_part(part))
   }
   copy
 }
@@ -1749,6 +1842,7 @@ fn multipart_parts_lookup(
   let parsed = match multipart_cache.get(body) {
     Some((cached_type, parts)) =>
       if cached_type == content_type {
+        cache_touch(multipart_cache_ages, body)
         Some(parts)
       } else {
         None
@@ -1762,7 +1856,12 @@ fn multipart_parts_lookup(
       match result {
         Some(parts) =>
           if body.length() <= PARSE_CACHE_MAX_KEY {
-            parse_cache_set(multipart_cache, body, (content_type, parts))
+            parse_cache_set(
+              multipart_cache,
+              multipart_cache_ages,
+              body,
+              (content_type, parts),
+            )
           }
         None => ()
       }
@@ -1810,6 +1909,7 @@ pub fn Context::cookie(self : Context, name : String) -> String? {
   }
   match cookies_cache.get(header) {
     Some(cached) => {
+      cache_touch(cookies_cache_ages, header)
       last_cookie_header.val = Some(header)
       last_cookie_map.val = Some(cached)
       cached.get(name)
@@ -1817,7 +1917,7 @@ pub fn Context::cookie(self : Context, name : String) -> String? {
     None => {
       let parsed = parse_cookie_map(header.view())
       if header.length() <= PARSE_CACHE_MAX_KEY {
-        parse_cache_set(cookies_cache, header, parsed)
+        parse_cache_set(cookies_cache, cookies_cache_ages, header, parsed)
       }
       last_cookie_header.val = Some(header)
       last_cookie_map.val = Some(parsed)
@@ -3587,6 +3687,56 @@ pub fn multipart_boundary(content_type : String) -> String? {
 }
 
 ///|
+/// Most recently indexed header map, its size and its lower-cased name index.
+/// The index maps a lower-cased header name to the spelling stored in the map
+/// (`""` marks a name probed and absent). It is reused while the same map keeps
+/// the same number of entries, so repeated lookups cost one hash probe instead
+/// of a full scan.
+let last_header_index_map : Ref[Map[String, String]?] = Ref(None)
+
+///|
+let last_header_index_size : Ref[Int] = Ref(-1)
+
+///|
+let last_header_index : Ref[Map[String, String]?] = Ref(None)
+
+///|
+/// Lower-case a header name only when it contains upper-case letters.
+fn header_name_lower(name : String) -> String {
+  if has_ascii_upper(name.view()) {
+    name.to_lower()
+  } else {
+    name
+  }
+}
+
+///|
+fn header_index_for(headers : Map[String, String]) -> Map[String, String] {
+  match last_header_index_map.val {
+    Some(cached) =>
+      if physical_equal(cached, headers) &&
+        last_header_index_size.val == headers.length() {
+        match last_header_index.val {
+          Some(index) => return index
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let index : Map[String, String] = Map([], capacity=headers.length())
+  for name, _ in headers {
+    let lower = header_name_lower(name)
+    if !index.contains(lower) {
+      index.set(lower, name)
+    }
+  }
+  last_header_index_map.val = Some(headers)
+  last_header_index_size.val = headers.length()
+  last_header_index.val = Some(index)
+  index
+}
+
+///|
 fn get_header_ignore_case(
   headers : Map[String, String],
   name : String,
@@ -3595,13 +3745,31 @@ fn get_header_ignore_case(
     Some(value) => return Some(value)
     None => ()
   }
+  let index = header_index_for(headers)
+  let lower = header_name_lower(name)
+  match index.get(lower) {
+    Some(actual) => {
+      if actual == "" {
+        return None
+      }
+      match headers.get(actual) {
+        Some(value) => return Some(value)
+        None => ()
+      }
+    }
+    None => ()
+  }
   let target = name.view()
   let target_length = target.length()
   for key, value in headers {
     if key.length() == target_length &&
       key.view().equal_ignore_ascii_case(target) {
+      index.set(lower, key)
       return Some(value)
     }
+  }
+  if index.length() < headers.length() + 64 {
+    index.set(lower, "")
   }
   None
 }
@@ -3875,12 +4043,20 @@ pub fn Context::multipart_value(self : Context, name : String) -> String {
 
 ///|
 pub fn Context::multipart_file(self : Context, name : String) -> MultipartPart? {
-  for part in self.multipart() {
-    if part.name == name && part.filename != "" {
-      return Some(part)
-    }
+  if !self.is_multipart() {
+    return None
   }
-  None
+  match multipart_parts_lookup(self.request.body, self.header("Content-Type")) {
+    Some(parts) => {
+      for part in parts {
+        if part.name == name && part.filename != "" {
+          return Some(copy_multipart_part(part))
+        }
+      }
+      None
+    }
+    None => None
+  }
 }
 
 ///|
@@ -4449,25 +4625,61 @@ priv enum PreconditionOutcome {
 }
 
 ///|
+/// The four precondition request headers `evaluate_preconditions` consults,
+/// extracted once so both the server and the offline `App::respond` path share
+/// the evaluation without rebuilding a header map.
+priv struct PreconditionInput {
+  if_match : String?
+  if_none_match : String?
+  if_modified_since : String?
+  if_unmodified_since : String?
+}
+
+///|
+fn precondition_input_from_http(request : @http.Request) -> PreconditionInput {
+  {
+    if_match: request.headers.get(header_if_match),
+    if_none_match: request.headers.get(header_if_none_match),
+    if_modified_since: request.headers.get(header_if_modified_since),
+    if_unmodified_since: request.headers.get(header_if_unmodified_since),
+  }
+}
+
+///|
+fn precondition_input_from_map(
+  headers : Map[String, String],
+) -> PreconditionInput {
+  {
+    if_match: get_header_ignore_case(headers, "If-Match"),
+    if_none_match: get_header_ignore_case(headers, "If-None-Match"),
+    if_modified_since: get_header_ignore_case(headers, "If-Modified-Since"),
+    if_unmodified_since: get_header_ignore_case(
+      headers,
+      "If-Unmodified-Since",
+    ),
+  }
+}
+
+///|
 /// Evaluate `If-Match`, `If-Unmodified-Since`, `If-None-Match` and
 /// `If-Modified-Since` in the order required by RFC 9110 §13.2.2.
 ///
 /// `etag` and `mtime_secs` describe the selected representation; either may be
 /// absent (empty tag / `0`). `allows_not_modified` is true for `GET`/`HEAD`,
 /// the only methods that `304 Not Modified` may be sent for.
-fn evaluate_preconditions(
-  request : @http.Request,
+fn evaluate_preconditions_input(
+  input : PreconditionInput,
   etag : String,
   mtime_secs : Int64,
   allows_not_modified : Bool,
 ) -> PreconditionOutcome {
-  match request.headers.get(header_if_match) {
+  match input.if_match {
     Some(value) =>
       if !if_match_header_matches(value.view(), etag) {
         return PreconditionFailed
       }
     None =>
-      match request.headers.get(header_if_unmodified_since) {
+      match input.if_unmodified_since {
         Some(value) =>
           if !if_unmodified_since_ok(value.view(), mtime_secs) {
             return PreconditionFailed
@@ -4475,7 +4687,7 @@ fn evaluate_preconditions(
         None => ()
       }
   }
-  match request.headers.get(header_if_none_match) {
+  match input.if_none_match {
     Some(value) =>
       if etag_header_matches(value.view(), etag) {
         if allows_not_modified {
@@ -4486,7 +4698,7 @@ fn evaluate_preconditions(
       }
     None =>
       if allows_not_modified {
-        match request.headers.get(header_if_modified_since) {
+        match input.if_modified_since {
           Some(value) =>
             match parse_http_date(value) {
               Some(since) =>
@@ -4500,6 +4712,21 @@ fn evaluate_preconditions(
       }
   }
   PreconditionPass
+}
+
+///|
+fn evaluate_preconditions(
+  request : @http.Request,
+  etag : String,
+  mtime_secs : Int64,
+  allows_not_modified : Bool,
+) -> PreconditionOutcome {
+  evaluate_preconditions_input(
+    precondition_input_from_http(request),
+    etag,
+    mtime_secs,
+    allows_not_modified,
+  )
 }
 
 ///|
@@ -4972,6 +5199,12 @@ pub fn App::resolve_sse(
   if self.sse_handlers.is_empty() {
     return None
   }
+  // The dispatch check goes through the router's miss cache, so unrelated GET
+  // requests only pay one cached lookup instead of a full tree match.
+  match self.sse_router.match_dispatch("GET", clean_path_view(path)) {
+    DispatchFound(_) => ()
+    _ => return None
+  }
   match self.sse_router.route("GET", path) {
     RouteFound(route) =>
       match self.sse_handlers.get(route.path) {
@@ -4989,6 +5222,10 @@ pub fn App::resolve_websocket(
 ) -> (WebSocketHandler, Map[String, String])? {
   if self.ws_handlers.is_empty() {
     return None
+  }
+  match self.ws_router.match_dispatch("GET", clean_path_view(path)) {
+    DispatchFound(_) => ()
+    _ => return None
   }
   match self.ws_router.route("GET", path) {
     RouteFound(route) =>
@@ -5034,6 +5271,10 @@ pub fn App::resolve_stream(
 ) -> (StreamHandler, Map[String, String])? {
   if self.stream_handlers.is_empty() {
     return None
+  }
+  match self.stream_router.match_dispatch("GET", clean_path_view(path)) {
+    DispatchFound(_) => ()
+    _ => return None
   }
   match self.stream_router.route("GET", path) {
     RouteFound(route) =>
@@ -5270,6 +5511,27 @@ fn App::best_static_mount(
 const STATIC_LOOKUP_CACHE_LIMIT : Int = 256
 
 ///|
+/// Drop one entry from `static_lookup_cache`, preferring negative entries so
+/// repeated misses for files that do not exist cannot flush the hot hits.
+fn App::static_lookup_evict(self : App) -> Unit {
+  let mut stale : String? = None
+  for key, value in self.static_lookup_cache {
+    if value is None {
+      stale = Some(key)
+      break
+    }
+  }
+  match stale {
+    Some(key) => ignore(self.static_lookup_cache.remove(key))
+    None =>
+      match self.static_lookup_cache.keys().next() {
+        Some(oldest) => ignore(self.static_lookup_cache.remove(oldest))
+        None => ()
+      }
+  }
+}
+
+///|
 /// Resolve a static file request to its filesystem path, `Cache-Control` value
 /// and precompressed-serving flag.
 fn App::static_lookup(
@@ -5281,12 +5543,12 @@ fn App::static_lookup(
     Some(cached) => cached
     None => {
       let result = self.static_lookup_uncached(clean)
-      if clean.length() <= PARSE_CACHE_MAX_KEY {
+      // Paths that match no mount at all are dynamic routes; caching their
+      // negative result would only evict useful static entries.
+      if clean.length() <= PARSE_CACHE_MAX_KEY &&
+        (result is Some(_) || self.best_static_mount(clean) is Some(_)) {
         if self.static_lookup_cache.length() >= STATIC_LOOKUP_CACHE_LIMIT {
-          match self.static_lookup_cache.keys().next() {
-            Some(oldest) => ignore(self.static_lookup_cache.remove(oldest))
-            None => ()
-          }
+          self.static_lookup_evict()
         }
         self.static_lookup_cache.set(clean.to_owned(), result)
       }
@@ -5394,9 +5656,7 @@ pub fn App::respond(self : App, request : Request) -> Response {
     if self.etag_enabled {
       apply_etag(ctx.response)
     }
-    if request_has_preconditions(ctx.request) {
-      apply_preconditions(precondition_request(ctx.request), ctx.response)
-    }
+    apply_preconditions_facade(ctx.request, ctx.response)
   }
   ctx.response
 }
