@@ -314,8 +314,7 @@ fn match_dynamic_node(
 }
 
 ///|
-/// Extract the per-path bindings for `node`, reusing the previous result when
-/// the same path is matched again.
+/// Extract the per-path bindings for `node`.
 fn RouteNode::bound_values(
   self : RouteNode,
   path : StringView,
@@ -1143,8 +1142,7 @@ pub fn Context::get(self : Context, key : String) -> String {
 }
 
 ///|
-/// Parsed parameter names mapped to their `param:`-prefixed state keys, so
-/// repeated lookups reuse the key instead of concatenating per lookup.
+/// Parameter names mapped to their `param:`-prefixed state keys.
 let param_key_cache : Map[String, String] = Map([])
 
 ///|
@@ -1480,11 +1478,11 @@ fn parse_cookie_map(header : StringView) -> Map[String, String] {
 }
 
 ///|
-/// Upper bound on entries kept in the per-process parse caches.
+/// Maximum number of entries kept in the parse caches.
 const PARSE_CACHE_LIMIT : Int = 128
 
 ///|
-/// Headers longer than this are parsed but not cached.
+/// Maximum key length stored in the parse caches.
 const PARSE_CACHE_MAX_KEY : Int = 4096
 
 ///|
@@ -1511,8 +1509,7 @@ let cookies_cache : Map[String, Map[String, String]] = Map([])
 let queries_cache : Map[StringView, Map[String, String]] = Map([])
 
 ///|
-/// Most recently resolved `Cookie` header, matched by identity to skip hashing
-/// the (usually long) header on repeated lookups within one request.
+/// Most recently resolved `Cookie` header and its parsed map.
 let last_cookie_header : Ref[String?] = Ref(None)
 let last_cookie_map : Ref[Map[String, String]?] = Ref(None)
 
@@ -1544,9 +1541,7 @@ fn cookie_map_lookup(header : String) -> Map[String, String] {
 }
 
 ///|
-/// Most recently resolved query string, matched by the identity of the path
-/// string plus the `?` offset to skip substring allocation and hashing on
-/// repeated lookups within one request.
+/// Most recently resolved query string and its parsed map.
 let last_query_path : Ref[String?] = Ref(None)
 let last_query_start : Ref[Int] = Ref(-1)
 let last_query_map : Ref[Map[String, String]?] = Ref(None)
@@ -1581,9 +1576,7 @@ fn query_map_lookup(path : String, index : Int) -> Map[String, String] {
 }
 
 ///|
-/// Most recently resolved multi-value query string, matched like
-/// `query_map_lookup` to skip substring allocation and rescanning on repeated
-/// lookups within one request.
+/// Most recently resolved multi-value query string and its parsed map.
 let last_query_multi_path : Ref[String?] = Ref(None)
 let last_query_multi_start : Ref[Int] = Ref(-1)
 let last_query_multi_map : Ref[Map[String, Array[String]]?] = Ref(None)
@@ -1622,9 +1615,7 @@ fn query_multi_lookup(path : String, index : Int) -> Map[String, Array[String]] 
 }
 
 ///|
-/// Most recently resolved url-encoded form body, matched by the identity of the
-/// body string so repeated field lookups within one request reuse a single
-/// parse instead of rescanning the body for every field.
+/// Most recently resolved url-encoded form body and its parsed map.
 let last_form_body : Ref[String?] = Ref(None)
 let last_form_map : Ref[Map[String, String]?] = Ref(None)
 
@@ -1660,8 +1651,7 @@ fn form_map_lookup(body : String) -> Map[String, String] {
 }
 
 ///|
-/// Most recently resolved multi-value url-encoded form body, matched by the
-/// identity of the body string like `form_map_lookup`.
+/// Most recently resolved multi-value url-encoded form body and its parsed map.
 let last_form_values_body : Ref[String?] = Ref(None)
 let last_form_values_map : Ref[Map[String, Array[String]]?] = Ref(None)
 
@@ -1697,8 +1687,7 @@ fn form_values_lookup(body : String) -> Map[String, Array[String]] {
 }
 
 ///|
-/// Most recently resolved multipart body, matched by the identity of the body
-/// string like the url-encoded form caches.
+/// Most recently resolved multipart body and its parsed parts.
 let last_multipart_body : Ref[String?] = Ref(None)
 let last_multipart_content_type : Ref[String?] = Ref(None)
 let last_multipart_parts : Ref[Array[MultipartPart]?] = Ref(None)
@@ -1709,8 +1698,8 @@ let last_multipart_parts : Ref[Array[MultipartPart]?] = Ref(None)
 let multipart_cache : Map[String, (String, Array[MultipartPart])] = Map([])
 
 ///|
-/// Copy a parsed multipart result so callers get an array and header maps that
-/// are theirs to modify while the cached original stays untouched.
+/// Copy a parsed multipart result so callers get their own array and header
+/// maps.
 fn copy_multipart_parts(parts : Array[MultipartPart]) -> Array[MultipartPart] {
   let copy : Array[MultipartPart] = Array(capacity=parts.length())
   for part in parts {
@@ -2526,8 +2515,7 @@ pub fn base64_encode(data : Bytes) -> String {
 }
 
 ///|
-/// Hand `length` leading bytes of `out` over as an owned `Bytes`, reusing the
-/// array without copying when it already has exactly that size.
+/// Hand `length` leading bytes of `out` over as an owned `Bytes`.
 fn own_bytes_prefix(out : FixedArray[Byte], length : Int) -> Bytes {
   if length == out.length() {
     out.unsafe_reinterpret_as_bytes()
@@ -2546,8 +2534,7 @@ pub fn base64_decode(text : String) -> Bytes? {
 }
 
 ///|
-/// `base64_decode` on a view, so internal callers that already hold a slice of
-/// a larger string do not allocate a copy just to decode it.
+/// `base64_decode` for a `StringView`.
 fn base64_decode_view(view : StringView) -> Bytes? {
   let length = view.length()
   if length == 0 {
@@ -2813,9 +2800,7 @@ pub fn mime_type_for(path : String) -> String {
 }
 
 ///|
-/// Number of entries to reserve for a url-encoded result map, estimated from
-/// the source length so no extra scan is needed: short queries and forms keep
-/// the default size and long ones avoid a rehash.
+/// Estimated capacity for a url-encoded result map, based on the source length.
 fn urlencoded_capacity(source : StringView) -> Int {
   let estimate = source.length() >> 3
   if estimate < 4 {
@@ -3148,9 +3133,7 @@ pub fn Context::form_map(self : Context) -> Map[String, String] {
 }
 
 ///|
-/// Most recently normalized `Content-Type` header, matched by the identity of
-/// the raw header value so repeated media-type checks within one request skip
-/// re-parsing.
+/// Most recently normalized `Content-Type` header value.
 let last_content_type_header : Ref[String?] = Ref(None)
 let last_content_type_value : Ref[String] = Ref("")
 
@@ -4849,8 +4832,7 @@ fn clean_relative_path(relative : StringView) -> String? {
 /// Serve files from `root` under `url_prefix`.
 ///
 /// When `precompressed` is enabled, a sibling `<file>.gz` is served instead of
-/// the file itself to clients that accept the `gzip` coding, saving the CPU
-/// cost of compressing at request time. Responses carry
+/// the file itself to clients that accept the `gzip` coding. Responses carry
 /// `Vary: Accept-Encoding` so shared caches keep the variants apart.
 pub fn App::static_files(
   self : App,

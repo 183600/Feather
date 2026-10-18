@@ -140,10 +140,7 @@ priv struct AcceptEntry {
 }
 
 ///|
-/// Parse the media ranges of an `Accept` header once so several offers can be
-/// scored against the same ranges without rescanning the header. The matching
-/// rules mirror `accept_quality_for`, which keeps its allocation-free fused
-/// scan for the single-offer case.
+/// Parsed media ranges of an `Accept` header, for scoring against offers.
 fn parse_accept_entries(header : StringView) -> Array[AcceptEntry] {
   let entries : Array[AcceptEntry] = Array(capacity=8)
   let length = header.length()

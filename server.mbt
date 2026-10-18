@@ -92,8 +92,7 @@ let cached_date_second : Ref[Int64] = Ref(-1L)
 let cached_date_value : Ref[String] = Ref("")
 
 ///|
-/// `format_http_date` for the current second, memoized so a burst of
-/// responses within the same second reuses one formatted `Date` value.
+/// `format_http_date` value for the current second.
 /// The async runtime is single threaded, so the plain refs are safe.
 fn cached_http_date(unix_seconds : Int64) -> String {
   if cached_date_second.val == unix_seconds {
@@ -250,9 +249,7 @@ async fn request_from_http(
 }
 
 ///|
-/// Identity of the most recently built validators, so a burst of requests for
-/// the same unchanged file reuses the formatted `ETag` and `Last-Modified`
-/// values instead of rebuilding them per request.
+/// Identity of the most recently built validators.
 let validator_size : Ref[Int64] = Ref(-1L)
 let validator_mtime_secs : Ref[Int64] = Ref(-1L)
 let validator_mtime_nanos : Ref[Int] = Ref(-1)

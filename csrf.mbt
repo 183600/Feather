@@ -8,9 +8,7 @@ const CSRF_TOKEN_KEY : String = "_csrf"
 const CSRF_TOKEN_LENGTH : Int32 = 32
 
 ///|
-/// Shared generator for CSRF tokens. Seeding reads platform entropy, so it is
-/// done once instead of on every token; the ChaCha8 stream keeps tokens
-/// unpredictable.
+/// Shared generator for CSRF tokens, seeded from platform entropy.
 let csrf_rng : @random.Rand = @random.Rand()
 
 ///|
