@@ -39,6 +39,41 @@ test "Context form_values ignores other content types" {
 }
 
 ///|
+test "Context query_default falls back only for absent parameters" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/search?q=feather&empty=",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(ctx.query_default("q", "all"), "feather")
+  assert_eq(ctx.query_default("empty", "all"), "")
+  assert_eq(ctx.query_default("page", "1"), "1")
+  let bare = @feather.create_context()
+  assert_eq(bare.query_default("q", "all"), "all")
+}
+
+///|
+test "Context form_default falls back only for absent fields" {
+  let ctx = @feather.Context::new({
+    method: "POST",
+    path: "/submit",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "name=feather&note=",
+  })
+  assert_eq(ctx.form_default("name", "anon"), "feather")
+  assert_eq(ctx.form_default("note", "-"), "")
+  assert_eq(ctx.form_default("missing", "0"), "0")
+  let json = @feather.Context::new({
+    method: "POST",
+    path: "/submit",
+    headers: { "Content-Type": "application/json" },
+    body: "{\"name\":\"feather\"}",
+  })
+  assert_eq(json.form_default("name", "anon"), "anon")
+}
+
+///|
 async test "server stamps responses with a date header" {
   let app = @feather.App::new().get("/ping", fn(ctx) { ctx.text(200, "pong") })
   with_server(app, client => {

@@ -3,6 +3,7 @@ package "cto-new/feather"
 
 import {
   "moonbitlang/async/http",
+  "moonbitlang/async/io",
   "moonbitlang/async/socket",
   "moonbitlang/async/websocket",
   "moonbitlang/core/debug",
@@ -179,7 +180,7 @@ pub(all) struct Context {
   response : Response
   state : Map[String, String]
   json_state : Map[String, Json]
-  cleanups : Array[() -> Unit]
+  cleanups : Array[() -> Unit raise]
   mut file : FileResponse?
   mut session : Session?
 }
@@ -187,15 +188,16 @@ pub fn Context::accepts(Self, String) -> Bool
 pub fn Context::accepts_encoding(Self, String) -> Bool
 pub fn Context::accepts_language(Self, String) -> Bool
 pub fn Context::add_cookie(Self, String, String, path? : String, max_age? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> Unit
+pub fn Context::attachment(Self, String) -> Unit
 pub fn Context::basic_auth(Self) -> (String, String)?
 pub fn Context::bearer_token(Self) -> String?
 pub fn Context::bytes(Self, Int, Bytes, content_type? : String) -> Unit
-pub fn Context::clear_cookie(Self, String, path? : String) -> Unit
+pub fn Context::clear_cookie(Self, String, path? : String, domain? : String) -> Unit
 pub fn Context::content_type(Self) -> String
 pub fn Context::cookie(Self, String) -> String?
 pub fn Context::cookies(Self) -> Map[String, String]
 pub fn Context::csrf_token(Self, key? : String) -> String
-pub fn Context::defer_cleanup(Self, () -> Unit) -> Unit
+pub fn Context::defer_cleanup(Self, () -> Unit raise) -> Unit
 pub fn Context::fail(Self, Int, String) -> Unit raise HttpError
 pub fn Context::fail_with(Self, Int, String, Json) -> Unit raise HttpErrorPayload
 pub fn Context::file(Self, Int, String, content_type? : String, download_name? : String) -> Unit
@@ -205,6 +207,7 @@ pub fn Context::flash_peek(Self, category? : String) -> Array[String]
 pub fn Context::flash_take(Self, category? : String) -> Array[String]
 pub fn Context::flash_take_all(Self) -> Map[String, Array[String]]
 pub fn Context::form(Self, String) -> String
+pub fn Context::form_default(Self, String, String) -> String
 pub fn Context::form_map(Self) -> Map[String, String]
 pub fn Context::form_values(Self, String) -> Array[String]
 pub fn Context::forwarded_ip(Self) -> String
@@ -217,6 +220,7 @@ pub fn Context::get_path(Self) -> String
 pub fn Context::header(Self, String) -> String
 pub fn Context::host(Self) -> String
 pub fn Context::html(Self, Int, String) -> Unit
+pub fn Context::inline(Self, String) -> Unit
 pub fn Context::ip(Self) -> String
 pub fn Context::is_form(Self) -> Bool
 pub fn Context::is_json(Self) -> Bool
@@ -245,10 +249,12 @@ pub fn Context::protocol(Self) -> String
 pub fn Context::queries(Self) -> Map[String, String]
 pub fn Context::query(Self, String) -> String
 pub fn Context::query_bool(Self, String) -> Bool?
+pub fn Context::query_default(Self, String, String) -> String
 pub fn Context::query_int(Self, String) -> Int?
 pub fn Context::query_values(Self, String) -> Array[String]
 pub fn Context::redirect(Self, Int, String) -> Unit
 pub fn Context::request_id(Self) -> String
+pub fn Context::run_cleanups(Self) -> Unit
 pub fn Context::session(Self) -> Session?
 pub fn Context::session_destroy(Self) -> Bool
 pub fn Context::session_get(Self, String) -> String
@@ -486,6 +492,7 @@ pub fn Stream::set_status(Self, Int) -> Unit
 pub async fn Stream::write(Self, String) -> Unit
 pub async fn Stream::write_bytes(Self, Bytes) -> Unit
 pub async fn[T : ToJson] Stream::write_json(Self, T) -> Unit
+pub async fn Stream::write_reader(Self, &@io.Reader) -> Unit
 
 // Type aliases
 pub type Handler = (Context) -> Unit raise

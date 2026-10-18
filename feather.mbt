@@ -2110,7 +2110,10 @@ pub fn Context::defer_cleanup(self : Context, cleanup : () -> Unit raise) -> Uni
 }
 
 ///|
-fn content_disposition_attachment(name : String) -> String {
+/// Build a `Content-Disposition` field value with `disposition` (`attachment`
+/// or `inline`) and the given file name, quoting and escaping the ASCII form
+/// and appending an RFC 6266 `filename*` parameter for non-ASCII names.
+fn content_disposition_value(disposition : String, name : String) -> String {
   let clean = strip_control_characters(name)
   let view = clean.view()
   let length = view.length()
@@ -2134,13 +2137,19 @@ fn content_disposition_attachment(name : String) -> String {
     i = i + 1
   }
   if has_non_ascii {
-    "attachment; filename=\"" +
+    disposition +
+    "; filename=\"" +
     escaped.to_string() +
     "\"; filename*=UTF-8''" +
     url_encode(clean)
   } else {
-    "attachment; filename=\"" + escaped.to_string() + "\""
+    disposition + "; filename=\"" + escaped.to_string() + "\""
   }
+}
+
+///|
+fn content_disposition_attachment(name : String) -> String {
+  content_disposition_value("attachment", name)
 }
 
 ///|
@@ -2189,6 +2198,31 @@ pub fn Context::file(
 ///|
 pub fn Context::file_response(self : Context) -> FileResponse? {
   self.file
+}
+
+///|
+/// Set `Content-Disposition: attachment` with `filename`, so browsers download
+/// the response body instead of rendering it. The header can accompany any
+/// body set through `Context::file`, `Context::text`, `Context::bytes` or
+/// `Context::json`. The name is quoted and escaped, and non-ASCII names also
+/// receive an RFC 6266 `filename*` parameter.
+pub fn Context::attachment(self : Context, filename : String) -> Unit {
+  self.response.headers.set(
+    "Content-Disposition",
+    content_disposition_value("attachment", filename),
+  )
+}
+
+///|
+/// Set `Content-Disposition: inline` with `filename`, keeping the response
+/// eligible for in-place rendering (for example an image or PDF) while still
+/// naming the payload. Escaping and non-ASCII handling follow
+/// `Context::attachment`.
+pub fn Context::inline(self : Context, filename : String) -> Unit {
+  self.response.headers.set(
+    "Content-Disposition",
+    content_disposition_value("inline", filename),
+  )
 }
 
 ///|
@@ -3021,6 +3055,26 @@ pub fn Context::query(self : Context, name : String) -> String {
 }
 
 ///|
+/// Look up the query parameter `name`, returning `default` when the query
+/// string does not carry the parameter. Unlike `Context::query`, a parameter
+/// that is present with an empty value is returned as-is instead of being
+/// replaced by `default`.
+pub fn Context::query_default(
+  self : Context,
+  name : String,
+  default : String,
+) -> String {
+  match self.request.path.find("?") {
+    Some(index) =>
+      match query_map_lookup(self.request.path, index).get(name) {
+        Some(value) => value
+        None => default
+      }
+    None => default
+  }
+}
+
+///|
 pub fn Context::form(self : Context, name : String) -> String {
   if !self.is_form() {
     return ""
@@ -3043,6 +3097,25 @@ pub fn Context::form(self : Context, name : String) -> String {
   match form_map_lookup(self.request.body).get(name) {
     Some(value) => value
     None => ""
+  }
+}
+
+///|
+/// Look up the url-encoded form field `name`, returning `default` when the
+/// request body is not a form or does not carry the field. A field that is
+/// present with an empty value is returned as-is instead of being replaced by
+/// `default`.
+pub fn Context::form_default(
+  self : Context,
+  name : String,
+  default : String,
+) -> String {
+  if !self.is_form() {
+    return default
+  }
+  match form_map_lookup(self.request.body).get(name) {
+    Some(value) => value
+    None => default
   }
 }
 
@@ -5305,12 +5378,8 @@ pub fn App::handle(self : App, ctx : Context) -> Unit raise {
       chain
     }
   }
-  chain(ctx) catch {
-    err => {
-      ctx.run_cleanups()
-      raise err
-    }
-  }
+  errdefer ctx.run_cleanups()
+  chain(ctx)
   ctx.run_cleanups()
 }
 

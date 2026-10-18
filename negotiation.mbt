@@ -26,6 +26,8 @@ fn media_range_parts(range : StringView) -> (StringView, StringView)? {
 }
 
 ///|
+/// Quality value (in thousandths) that `header` assigns to `media_type`, or
+/// `0` when it is rejected. Used directly by white-box tests.
 fn accept_quality_for(header : StringView, media_type : StringView) -> Int {
   let (want_type, want_subtype) = match media_range_parts(media_type) {
     Some(parts) => parts
@@ -530,15 +532,6 @@ fn language_quality_from(
   } else {
     best_q
   }
-}
-
-///|
-/// Quality value (in thousandths) assigned to `language` by an
-/// `Accept-Language` header.
-///
-/// A missing or empty header accepts every language.
-fn accept_language_quality(header : StringView, language : StringView) -> Int {
-  language_quality_from(parse_language_entries(header), language)
 }
 
 ///|

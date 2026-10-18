@@ -119,6 +119,35 @@ async test "stream write_bytes sends raw bytes" {
 }
 
 ///|
+async test "stream write_reader copies a reader into the body" {
+  let app = @feather.App::new().stream("/copy", async fn(_ctx, stream) {
+    let reader = @io.MemoryReader(async fn(writer) {
+      writer.write(@utf8.encode("from-"))
+      writer.write(@utf8.encode("reader"))
+    })
+    stream.write_reader(reader)
+  })
+  with_stream_server(app, client => {
+    ignore(client.get("/copy"))
+    assert_eq(client.read_all().text(), "from-reader")
+  })
+}
+
+///|
+async test "stream write_reader starts an otherwise empty response" {
+  let app = @feather.App::new().stream("/copy", async fn(_ctx, stream) {
+    let reader = @io.MemoryReader(async fn(_writer) { () })
+    stream.write_reader(reader)
+    assert_true(stream.is_started())
+  })
+  with_stream_server(app, client => {
+    let response = client.get("/copy")
+    assert_eq(response.code, 200)
+    assert_eq(client.read_all().text(), "")
+  })
+}
+
+///|
 async test "stream close without writes still sends an empty response" {
   let app = @feather.App::new().stream("/feed", async fn(_ctx, _stream) { () })
   with_stream_server(app, client => {

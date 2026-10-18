@@ -96,6 +96,20 @@ pub async fn Stream::write_bytes(self : Stream, data : Bytes) -> Unit {
 }
 
 ///|
+/// Write the remaining contents of `reader` to the response body, sending the
+/// header first. This streams large files or generated payloads without
+/// materializing them in memory, and otherwise behaves like
+/// `Stream::write_bytes`: writing after `close` is a no-op.
+pub async fn Stream::write_reader(self : Stream, reader : &@io.Reader) -> Unit {
+  if self.closed {
+    return
+  }
+  self.start()
+  self.conn.write_reader(reader)
+  self.conn.flush()
+}
+
+///|
 /// Write one JSON-encoded value to the response body, which is convenient for
 /// newline-delimited streaming APIs.
 pub async fn[T : @json.ToJson] Stream::write_json(

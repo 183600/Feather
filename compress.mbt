@@ -144,10 +144,6 @@ fn ChunkSink::new() -> ChunkSink {
 }
 
 ///|
-#deprecated
-extend ChunkSink with @io.Writer::{write_once, write, write_reader}
-
-///|
 impl @io.Writer for ChunkSink with fn write_once(self, buf, offset~, len~) {
   if len > 0 {
     self.chunks.push(buf[offset:offset + len].to_owned())
