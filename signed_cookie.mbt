@@ -65,8 +65,14 @@ fn read_uint32_be(data : Bytes, offset : Int) -> UInt {
 }
 
 ///|
+/// Reusable message schedule for `sha256_compress`. The async runtime is
+/// single threaded and compression never yields, so a shared scratch buffer
+/// avoids one allocation per 64-byte block.
+let sha256_schedule : FixedArray[UInt] = FixedArray::make(64, 0U)
+
+///|
 fn sha256_compress(state : FixedArray[UInt], block : Bytes, offset : Int) -> Unit {
-  let schedule = FixedArray::make(64, 0U)
+  let schedule = sha256_schedule
   for i = 0; i < 16; i = i + 1 {
     schedule[i] = read_uint32_be(block, offset + i * 4)
   }
@@ -111,6 +117,10 @@ fn sha256_compress(state : FixedArray[UInt], block : Bytes, offset : Int) -> Uni
 }
 
 ///|
+/// Reusable padding buffer for the final one or two blocks of `sha256`.
+let sha256_tail_bytes : FixedArray[Byte] = FixedArray::make(128, b'\x00')
+
+///|
 /// Compute the SHA-256 digest of `data`, returning 32 bytes.
 pub fn sha256(data : Bytes) -> Bytes {
   let state = FixedArray::make(8, 0U)
@@ -124,7 +134,10 @@ pub fn sha256(data : Bytes) -> Bytes {
   }
   let remainder = length - full_blocks * 64
   let tail_length = if remainder < 56 { 64 } else { 128 }
-  let tail = FixedArray::make(tail_length, b'\x00')
+  let tail = sha256_tail_bytes
+  for i = 0; i < tail_length; i = i + 1 {
+    tail[i] = b'\x00'
+  }
   for i = 0; i < remainder; i = i + 1 {
     tail[i] = data[full_blocks * 64 + i]
   }
@@ -156,22 +169,26 @@ pub fn sha256(data : Bytes) -> Bytes {
 /// HMAC-SHA256 as specified by RFC 2104 and RFC 4231.
 pub fn hmac_sha256(key : Bytes, message : Bytes) -> Bytes {
   let normalized = if key.length() > 64 { sha256(key) } else { key }
-  let pad = FixedArray::make(64, b'\x00')
-  for i = 0; i < normalized.length(); i = i + 1 {
-    pad[i] = normalized[i]
-  }
-  let inner = @buffer.Buffer::Buffer(size_hint=64 + message.length())
+  let key_length = normalized.length()
+  let message_length = message.length()
+  let inner = FixedArray::make(64 + message_length, b'\x00')
   for i = 0; i < 64; i = i + 1 {
-    inner.write_byte(pad[i] ^ b'\x36')
+    let byte = if i < key_length { normalized[i] } else { b'\x00' }
+    inner[i] = byte ^ b'\x36'
   }
-  inner.write_bytes(message)
-  let inner_digest = sha256(inner.to_bytes())
-  let outer = @buffer.Buffer::Buffer(size_hint=64 + 32)
+  for i = 0; i < message_length; i = i + 1 {
+    inner[64 + i] = message[i]
+  }
+  let inner_digest = sha256(inner.unsafe_reinterpret_as_bytes())
+  let outer = FixedArray::make(96, b'\x00')
   for i = 0; i < 64; i = i + 1 {
-    outer.write_byte(pad[i] ^ b'\x5c')
+    let byte = if i < key_length { normalized[i] } else { b'\x00' }
+    outer[i] = byte ^ b'\x5c'
   }
-  outer.write_bytes(inner_digest)
-  sha256(outer.to_bytes())
+  for i = 0; i < 32; i = i + 1 {
+    outer[64 + i] = inner_digest[i]
+  }
+  sha256(outer.unsafe_reinterpret_as_bytes())
 }
 
 ///|
@@ -189,31 +206,100 @@ fn constant_time_bytes_equal(left : Bytes, right : Bytes) -> Bool {
 }
 
 ///|
+/// URL-safe base64 alphabet (RFC 4648 §5), used by signed tokens.
+let base64url_alphabet : Bytes = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+///|
 /// Encode bytes with the URL-safe base64 alphabet, without padding.
 fn base64url_encode(data : Bytes) -> String {
-  let standard = base64_encode(data)
-  let view = standard.view()
-  let builder = StringBuilder(size_hint=view.length())
-  for i = 0; i < view.length(); i = i + 1 {
-    let code = view.unsafe_get(i).to_int()
-    if code == 43 {
-      builder.write_char('-')
-    } else if code == 47 {
-      builder.write_char('_')
-    } else if code == 61 {
-      break
-    } else {
-      builder.write_char(code.unsafe_to_char())
-    }
+  let length = data.length()
+  if length == 0 {
+    return ""
   }
-  builder.to_string()
+  let alphabet = base64url_alphabet
+  let full_groups = length / 3
+  let remainder = length - full_groups * 3
+  let out_len = full_groups * 4 +
+    (if remainder == 1 {
+      2
+    } else if remainder == 2 {
+      3
+    } else {
+      0
+    })
+  let out = FixedArray::make(out_len, b'A')
+  let mut i = 0
+  let mut out_index = 0
+  while i + 3 <= length {
+    let value = (data[i].to_int() << 16) |
+      (data[i + 1].to_int() << 8) |
+      data[i + 2].to_int()
+    out[out_index] = alphabet[(value >> 18) & 63]
+    out[out_index + 1] = alphabet[(value >> 12) & 63]
+    out[out_index + 2] = alphabet[(value >> 6) & 63]
+    out[out_index + 3] = alphabet[value & 63]
+    i = i + 3
+    out_index = out_index + 4
+  }
+  if remainder == 1 {
+    let value = data[i].to_int() << 16
+    out[out_index] = alphabet[(value >> 18) & 63]
+    out[out_index + 1] = alphabet[(value >> 12) & 63]
+  } else if remainder == 2 {
+    let value = (data[i].to_int() << 16) | (data[i + 1].to_int() << 8)
+    out[out_index] = alphabet[(value >> 18) & 63]
+    out[out_index + 1] = alphabet[(value >> 12) & 63]
+    out[out_index + 2] = alphabet[(value >> 6) & 63]
+  }
+  @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes())
+}
+
+///|
+/// Value of one URL-safe base64 character: `-` and `+` encode 62, `_` and `/`
+/// encode 63, other non-alphabet characters are `-1`.
+fn base64url_value(value : UInt16) -> Int {
+  let code = value.to_int()
+  if code >= 65 && code <= 90 {
+    code - 65
+  } else if code >= 97 && code <= 122 {
+    code - 71
+  } else if code >= 48 && code <= 57 {
+    code + 4
+  } else if code == 43 || code == 45 {
+    62
+  } else if code == 47 || code == 95 {
+    63
+  } else {
+    -1
+  }
 }
 
 ///|
 /// Decode URL-safe base64 text with optional padding. Returns `None` for
 /// malformed input.
 fn base64url_decode(text : String) -> Bytes? {
-  let view = text.view()
+  base64url_decode_view(text.view())
+}
+
+///|
+/// `base64url_decode` for a `StringView`.
+fn base64url_decode_view(view : StringView) -> Bytes? {
+  let length = view.length()
+  let mut i = 0
+  while i < length {
+    if view.unsafe_get(i).to_int() >= 128 {
+      return base64url_decode_slow(view)
+    }
+    i = i + 1
+  }
+  base64_decode_core(view, base64url_value)
+}
+
+///|
+/// `base64url_decode` for text containing non-ASCII characters: the characters
+/// are first narrowed to bytes (which may spell out multi-byte UTF-8 that the
+/// lossy decode then replaces), matching the historical decoding path.
+fn base64url_decode_slow(view : StringView) -> Bytes? {
   let translated = FixedArray::make(view.length(), b'\x00')
   for i = 0; i < view.length(); i = i + 1 {
     let code = view.unsafe_get(i).to_int()
@@ -251,7 +337,31 @@ fn signed_cookie_signing_input(
   encoded_value : String,
   expires_at : Int64,
 ) -> Bytes {
-  @utf8.encode(name + "\n" + encoded_value + "." + expires_at.to_string())
+  let name_bytes = @utf8.encode(name)
+  let encoded_bytes = @utf8.encode(encoded_value)
+  let expiry_bytes = @utf8.encode(expires_at.to_string())
+  let out = FixedArray::make(
+    name_bytes.length() + encoded_bytes.length() + expiry_bytes.length() + 2,
+    b'\x00',
+  )
+  let mut index = 0
+  for i = 0; i < name_bytes.length(); i = i + 1 {
+    out[index] = name_bytes[i]
+    index = index + 1
+  }
+  out[index] = b'\n'
+  index = index + 1
+  for i = 0; i < encoded_bytes.length(); i = i + 1 {
+    out[index] = encoded_bytes[i]
+    index = index + 1
+  }
+  out[index] = b'.'
+  index = index + 1
+  for i = 0; i < expiry_bytes.length(); i = i + 1 {
+    out[index] = expiry_bytes[i]
+    index = index + 1
+  }
+  out.unsafe_reinterpret_as_bytes()
 }
 
 ///|
@@ -329,14 +439,14 @@ pub fn verify_signed_cookie_token(
     @utf8.encode(secret),
     signed_cookie_signing_input(name, encoded_value_owned, deadline),
   )
-  let signature = match base64url_decode(signature_view.to_owned()) {
+  let signature = match base64url_decode_view(signature_view) {
     Some(value) => value
     None => return None
   }
   if !constant_time_bytes_equal(signature, expected) {
     return None
   }
-  match base64url_decode(encoded_value_owned) {
+  match base64url_decode_view(encoded_value) {
     Some(value) => Some(@utf8.decode_lossy(value))
     None => None
   }

@@ -2593,8 +2593,12 @@ pub fn base64_decode(text : String) -> Bytes? {
 }
 
 ///|
-/// `base64_decode` for a `StringView`.
-fn base64_decode_view(view : StringView) -> Bytes? {
+/// `base64_decode` core: `decoder` maps a character to its 6-bit value, or
+/// `-1` when the character is not in the alphabet.
+fn base64_decode_core(
+  view : StringView,
+  decoder : (UInt16) -> Int,
+) -> Bytes? {
   let length = view.length()
   if length == 0 {
     return Some(b"")
@@ -2620,9 +2624,9 @@ fn base64_decode_view(view : StringView) -> Bytes? {
   let mut out_index = 0
   while i < length {
     let remaining = length - i
-    let first = base64_value(view.unsafe_get(i))
+    let first = decoder(view.unsafe_get(i))
     let second = if remaining >= 2 {
-      base64_value(view.unsafe_get(i + 1))
+      decoder(view.unsafe_get(i + 1))
     } else {
       -1
     }
@@ -2639,7 +2643,7 @@ fn base64_decode_view(view : StringView) -> Bytes? {
       if third_raw == ('=' : UInt16) {
         return None
       }
-      let third = base64_value(third_raw)
+      let third = decoder(third_raw)
       if third < 0 {
         return None
       }
@@ -2653,7 +2657,7 @@ fn base64_decode_view(view : StringView) -> Bytes? {
       }
       return Some(own_bytes_prefix(out, out_index))
     }
-    let third = base64_value(third_raw)
+    let third = decoder(third_raw)
     if third < 0 {
       return None
     }
@@ -2666,7 +2670,7 @@ fn base64_decode_view(view : StringView) -> Bytes? {
       }
       return Some(own_bytes_prefix(out, out_index))
     }
-    let fourth = base64_value(fourth_raw)
+    let fourth = decoder(fourth_raw)
     if fourth < 0 {
       return None
     }
@@ -2675,6 +2679,12 @@ fn base64_decode_view(view : StringView) -> Bytes? {
     i = i + 4
   }
   Some(own_bytes_prefix(out, out_index))
+}
+
+///|
+/// `base64_decode` for a `StringView`.
+fn base64_decode_view(view : StringView) -> Bytes? {
+  base64_decode_core(view, base64_value)
 }
 
 ///|
@@ -5384,7 +5394,9 @@ pub fn App::respond(self : App, request : Request) -> Response {
     if self.etag_enabled {
       apply_etag(ctx.response)
     }
-    apply_preconditions(precondition_request(ctx.request), ctx.response)
+    if request_has_preconditions(ctx.request) {
+      apply_preconditions(precondition_request(ctx.request), ctx.response)
+    }
   }
   ctx.response
 }

@@ -186,6 +186,17 @@ fn request_method_from_string(meth : String) -> @http.RequestMethod {
 }
 
 ///|
+/// Whether the facade request carries any precondition header that
+/// `apply_preconditions` consults. Checked before adapting the request so
+/// unconditional requests avoid building a header map.
+fn request_has_preconditions(request : Request) -> Bool {
+  get_header_ignore_case(request.headers, "If-Match") is Some(_) ||
+  get_header_ignore_case(request.headers, "If-None-Match") is Some(_) ||
+  get_header_ignore_case(request.headers, "If-Modified-Since") is Some(_) ||
+  get_header_ignore_case(request.headers, "If-Unmodified-Since") is Some(_)
+}
+
+///|
 /// Adapt the facade's request to the `@http.Request` shape
 /// `apply_preconditions` consumes, so the offline `App::respond` path
 /// evaluates conditional requests like the server does.
