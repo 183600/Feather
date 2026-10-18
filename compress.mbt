@@ -64,6 +64,16 @@ fn accept_encoding_allows_gzip(header : StringView) -> Bool {
 }
 
 ///|
+/// Same check as `accept_encoding_allows_gzip` for a header string, reusing
+/// the cached `Accept-Encoding` parse when the value is already known.
+fn accept_encoding_allows_gzip_cached(header : String) -> Bool {
+  if trim_ascii_space(header.view()).is_empty() {
+    return false
+  }
+  encoding_quality_from(encoding_entries_cached(header), "gzip".view()) > 0
+}
+
+///|
 fn content_type_is_compressible(content_type : StringView) -> Bool {
   let mut end = content_type.length()
   let mut i = 0
@@ -204,7 +214,7 @@ async fn compress_response(
     Some(value) => value
     None => return
   }
-  if !accept_encoding_allows_gzip(accept_encoding.view()) {
+  if !accept_encoding_allows_gzip_cached(accept_encoding) {
     return
   }
   let body_bytes = match response.data {

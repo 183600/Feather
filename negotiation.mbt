@@ -319,6 +319,31 @@ fn encoding_quality_from(
 }
 
 ///|
+/// Most recently parsed `Accept-Encoding` header and its coding entries.
+let last_encoding_header : Ref[String?] = Ref(None)
+
+///|
+let last_encoding_entries : Ref[Array[EncodingEntry]?] = Ref(None)
+
+///|
+fn encoding_entries_cached(header : String) -> Array[EncodingEntry] {
+  match last_encoding_header.val {
+    Some(cached) =>
+      if physical_equal(cached, header) {
+        match last_encoding_entries.val {
+          Some(entries) => return entries
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let entries = parse_encoding_entries(header.view())
+  last_encoding_header.val = Some(header)
+  last_encoding_entries.val = Some(entries)
+  entries
+}
+
+///|
 /// Quality value (in thousandths) assigned to `coding` by an
 /// `Accept-Encoding` header.
 ///
@@ -341,8 +366,11 @@ fn accept_encoding_quality(header : StringView, coding : StringView) -> Int {
 /// acceptable by default whenever the header does not explicitly reject it
 /// (RFC 9110 §12.5.3).
 pub fn Context::accepts_encoding(self : Context, encoding : String) -> Bool {
-  accept_encoding_quality(self.header("Accept-Encoding").view(), encoding.view()) >
-  0
+  let header = self.header("Accept-Encoding")
+  if trim_ascii_space(header.view()).is_empty() {
+    return true
+  }
+  encoding_quality_from(encoding_entries_cached(header), encoding.view()) > 0
 }
 
 ///|
@@ -356,9 +384,9 @@ pub fn Context::preferred_encoding(
   self : Context,
   offers : ArrayView[String],
 ) -> String? {
-  let header = self.header("Accept-Encoding").view()
-  let blank = trim_ascii_space(header).is_empty()
-  let entries = if blank { [] } else { parse_encoding_entries(header) }
+  let header = self.header("Accept-Encoding")
+  let blank = trim_ascii_space(header.view()).is_empty()
+  let entries = if blank { [] } else { encoding_entries_cached(header) }
   let mut best : String? = None
   let mut best_q = 0
   for offer in offers {
@@ -438,6 +466,31 @@ fn parse_language_entries(header : StringView) -> Array[LanguageEntry] {
 }
 
 ///|
+/// Most recently parsed `Accept-Language` header and its language entries.
+let last_language_header : Ref[String?] = Ref(None)
+
+///|
+let last_language_entries : Ref[Array[LanguageEntry]?] = Ref(None)
+
+///|
+fn language_entries_cached(header : String) -> Array[LanguageEntry] {
+  match last_language_header.val {
+    Some(cached) =>
+      if physical_equal(cached, header) {
+        match last_language_entries.val {
+          Some(entries) => return entries
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let entries = parse_language_entries(header.view())
+  last_language_header.val = Some(header)
+  last_language_entries.val = Some(entries)
+  entries
+}
+
+///|
 /// Quality assigned to `language` by parsed `Accept-Language` entries.
 ///
 /// Matching follows RFC 9110 §12.5.4: a range matches when it is `*`, equals
@@ -495,7 +548,10 @@ fn accept_language_quality(header : StringView, language : StringView) -> Int {
 /// matched language, and a language that matches no range and is not covered
 /// by `*` is not acceptable.
 pub fn Context::accepts_language(self : Context, language : String) -> Bool {
-  accept_language_quality(self.header("Accept-Language").view(), language.view()) >
+  language_quality_from(
+    language_entries_cached(self.header("Accept-Language")),
+    language.view(),
+  ) >
   0
 }
 
@@ -509,7 +565,7 @@ pub fn Context::preferred_language(
   self : Context,
   offers : ArrayView[String],
 ) -> String? {
-  let entries = parse_language_entries(self.header("Accept-Language").view())
+  let entries = language_entries_cached(self.header("Accept-Language"))
   let mut best : String? = None
   let mut best_q = 0
   for offer in offers {

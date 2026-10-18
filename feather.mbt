@@ -727,46 +727,57 @@ fn Router::find_node_raw(
     Some(root) => root
     None => return None
   }
-  match root.exact_cache {
-    Some(cache) =>
-      match cache.get_from_string(clean_path) {
-        Some(node) => return Some((node, -1))
-        None => ()
-      }
-    None => ()
-  }
   if !root.has_dynamic {
-    match match_static_node(root, clean_path, 0) {
-      Some(node) => Some((node, -1))
-      None => None
-    }
-  } else {
-    match self.dynamic_caches.get(tree_key) {
+    match root.exact_cache {
       Some(cache) =>
         match cache.get_from_string(clean_path) {
-          Some(hit) => return Some(hit)
+          Some(node) => return Some((node, -1))
           None => ()
         }
       None => ()
     }
-    match match_dynamic_node(root, clean_path, 0) {
-      Some(outcome) => {
-        let hit = (outcome.node, outcome.wildcard_start)
-        let cache = match self.dynamic_caches.get(tree_key) {
-          Some(cache) => cache
-          None => {
-            let cache : Map[String, (RouteNode, Int32)] = Map([], capacity=32)
-            self.dynamic_caches.set(tree_key, cache)
-            cache
-          }
-        }
-        if cache.length() < 128 {
-          cache.set(clean_path.to_owned(), hit)
-        }
-        Some(hit)
-      }
+    return match match_static_node(root, clean_path, 0) {
+      Some(node) => Some((node, -1))
       None => None
     }
+  }
+  // Dynamic trees resolve every path, static or not, through one lookup in the
+  // per-method dispatch cache so a path is only hashed once per request.
+  let cache = match self.dynamic_caches.get(tree_key) {
+    Some(cache) => cache
+    None => {
+      let cache : Map[String, (RouteNode, Int32)] = Map([], capacity=32)
+      self.dynamic_caches.set(tree_key, cache)
+      cache
+    }
+  }
+  match cache.get_from_string(clean_path) {
+    Some(hit) => return Some(hit)
+    None => ()
+  }
+  match root.exact_cache {
+    Some(exact) =>
+      match exact.get_from_string(clean_path) {
+        Some(node) => {
+          let hit = (node, -1)
+          if cache.length() < 128 {
+            cache.set(clean_path.to_owned(), hit)
+          }
+          return Some(hit)
+        }
+        None => ()
+      }
+    None => ()
+  }
+  match match_dynamic_node(root, clean_path, 0) {
+    Some(outcome) => {
+      let hit = (outcome.node, outcome.wildcard_start)
+      if cache.length() < 128 {
+        cache.set(clean_path.to_owned(), hit)
+      }
+      Some(hit)
+    }
+    None => None
   }
 }
 
@@ -3976,7 +3987,7 @@ pub fn format_http_date(unix_seconds : Int64) -> String {
     minute = ((time_of_day % 3600L) / 60L).to_int()
     second = (time_of_day % 60L).to_int()
   }
-  let builder = StringBuilder(size_hint=58)
+  let builder = StringBuilder(size_hint=29)
   builder.write_string(http_weekdays[weekday.to_int()])
   builder.write_string(", ")
   write_two_digits(builder, day)
@@ -4837,7 +4848,7 @@ pub fn App::websocket(
 
 ///|
 pub fn App::has_websocket(self : App, path : String) -> Bool {
-  self.ws_router.route("GET", path) is RouteFound(_)
+  self.ws_router.is_routable("GET", path)
 }
 
 ///|
@@ -4858,7 +4869,7 @@ pub fn App::sse(self : App, path : String, handler : SseHandler) -> App {
 
 ///|
 pub fn App::has_sse(self : App, path : String) -> Bool {
-  self.sse_router.route("GET", path) is RouteFound(_)
+  self.sse_router.is_routable("GET", path)
 }
 
 ///|
@@ -4921,7 +4932,7 @@ pub fn App::stream(self : App, path : String, handler : StreamHandler) -> App {
 
 ///|
 pub fn App::has_stream(self : App, path : String) -> Bool {
-  self.stream_router.route("GET", path) is RouteFound(_)
+  self.stream_router.is_routable("GET", path)
 }
 
 ///|

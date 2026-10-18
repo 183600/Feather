@@ -458,12 +458,29 @@ async fn send_file_response(
 }
 
 ///|
+/// Last peer address formatted by `socket_addr_host` and its host string.
+/// The async runtime is single threaded, so the plain refs are safe.
+let cached_peer_addr : Ref[@socket.Addr?] = Ref(None)
+
+///|
+let cached_peer_host : Ref[String] = Ref("")
+
+///|
 /// Host part of a peer address, without the ephemeral port.
 ///
 /// Recorded as the `remote_addr` context state so IP-based logic (logging,
 /// `Context::ip`, rate limiting) keys by client rather than by connection.
+/// Keep-alive requests repeat the same peer address, so the formatted host is
+/// cached and reused without re-encoding the address every time.
 fn socket_addr_host(addr : @socket.Addr) -> String {
-  if addr.is_ipv6() {
+  match cached_peer_addr.val {
+    Some(cached) =>
+      if cached == addr {
+        return cached_peer_host.val
+      }
+    None => ()
+  }
+  let host = if addr.is_ipv6() {
     let text = addr.to_string()
     match text.find("]") {
       Some(index) => text[:index + 1].to_owned()
@@ -473,6 +490,9 @@ fn socket_addr_host(addr : @socket.Addr) -> String {
     let ip = addr.ip()
     "\{ip >> 24}.\{(ip >> 16) & 255}.\{(ip >> 8) & 255}.\{ip & 255}"
   }
+  cached_peer_addr.val = Some(addr)
+  cached_peer_host.val = host
+  host
 }
 
 ///|
@@ -526,10 +546,24 @@ async fn send_response(
       Some(data) => data.length() > 0
       None => !response.body.is_empty()
     })
+  // Encode a textual body at most once: the same bytes feed both the
+  // `Content-Length` header and the response body.
+  let body_bytes : Bytes? = if head || !has_body {
+    None
+  } else {
+    match response.data {
+      Some(data) => Some(data)
+      None => Some(@utf8.encode(response.body))
+    }
+  }
   if has_body && !headers.contains(header_content_length) {
-    let body_length = match response.data {
+    let body_length = match body_bytes {
       Some(data) => data.length()
-      None => utf8_byte_length(response.body.view())
+      None =>
+        match response.data {
+          Some(data) => data.length()
+          None => utf8_byte_length(response.body.view())
+        }
     }
     headers.set(header_content_length, body_length.to_string())
   } else if !body_allowed {
@@ -546,9 +580,9 @@ async fn send_response(
     cookies=response.cookies,
   )
   if !head && has_body {
-    match response.data {
+    match body_bytes {
       Some(data) => conn.write(data)
-      None => conn.write(@utf8.encode(response.body))
+      None => ()
     }
   }
   conn.end_response()
