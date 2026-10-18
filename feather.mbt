@@ -2986,7 +2986,29 @@ fn query_key_matches(
 }
 
 ///|
-fn query_param(source : StringView, name : String) -> String {
+/// Whether a parameter name contains a character (`%` or `+`) whose spelling
+/// changes between the raw key text and the decoded key. Names without one can
+/// be looked up in the parsed map directly; names with one must also be
+/// compared against the raw key text, which is what `query_param_opt` does.
+fn name_needs_raw(name : StringView) -> Bool {
+  let length = name.length()
+  let mut i = 0
+  while i < length {
+    let code = name.unsafe_get(i)
+    if code == ('%' : UInt16) || code == ('+' : UInt16) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+/// Find the value of `name` in the raw query or form source, comparing each
+/// key against both its raw and its decoded spelling. The last matching pair
+/// wins, mirroring `parse_urlencoded_view`. Returns `None` when no pair
+/// carries the parameter.
+fn query_param_opt(source : StringView, name : String) -> String? {
   let name_view = name.view()
   let mut found : StringView? = None
   let length = source.length()
@@ -3018,7 +3040,15 @@ fn query_param(source : StringView, name : String) -> String {
     pos = end + 1
   }
   match found {
-    Some(value) => decode_url(value)
+    Some(value) => Some(decode_url(value))
+    None => None
+  }
+}
+
+///|
+fn query_param(source : StringView, name : String) -> String {
+  match query_param_opt(source, name) {
+    Some(value) => value
     None => ""
   }
 }
@@ -3027,36 +3057,25 @@ fn query_param(source : StringView, name : String) -> String {
 pub fn Context::query(self : Context, name : String) -> String {
   let path = self.request.path
   match path.find("?") {
-    Some(index) => {
-      let name_view = name.view()
-      let name_length = name_view.length()
-      let mut needs_raw = false
-      let mut i = 0
-      while i < name_length {
-        let code = name_view.unsafe_get(i)
-        if code == ('%' : UInt16) || code == ('+' : UInt16) {
-          needs_raw = true
-          break
+    Some(index) =>
+      if name_needs_raw(name.view()) {
+        query_param(path.view()[index + 1:], name)
+      } else {
+        match query_map_lookup(path, index).get(name) {
+          Some(value) => value
+          None => ""
         }
-        i = i + 1
       }
-      if needs_raw {
-        return query_param(path.view()[index + 1:], name)
-      }
-      match query_map_lookup(path, index).get(name) {
-        Some(value) => value
-        None => ""
-      }
-    }
     None => ""
   }
 }
 
 ///|
 /// Look up the query parameter `name`, returning `default` when the query
-/// string does not carry the parameter. Unlike `Context::query`, a parameter
-/// that is present with an empty value is returned as-is instead of being
-/// replaced by `default`.
+/// string does not carry the parameter. Name matching follows `Context::query`,
+/// so names containing `%` or `+` also match the raw key spelling. Unlike
+/// `Context::query`, a parameter that is present with an empty value is
+/// returned as-is instead of being replaced by `default`.
 pub fn Context::query_default(
   self : Context,
   name : String,
@@ -3064,9 +3083,16 @@ pub fn Context::query_default(
 ) -> String {
   match self.request.path.find("?") {
     Some(index) =>
-      match query_map_lookup(self.request.path, index).get(name) {
-        Some(value) => value
-        None => default
+      if name_needs_raw(name.view()) {
+        match query_param_opt(self.request.path.view()[index + 1:], name) {
+          Some(value) => value
+          None => default
+        }
+      } else {
+        match query_map_lookup(self.request.path, index).get(name) {
+          Some(value) => value
+          None => default
+        }
       }
     None => default
   }
@@ -3077,32 +3103,22 @@ pub fn Context::form(self : Context, name : String) -> String {
   if !self.is_form() {
     return ""
   }
-  let name_view = name.view()
-  let name_length = name_view.length()
-  let mut needs_raw = false
-  let mut i = 0
-  while i < name_length {
-    let code = name_view.unsafe_get(i)
-    if code == ('%' : UInt16) || code == ('+' : UInt16) {
-      needs_raw = true
-      break
+  if name_needs_raw(name.view()) {
+    query_param(self.request.body.view(), name)
+  } else {
+    match form_map_lookup(self.request.body).get(name) {
+      Some(value) => value
+      None => ""
     }
-    i = i + 1
-  }
-  if needs_raw {
-    return query_param(self.request.body.view(), name)
-  }
-  match form_map_lookup(self.request.body).get(name) {
-    Some(value) => value
-    None => ""
   }
 }
 
 ///|
 /// Look up the url-encoded form field `name`, returning `default` when the
-/// request body is not a form or does not carry the field. A field that is
-/// present with an empty value is returned as-is instead of being replaced by
-/// `default`.
+/// request body is not a form or does not carry the field. Name matching
+/// follows `Context::form`, so names containing `%` or `+` also match the raw
+/// key spelling. A field that is present with an empty value is returned as-is
+/// instead of being replaced by `default`.
 pub fn Context::form_default(
   self : Context,
   name : String,
@@ -3111,9 +3127,16 @@ pub fn Context::form_default(
   if !self.is_form() {
     return default
   }
-  match form_map_lookup(self.request.body).get(name) {
-    Some(value) => value
-    None => default
+  if name_needs_raw(name.view()) {
+    match query_param_opt(self.request.body.view(), name) {
+      Some(value) => value
+      None => default
+    }
+  } else {
+    match form_map_lookup(self.request.body).get(name) {
+      Some(value) => value
+      None => default
+    }
   }
 }
 
@@ -3166,27 +3189,15 @@ fn collect_values(source : StringView, name : String) -> Array[String] {
 /// they appear in the query string.
 pub fn Context::query_values(self : Context, name : String) -> Array[String] {
   match self.request.path.find("?") {
-    Some(index) => {
-      let name_view = name.view()
-      let name_length = name_view.length()
-      let mut needs_raw = false
-      let mut i = 0
-      while i < name_length {
-        let code = name_view.unsafe_get(i)
-        if code == ('%' : UInt16) || code == ('+' : UInt16) {
-          needs_raw = true
-          break
+    Some(index) =>
+      if name_needs_raw(name.view()) {
+        collect_values(self.request.path[index + 1:].view(), name)
+      } else {
+        match query_multi_lookup(self.request.path, index).get(name) {
+          Some(values) => values.copy()
+          None => []
         }
-        i = i + 1
       }
-      if needs_raw {
-        return collect_values(self.request.path[index + 1:].view(), name)
-      }
-      match query_multi_lookup(self.request.path, index).get(name) {
-        Some(values) => values.copy()
-        None => []
-      }
-    }
     None => []
   }
 }
@@ -3201,24 +3212,13 @@ pub fn Context::form_values(self : Context, name : String) -> Array[String] {
   if !self.is_form() {
     return []
   }
-  let name_view = name.view()
-  let name_length = name_view.length()
-  let mut needs_raw = false
-  let mut i = 0
-  while i < name_length {
-    let code = name_view.unsafe_get(i)
-    if code == ('%' : UInt16) || code == ('+' : UInt16) {
-      needs_raw = true
-      break
+  if name_needs_raw(name.view()) {
+    collect_values(self.request.body.view(), name)
+  } else {
+    match form_values_lookup(self.request.body).get(name) {
+      Some(values) => values.copy()
+      None => []
     }
-    i = i + 1
-  }
-  if needs_raw {
-    return collect_values(self.request.body.view(), name)
-  }
-  match form_values_lookup(self.request.body).get(name) {
-    Some(values) => values.copy()
-    None => []
   }
 }
 

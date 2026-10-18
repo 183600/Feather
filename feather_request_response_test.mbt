@@ -54,6 +54,29 @@ test "Context query_default falls back only for absent parameters" {
 }
 
 ///|
+test "Context query_default matches raw name spellings like query" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/search?a+b=1",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(ctx.query("a+b"), "1")
+  assert_eq(ctx.query_default("a+b", "-"), "1")
+  assert_eq(ctx.query_default("a b", "-"), "1")
+  assert_eq(ctx.query_default("a%2Bb", "-"), "-")
+  let encoded = @feather.Context::new({
+    method: "GET",
+    path: "/search?a%20b=2",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(encoded.query("a%20b"), "2")
+  assert_eq(encoded.query_default("a%20b", "-"), "2")
+  assert_eq(encoded.query_default("a b", "-"), "2")
+}
+
+///|
 test "Context form_default falls back only for absent fields" {
   let ctx = @feather.Context::new({
     method: "POST",
@@ -71,6 +94,20 @@ test "Context form_default falls back only for absent fields" {
     body: "{\"name\":\"feather\"}",
   })
   assert_eq(json.form_default("name", "anon"), "anon")
+}
+
+///|
+test "Context form_default matches raw name spellings like form" {
+  let ctx = @feather.Context::new({
+    method: "POST",
+    path: "/submit",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "a+b=1",
+  })
+  assert_eq(ctx.form("a+b"), "1")
+  assert_eq(ctx.form_default("a+b", "-"), "1")
+  assert_eq(ctx.form_default("a b", "-"), "1")
+  assert_eq(ctx.form_default("a%2Bb", "-"), "-")
 }
 
 ///|
