@@ -40,6 +40,8 @@ pub fn error_response_with_payload(Context, Int, String, Json) -> Unit
 
 pub fn format_http_date(Int64) -> String
 
+pub fn hmac_sha256(Bytes, Bytes) -> Bytes
+
 pub fn internal_error(Context, String) -> Unit
 
 pub fn json_object(Map[String, String]) -> Json
@@ -88,11 +90,17 @@ pub fn parse_urlencoded(String) -> Map[String, String]
 
 pub fn respond_options(Context, Array[String]) -> Unit
 
+pub fn sha256(Bytes) -> Bytes
+
+pub fn signed_cookie_token(String, String, String, expires_at? : Int64) -> String
+
 pub fn status_text(Int) -> String
 
 pub fn url_decode(String) -> String
 
 pub fn url_encode(String) -> String
+
+pub fn verify_signed_cookie_token(String, String, String, now? : Int64) -> String?
 
 // Errors
 pub(all) suberror HttpError {
@@ -193,6 +201,7 @@ pub fn Context::basic_auth(Self) -> (String, String)?
 pub fn Context::bearer_token(Self) -> String?
 pub fn Context::bytes(Self, Int, Bytes, content_type? : String) -> Unit
 pub fn Context::clear_cookie(Self, String, path? : String, domain? : String) -> Unit
+pub fn Context::clear_signed_cookie(Self, String, path? : String, domain? : String) -> Unit
 pub fn Context::content_type(Self) -> String
 pub fn Context::cookie(Self, String) -> String?
 pub fn Context::cookies(Self) -> Map[String, String]
@@ -268,6 +277,8 @@ pub fn Context::set(Self, String, String) -> Unit
 pub fn Context::set_cookie(Self, String, String, path? : String, max_age? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> Unit
 pub fn Context::set_header(Self, String, String) -> Unit
 pub fn Context::set_json(Self, String, Json) -> Unit
+pub fn Context::set_signed_cookie(Self, String, String, String, path? : String, max_age? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> Unit
+pub fn Context::signed_cookie(Self, String, String) -> String?
 pub fn Context::status(Self, Int) -> Unit
 pub fn Context::text(Self, Int, String) -> Unit
 pub fn Context::vary(Self, String) -> Unit
