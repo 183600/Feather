@@ -73,6 +73,28 @@ test "Router url_for handles wildcard and static names" {
 }
 
 ///|
+test "Router url_for renders anonymous wildcard routes" {
+  let router = @feather.create_router()
+  router.add_named_route("assets", "GET", "/assets/*", fn(ctx) {
+    ctx.text(200, "a")
+  })
+  router.add_named_route("root", "GET", "/*", fn(ctx) { ctx.text(200, "r") })
+  assert_eq(router.url_for("assets"), Some("/assets/"))
+  assert_eq(router.url_for("root"), Some("/"))
+  match router.url_for("assets") {
+    Some(url) =>
+      match router.route("GET", url) {
+        @feather.RouteFound(route) => {
+          assert_eq(route.path, "/assets/*")
+          assert_eq(route.wildcard, "")
+        }
+        _ => fail("expected generated url to route to the anonymous wildcard")
+      }
+    None => fail("expected a generated url")
+  }
+}
+
+///|
 test "Router url_for rejects empty parameter values" {
   let router = @feather.create_router()
   router.add_named_route("user", "GET", "/users/:id", fn(ctx) {

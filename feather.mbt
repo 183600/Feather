@@ -633,9 +633,12 @@ pub fn Router::url_for(
         None => return None
       }
     } else if segment.has_prefix("*") {
-      match values.get_from_string(segment[1:]) {
-        Some(value) => builder.write_string(encode_wildcard_path(value))
-        None => return None
+      let wildcard_name = segment[1:]
+      if !wildcard_name.is_empty() {
+        match values.get_from_string(wildcard_name) {
+          Some(value) => builder.write_string(encode_wildcard_path(value))
+          None => return None
+        }
       }
     } else {
       builder.write_stringview(segment)

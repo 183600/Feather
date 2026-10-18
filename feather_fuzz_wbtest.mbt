@@ -327,6 +327,96 @@ fn fuzz_make_multipart(
 }
 
 ///|
+test "fuzz url_for dispatch round trip" {
+  let rng = FuzzRng::new(424242L)
+  let safe : Array[String] = ["a", "b", "c", "x1", "y2", "-", "_", "~", "0"]
+  let tails : Array[String] = [
+    "", "/:p", "/:p/:q", "/s/:p", "/s/*w", "/:p/*w", "/s/*", "/*w",
+  ]
+  for round = 0; round < 400; round = round + 1 {
+    let router = create_router()
+    let tail = tails[rng.below(tails.length())]
+    let pattern = "/base" + tail
+    let name = "route" + round.to_string()
+    router.add_named_route(name, "GET", pattern, fn(ctx) { ctx.text(200, "ok") })
+    let params : Map[String, String] = Map([])
+    let expected : Map[String, String] = Map([])
+    if tail.contains(":p") {
+      let value = fuzz_pick(rng, safe) + fuzz_random_string(rng, safe, 2)
+      params.set("p", value)
+      expected.set("p", url_encode(value))
+    }
+    if tail.contains(":q") {
+      let value = fuzz_pick(rng, safe) + fuzz_random_string(rng, safe, 2)
+      params.set("q", value)
+      expected.set("q", url_encode(value))
+    }
+    if tail.contains("w") {
+      let count = rng.below(3)
+      let builder = StringBuilder()
+      let raw = StringBuilder()
+      for i = 0; i < count; i = i + 1 {
+        if i > 0 {
+          builder.write_char('/')
+          raw.write_char('/')
+        }
+        let segment = fuzz_pick(rng, safe)
+        builder.write_string(url_encode(segment))
+        raw.write_string(segment)
+      }
+      params.set("w", raw.to_string())
+      expected.set("w", builder.to_string())
+    }
+    let url = match router.url_for(name, params~) {
+      Some(url) => url
+      None => fail("url_for failed for \{pattern} with \{params}")
+    }
+    match router.route("GET", url) {
+      RouteFound(found) => {
+        assert_eq(found.path, pattern)
+        if !fuzz_map_eq(found.params, expected) {
+          fail(
+            "url_for round trip mismatch for \{pattern} url=\{url}: \{found.params} vs \{expected}",
+          )
+        }
+      }
+      _ => fail("url_for produced unroutable url \{url} for \{pattern}")
+    }
+  }
+}
+
+///|
+test "fuzz url_for query round trip" {
+  let rng = FuzzRng::new(90210L)
+  let router = create_router()
+  router.add_named_route("q", "GET", "/q", fn(ctx) { ctx.text(200, "ok") })
+  let pool : Array[String] = ["a", "b", "x y", "1+2", "%", "&", "=", "é"]
+  for round = 0; round < 200; round = round + 1 {
+    let query : Map[String, String] = Map([])
+    let count = rng.below(4)
+    for i = 0; i < count; i = i + 1 {
+      query.set(
+        fuzz_pick(rng, pool) + i.to_string(),
+        fuzz_random_string(rng, pool, 2),
+      )
+    }
+    let url = match router.url_for("q", query~) {
+      Some(url) => url
+      None => fail("url_for failed")
+    }
+    let ctx = Context::new({
+      method: "GET",
+      path: url,
+      headers: Map([]),
+      body: "",
+    })
+    if !fuzz_map_eq(ctx.queries(), query) {
+      fail("query round trip mismatch url=\{url}: \{ctx.queries()} vs \{query}")
+    }
+  }
+}
+
+///|
 test "fuzz multipart parse round trip" {
   let rng = FuzzRng::new(999L)
   let pools : Array[Array[String]] = [
