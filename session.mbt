@@ -12,6 +12,8 @@ pub(all) struct Session {
   mut modified : Bool
   mut destroyed : Bool
   mut regenerate : Bool
+  mut flash_pending : Map[String, Array[String]]?
+  json_cache : Map[String, (String, Json)]
 }
 
 ///|
@@ -24,9 +26,9 @@ const SESSION_SWEEP_INTERVAL : Int64 = 60_000L
 
 ///|
 /// Hard upper bound on retained sessions. When the store is full and no
-/// session has expired yet, the session closest to expiry (the least recently
-/// saved one) is dropped so unauthenticated traffic cannot grow the store
-/// without bound within a TTL window.
+/// session has expired yet, an arbitrary session is dropped so
+/// unauthenticated traffic cannot grow the store without bound within a TTL
+/// window.
 const SESSION_STORE_MAX_SESSIONS : Int = 10_000
 
 ///|
@@ -76,6 +78,29 @@ fn platform_rand() -> @random.Rand {
 }
 
 ///|
+/// Generator used to materialize ids for sessions that were first written to
+/// lazily, outside the store's own generator.
+let session_id_rng : @random.Rand = platform_rand()
+
+///|
+/// Render a random 32-character hex id from `rng`.
+fn session_random_id(rng : @random.Rand) -> String {
+  let out = FixedArray::make(32, b'0')
+  for i = 0; i < 2; i = i + 1 {
+    let value = rng.uint64()
+    for j = 0; j < 16; j = j + 1 {
+      let nibble = ((value >> ((15 - j) * 4)) & 15UL).to_int()
+      out[i * 16 + j] = (if nibble < 10 {
+        b'0'.to_int() + nibble
+      } else {
+        b'a'.to_int() + nibble - 10
+      }).to_byte()
+    }
+  }
+  @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes())
+}
+
+///|
 /// Create an empty store whose sessions live for `ttl` milliseconds.
 pub fn SessionStore::new(ttl~ : Int64 = DEFAULT_SESSION_TTL) -> SessionStore {
   {
@@ -94,19 +119,7 @@ pub fn SessionStore::ttl(self : SessionStore) -> Int64 {
 
 ///|
 fn SessionStore::generate_id(self : SessionStore) -> String {
-  let out = FixedArray::make(32, b'0')
-  for i = 0; i < 2; i = i + 1 {
-    let value = self.rng.uint64()
-    for j = 0; j < 16; j = j + 1 {
-      let nibble = ((value >> ((15 - j) * 4)) & 15UL).to_int()
-      out[i * 16 + j] = (if nibble < 10 {
-        b'0'.to_int() + nibble
-      } else {
-        b'a'.to_int() + nibble - 10
-      }).to_byte()
-    }
-  }
-  @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes())
+  session_random_id(self.rng)
 }
 
 ///|
@@ -119,6 +132,33 @@ pub fn SessionStore::create(self : SessionStore) -> Session {
     modified: false,
     destroyed: false,
     regenerate: false,
+    flash_pending: None,
+    json_cache: Map([]),
+  }
+}
+
+///|
+/// Create a detached session lazily: the id and store slot are only allocated
+/// once the request actually writes to the session, so anonymous read-only
+/// traffic does not pay for random id generation or a store entry.
+fn session_detached(ttl : Int64) -> Session {
+  {
+    id: "",
+    data: Map([]),
+    expires_at: @async.now() + ttl,
+    modified: false,
+    destroyed: false,
+    regenerate: false,
+    flash_pending: None,
+    json_cache: Map([]),
+  }
+}
+
+///|
+/// Give a detached session its random id.
+fn session_ensure_id(session : Session) -> Unit {
+  if session.id == "" {
+    session.id = session_random_id(session_id_rng)
   }
 }
 
@@ -144,32 +184,19 @@ pub fn SessionStore::save(self : SessionStore, session : Session) -> Unit {
   if !self.sessions.contains(session.id) {
     self.maybe_sweep()
     if self.sessions.length() >= SESSION_STORE_MAX_SESSIONS {
-      self.evict_closest_to_expiry()
+      self.evict_one()
     }
   }
   self.sessions.set(session.id, session)
 }
 
 ///|
-/// Drop the session that will expire first, which is the one least recently
-/// written, keeping the store under its cap when nothing has expired yet.
-fn SessionStore::evict_closest_to_expiry(self : SessionStore) -> Unit {
-  let mut oldest_id : String? = None
-  let mut oldest_expiry = 0L
-  for id, session in self.sessions {
-    match oldest_id {
-      Some(_) =>
-        if session.expires_at < oldest_expiry {
-          oldest_expiry = session.expires_at
-          oldest_id = Some(id)
-        }
-      None => {
-        oldest_expiry = session.expires_at
-        oldest_id = Some(id)
-      }
-    }
-  }
-  match oldest_id {
+/// Drop one arbitrary session, keeping the store under its cap when nothing has
+/// expired yet. The store is a bounded cache, so any victim is acceptable;
+/// scanning every session for the nearest expiry would turn each write into an
+/// O(capacity) operation once the store fills up.
+fn SessionStore::evict_one(self : SessionStore) -> Unit {
+  match self.sessions.keys().next() {
     Some(id) => ignore(self.sessions.remove(id))
     None => ()
   }
@@ -202,15 +229,9 @@ pub fn SessionStore::sweep(self : SessionStore) -> Unit {
   }
   let now = @async.now()
   self.last_sweep = now
-  let expired : Array[String] = []
-  for id, session in self.sessions {
-    if session.destroyed || session.expires_at <= now {
-      expired.push(id)
-    }
-  }
-  for id in expired {
-    ignore(self.sessions.remove(id))
-  }
+  self.sessions.retain(fn(_id, session) {
+    !session.destroyed && session.expires_at > now
+  })
 }
 
 ///|
@@ -228,10 +249,14 @@ pub fn Context::session(self : Context) -> Session? {
 }
 
 ///|
-/// Id of the session attached to this request, if any.
+/// Id of the session attached to this request, if any. Detached sessions are
+/// given their random id on first access.
 pub fn Context::session_id(self : Context) -> String? {
   match self.session {
-    Some(session) => Some(session.id)
+    Some(session) => {
+      session_ensure_id(session)
+      Some(session.id)
+    }
     None => None
   }
 }
@@ -278,7 +303,15 @@ pub fn Context::session_set_json(
   key : String,
   value : Json,
 ) -> Bool {
-  self.session_set(key, value.stringify())
+  let text = value.stringify()
+  let stored = self.session_set(key, text)
+  if stored {
+    match self.session {
+      Some(session) => session.json_cache.set(key, (text, value))
+      None => ()
+    }
+  }
+  stored
 }
 
 ///|
@@ -289,16 +322,35 @@ pub fn Context::session_get_json(self : Context, key : String) -> Json? {
   match self.session {
     Some(session) =>
       match session.data.get(key) {
-        Some(text) => {
-          let parsed : Json = @json.parse(text) catch {
-            _ => return None
+        Some(text) =>
+          match session.json_cache.get(key) {
+            Some((cached_text, value)) =>
+              if cached_text == text {
+                Some(value)
+              } else {
+                session_parse_json_into_cache(session, key, text)
+              }
+            None => session_parse_json_into_cache(session, key, text)
           }
-          Some(parsed)
-        }
         None => None
       }
     None => None
   }
+}
+
+///|
+/// Parse `text` and remember it under `key` so repeated reads of an unchanged
+/// session value skip parsing.
+fn session_parse_json_into_cache(
+  session : Session,
+  key : String,
+  text : String,
+) -> Json? {
+  let parsed : Json = @json.parse(text) catch {
+    _ => return None
+  }
+  session.json_cache.set(key, (text, parsed))
+  Some(parsed)
 }
 
 ///|
@@ -308,6 +360,7 @@ pub fn Context::session_remove(self : Context, key : String) -> Bool {
     Some(session) =>
       match session.data.remove_and_get(key) {
         Some(_) => {
+          ignore(session.json_cache.remove(key))
           session.modified = true
           true
         }
@@ -407,6 +460,10 @@ fn session_persist(
           session_send_cookie(ctx, config, "", Some(0L))
         }
       } else {
+        session.flush_flash()
+        if session.id == "" && session.modified {
+          session_ensure_id(session)
+        }
         let rotated : String? = if session.regenerate && !is_new {
           let old_id = session.id
           session.id = store.generate_id()
@@ -456,7 +513,7 @@ pub fn middleware_session(
       let had_cookie = cookie_id is Some(_)
       let session = match existing {
         Some(session) => session
-        None => store.create()
+        None => session_detached(store.ttl())
       }
       session.modified = false
       ctx.session = Some(session)

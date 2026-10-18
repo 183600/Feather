@@ -107,10 +107,9 @@ pub(all) struct NamedRoute {
 
 ///|
 pub(all) struct Router {
-  routes : Array[Route]
   trees : Map[String, RouteNode]
   named : Map[String, NamedRoute]
-  dynamic_caches : Map[String, Map[String, (RouteNode, Int32)]]
+  dynamic_caches : Map[String, Map[String, (RouteNode, Map[String, String]?, String)]]
   miss_caches : Map[String, Map[String, Array[String]]]
 }
 
@@ -150,7 +149,6 @@ fn RouteNode::new() -> RouteNode {
 ///|
 pub fn create_router() -> Router {
   {
-    routes: [],
     trees: Map([]),
     named: Map([]),
     dynamic_caches: Map([]),
@@ -519,14 +517,6 @@ pub fn Router::add_route(
   }
   self.dynamic_caches.remove(method_key)
   self.miss_caches.clear()
-  self.routes.push({
-    path: clean_path,
-    method: method_key,
-    params: Map([]),
-    wildcard: "",
-    wildcard_name: "",
-    handler: Some(handler),
-  })
 }
 
 ///|
@@ -647,12 +637,14 @@ pub fn Router::url_for(
     }
     i = skip_slashes(path, end)
   }
-  let mut result = if has_segment { builder.to_string() } else { "/" }
+  if !has_segment {
+    builder.write_char('/')
+  }
   match query {
-    Some(query) => result = result + encode_query_string(query)
+    Some(query) => builder.write_string(encode_query_string(query))
     None => ()
   }
-  Some(result)
+  Some(builder.to_string())
 }
 
 ///|
@@ -673,9 +665,33 @@ fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
 }
 
 ///|
+/// Rendered `Allow` header values, keyed by the joined method list. Scanners
+/// hit the same 405/OPTIONS answers repeatedly, so rendering once per distinct
+/// method set avoids rebuilding and sorting the list on every request.
+let allow_header_values : Map[String, String] = Map([])
+
+///|
 /// Render an `Allow` header value. `HEAD` is implicit whenever `GET` is
 /// allowed (RFC 9110 §9.3.2), so it is listed even when no HEAD route exists.
 fn allow_header_value(allowed : Array[String]) -> String {
+  if allowed.length() == 0 {
+    return ""
+  }
+  let key = allowed.join(",")
+  match allow_header_values.get(key) {
+    Some(cached) => return cached
+    None => ()
+  }
+  let rendered = render_allow_header_value(allowed)
+  if allow_header_values.length() >= 128 {
+    allow_header_values.clear()
+  }
+  allow_header_values.set(key, rendered)
+  rendered
+}
+
+///|
+fn render_allow_header_value(allowed : Array[String]) -> String {
   if allowed.contains("GET") && !allowed.contains("HEAD") {
     if allowed.is_sorted() {
       let builder = StringBuilder(size_hint=64)
@@ -722,7 +738,7 @@ fn Router::find_node_raw(
   self : Router,
   tree_key : String,
   clean_path : StringView,
-) -> (RouteNode, Int32)? {
+) -> (RouteNode, Map[String, String]?, String)? {
   let root = match self.trees.get(tree_key) {
     Some(root) => root
     None => return None
@@ -731,22 +747,26 @@ fn Router::find_node_raw(
     match root.exact_cache {
       Some(cache) =>
         match cache.get_from_string(clean_path) {
-          Some(node) => return Some((node, -1))
+          Some(node) => return Some((node, None, ""))
           None => ()
         }
       None => ()
     }
     return match match_static_node(root, clean_path, 0) {
-      Some(node) => Some((node, -1))
+      Some(node) => Some((node, None, ""))
       None => None
     }
   }
   // Dynamic trees resolve every path, static or not, through the per-method
-  // dispatch cache.
+  // dispatch cache. Entries carry the extracted bindings too, so a repeated
+  // dynamic URL is served without re-walking the tree or re-parsing params.
   let cache = match self.dynamic_caches.get(tree_key) {
     Some(cache) => cache
     None => {
-      let cache : Map[String, (RouteNode, Int32)] = Map([], capacity=32)
+      let cache : Map[String, (RouteNode, Map[String, String]?, String)] = Map(
+        [],
+        capacity=32,
+      )
       self.dynamic_caches.set(tree_key, cache)
       cache
     }
@@ -759,10 +779,9 @@ fn Router::find_node_raw(
     Some(exact) =>
       match exact.get_from_string(clean_path) {
         Some(node) => {
-          let hit = (node, -1)
-          if cache.length() < 128 {
-            cache.set(clean_path.to_owned(), hit)
-          }
+          let (params, wildcard_value) = route_params_for(node, -1, clean_path)
+          let hit = (node, params, wildcard_value)
+          remember_dynamic_hit(cache, clean_path, hit)
           return Some(hit)
         }
         None => ()
@@ -771,14 +790,33 @@ fn Router::find_node_raw(
   }
   match match_dynamic_node(root, clean_path, 0) {
     Some(outcome) => {
-      let hit = (outcome.node, outcome.wildcard_start)
-      if cache.length() < 128 {
-        cache.set(clean_path.to_owned(), hit)
-      }
+      let (params, wildcard_value) = route_params_for(
+        outcome.node,
+        outcome.wildcard_start,
+        clean_path,
+      )
+      let hit = (outcome.node, params, wildcard_value)
+      remember_dynamic_hit(cache, clean_path, hit)
       Some(hit)
     }
     None => None
   }
+}
+
+///|
+/// Insert into a per-method dynamic dispatch cache. A full cache is cleared and
+/// restarted instead of refusing every later path (which would stop caching for
+/// any service with more than the cap of distinct dynamic URLs); rebuilding the
+/// hot entries costs one tree walk each.
+fn remember_dynamic_hit(
+  cache : Map[String, (RouteNode, Map[String, String]?, String)],
+  clean_path : StringView,
+  hit : (RouteNode, Map[String, String]?, String),
+) -> Unit {
+  if cache.length() >= 128 {
+    cache.clear()
+  }
+  cache.set(clean_path.to_owned(), hit)
 }
 
 ///|
@@ -787,38 +825,55 @@ fn Router::find_node(
   tree_key : String,
   clean_path : StringView,
 ) -> (RouteNode, Map[String, String]?, String)? {
-  match self.find_node_raw(tree_key, clean_path) {
-    Some(hit) => {
-      let (node, wildcard_start) = hit
-      if wildcard_start < 0 && node.param_names.length() == 0 {
-        Some((node, None, ""))
-      } else {
-        let (params, wildcard_value) = extract_route_params(node, clean_path)
-        Some((node, Some(params), wildcard_value))
-      }
-    }
-    None => None
+  self.find_node_raw(tree_key, clean_path)
+}
+
+///|
+/// Bindings for a dispatch hit: `None` when the node has no parameters, which
+/// lets callers return a shared empty map instead of allocating.
+fn route_params_for(
+  node : RouteNode,
+  wildcard_start : Int32,
+  clean_path : StringView,
+) -> (Map[String, String]?, String) {
+  if wildcard_start < 0 && node.param_names.length() == 0 {
+    (None, "")
+  } else {
+    let (params, wildcard_value) = extract_route_params(node, clean_path)
+    (Some(params), wildcard_value)
   }
 }
 
 ///|
-fn bind_route_params(node : RouteNode, path : StringView, ctx : Context) -> Unit {
-  let keys = node.param_keys
-  if keys.length() == 0 && node.route_wildcard_key == "" {
-    return
-  }
-  let (values, wildcard_value) = node.bound_values(path)
-  for i = 0; i < keys.length(); i = i + 1 {
-    ctx.state.set(keys[i], values[i])
-  }
-  if node.route_wildcard_key != "" {
-    ctx.state.set(node.route_wildcard_key, wildcard_value)
+fn bind_route_params(
+  node : RouteNode,
+  params : Map[String, String]?,
+  ctx : Context,
+) -> Unit {
+  match params {
+    Some(params) => {
+      let names = node.param_names
+      for i = 0; i < names.length(); i = i + 1 {
+        let name = names[i]
+        match params.get(name) {
+          Some(value) => ctx.state.set(param_state_key(name), value)
+          None => ()
+        }
+      }
+      if node.route_wildcard_name != "" {
+        match params.get(node.route_wildcard_name) {
+          Some(value) => ctx.state.set(node.route_wildcard_key, value)
+          None => ()
+        }
+      }
+    }
+    None => ()
   }
 }
 
 ///|
 priv enum DispatchMatch {
-  DispatchFound(RouteNode)
+  DispatchFound(RouteNode, Map[String, String]?, String)
   DispatchMethods(Array[String])
   DispatchMissing
 }
@@ -850,9 +905,12 @@ fn Router::remember_miss(
       cache
     }
   }
-  if cache.length() < 128 {
-    cache.set(clean_path.to_owned(), allowed)
+  if cache.length() >= 128 {
+    // Same clear-and-restart policy as the dynamic dispatch caches: a scanner
+    // rotating unknown paths must not disable miss caching permanently.
+    cache.clear()
   }
+  cache.set(clean_path.to_owned(), allowed)
 }
 
 ///|
@@ -862,7 +920,7 @@ fn Router::match_dispatch(
   clean_path : StringView,
 ) -> DispatchMatch {
   match self.find_node_raw(meth, clean_path) {
-    Some(hit) => DispatchFound(hit.0)
+    Some(hit) => DispatchFound(hit.0, hit.1, hit.2)
     None =>
       match self.find_miss_cache(meth, clean_path) {
         Some(allowed) =>
@@ -874,7 +932,7 @@ fn Router::match_dispatch(
         None => {
           let allowed = if meth == "HEAD" {
             match self.find_node_raw("GET", clean_path) {
-              Some(hit) => return DispatchFound(hit.0)
+              Some(hit) => return DispatchFound(hit.0, hit.1, hit.2)
               None => self.allowed_methods(clean_path)
             }
           } else {
@@ -937,7 +995,9 @@ pub fn Router::route(
         path: node.route_path,
         method: meth,
         params: match params {
-          Some(params) => params
+          // Route values are handed to callers, so keep them separate from the
+          // internally cached bindings.
+          Some(params) => params.copy()
           None => Map([], capacity=0)
         },
         wildcard,
@@ -951,7 +1011,7 @@ pub fn Router::route(
 
 ///|
 pub fn Router::matching(self : Router, meth : String, path : String) -> Route? {
-  if self.routes.length() == 0 {
+  if self.trees.is_empty() {
     return Some({
       path,
       method: normalize_method(meth),
@@ -981,8 +1041,8 @@ pub fn Router::dispatch_with(
   let clean_path = clean_path_view(ctx.request.path)
   let meth = normalize_method(ctx.request.method)
   match self.match_dispatch(meth, clean_path) {
-    DispatchFound(node) => {
-      bind_route_params(node, clean_path, ctx)
+    DispatchFound(node, params, _) => {
+      bind_route_params(node, params, ctx)
       match node.handler {
         Some(handler) => handler(ctx)
         None => not_found(ctx)
@@ -1050,10 +1110,13 @@ fn cached_error_body(status : Int32, message : String) -> String {
   let by_message = match error_body_cache.get(status) {
     Some(by_message) => by_message
     None => {
-      let by_message : Map[String, String] = Map([], capacity=4)
-      if error_body_cache.length() < 32 {
-        error_body_cache.set(status, by_message)
+      if error_body_cache.length() >= 32 {
+        // Restart the key table rather than pinning the first 32 statuses
+        // forever; rebuilding it on the next calls is cheap.
+        error_body_cache.clear()
       }
+      let by_message : Map[String, String] = Map([], capacity=4)
+      error_body_cache.set(status, by_message)
       by_message
     }
   }
@@ -1064,7 +1127,12 @@ fn cached_error_body(status : Int32, message : String) -> String {
       payload.set("status", Json::number(status.to_double()))
       payload.set("error", Json::string(message))
       let body = Json::object(payload).stringify()
-      if by_message.length() < 8 {
+      // Long or highly variable messages are not worth remembering: they
+      // would evict the fixed messages that do repeat.
+      if message.length() <= 128 && by_message.length() >= 8 {
+        by_message.clear()
+      }
+      if message.length() <= 128 {
         by_message.set(message, body)
       }
       body
@@ -1167,9 +1235,13 @@ fn param_state_key(name : String) -> String {
     Some(key) => key
     None => {
       let key = PARAM_PREFIX + name
-      if param_key_cache.length() < PARSE_CACHE_LIMIT {
-        param_key_cache.set(name, key)
+      if param_key_cache.length() >= PARSE_CACHE_LIMIT {
+        // Restart the cache instead of refusing new names forever: rebuilt
+        // entries are cheap and every later request for a fresh name would
+        // otherwise re-concatenate the prefix on each call.
+        param_key_cache.clear()
       }
+      param_key_cache.set(name, key)
       key
     }
   }
@@ -1384,12 +1456,20 @@ pub fn Context::is_secure(self : Context) -> Bool {
 ///|
 /// The full URL of the request, for example `https://example.com/users/1?q=x`.
 pub fn Context::full_url(self : Context) -> String {
-  let scheme = self.protocol()
-  let authority = trim_ascii_space(self.header("Host").view()).to_owned()
-  if authority == "" {
+  let authority = trim_ascii_space(self.header("Host").view())
+  if authority.is_empty() {
     return self.request.path
   }
-  scheme + "://" + authority + self.request.path
+  let scheme = self.protocol()
+  let path = self.request.path
+  let builder = StringBuilder(
+    size_hint=scheme.length() + authority.length() + path.length() + 3,
+  )
+  builder.write_string(scheme)
+  builder.write_string("://")
+  builder.write_stringview(authority)
+  builder.write_string(path)
+  builder.to_string()
 }
 
 ///|
@@ -1615,6 +1695,37 @@ fn cookie_map_lookup(header : String) -> Map[String, String] {
 }
 
 ///|
+/// Most recently scanned path and the position of its `?`, so repeated query
+/// accessors in one handler do not rescan the path each time.
+let last_query_index_path : Ref[String?] = Ref(None)
+let last_query_index : Ref[Int] = Ref(-1)
+
+///|
+/// Position of `?` in `path`, memoized for the most recent path.
+fn path_query_index(path : String) -> Int? {
+  match last_query_index_path.val {
+    Some(cached) =>
+      if physical_equal(cached, path) {
+        let index = last_query_index.val
+        return if index < 0 { None } else { Some(index) }
+      }
+    None => ()
+  }
+  let result = path.find("?")
+  last_query_index_path.val = Some(path)
+  match result {
+    Some(index) => {
+      last_query_index.val = index
+      Some(index)
+    }
+    None => {
+      last_query_index.val = -1
+      None
+    }
+  }
+}
+
+///|
 /// Most recently resolved query string and its parsed map.
 let last_query_path : Ref[String?] = Ref(None)
 let last_query_start : Ref[Int] = Ref(-1)
@@ -1699,17 +1810,12 @@ fn query_multi_lookup(path : String, index : Int) -> Map[String, Array[String]] 
 }
 
 ///|
-/// Most recently resolved url-encoded form body and its parsed map.
+/// Most recently resolved url-encoded form body and its parsed map. Form bodies
+/// are unique per request, so a cross-request content-keyed cache would only
+/// retain large keys and parsed copies for no hits; only the most recent parse
+/// is remembered, and only while the body is small enough to be worth keeping.
 let last_form_body : Ref[String?] = Ref(None)
 let last_form_map : Ref[Map[String, String]?] = Ref(None)
-
-///|
-/// Parsed url-encoded form bodies, keyed by the raw body text.
-let forms_cache : Map[String, Map[String, String]] = Map([])
-
-///|
-/// Recency ticks for `forms_cache`.
-let forms_cache_ages : Map[String, Int] = Map([])
 
 ///|
 fn form_map_lookup(body : String) -> Map[String, String] {
@@ -1723,36 +1829,19 @@ fn form_map_lookup(body : String) -> Map[String, String] {
       }
     None => ()
   }
-  let parsed = match forms_cache.get(body) {
-    Some(cached) => {
-      cache_touch(forms_cache_ages, body)
-      cached
-    }
-    None => {
-      let parsed = parse_urlencoded_view(body.view())
-      if body.length() <= PARSE_CACHE_MAX_KEY {
-        parse_cache_set(forms_cache, forms_cache_ages, body, parsed)
-      }
-      parsed
-    }
+  let parsed = parse_urlencoded_view(body.view())
+  if body.length() <= PARSE_CACHE_MAX_KEY {
+    last_form_body.val = Some(body)
+    last_form_map.val = Some(parsed)
   }
-  last_form_body.val = Some(body)
-  last_form_map.val = Some(parsed)
   parsed
 }
 
 ///|
 /// Most recently resolved multi-value url-encoded form body and its parsed map.
+/// Kept under the same size guard as `form_map_lookup`.
 let last_form_values_body : Ref[String?] = Ref(None)
 let last_form_values_map : Ref[Map[String, Array[String]]?] = Ref(None)
-
-///|
-/// Parsed multi-value url-encoded form bodies, keyed by the raw body text.
-let forms_multi_cache : Map[String, Map[String, Array[String]]] = Map([])
-
-///|
-/// Recency ticks for `forms_multi_cache`.
-let forms_multi_cache_ages : Map[String, Int] = Map([])
 
 ///|
 fn form_values_lookup(body : String) -> Map[String, Array[String]] {
@@ -1766,38 +1855,22 @@ fn form_values_lookup(body : String) -> Map[String, Array[String]] {
       }
     None => ()
   }
-  let parsed = match forms_multi_cache.get(body) {
-    Some(cached) => {
-      cache_touch(forms_multi_cache_ages, body)
-      cached
-    }
-    None => {
-      let parsed = parse_urlencoded_multi(body.view())
-      if body.length() <= PARSE_CACHE_MAX_KEY {
-        parse_cache_set(forms_multi_cache, forms_multi_cache_ages, body, parsed)
-      }
-      parsed
-    }
+  let parsed = parse_urlencoded_multi(body.view())
+  if body.length() <= PARSE_CACHE_MAX_KEY {
+    last_form_values_body.val = Some(body)
+    last_form_values_map.val = Some(parsed)
   }
-  last_form_values_body.val = Some(body)
-  last_form_values_map.val = Some(parsed)
   parsed
 }
 
 ///|
-/// Most recently resolved multipart body and its parsed parts.
+/// Most recently resolved multipart body, the content type it was parsed with
+/// and its parsed parts. Upload bodies are unique per request, so only the most
+/// recent parse is remembered, and only while the body is small enough that
+/// retaining it cannot double the peak memory of a large upload.
 let last_multipart_body : Ref[String?] = Ref(None)
 let last_multipart_content_type : Ref[String?] = Ref(None)
 let last_multipart_parts : Ref[Array[MultipartPart]?] = Ref(None)
-
-///|
-/// Parsed multipart bodies, keyed by the raw body text; the stored content
-/// type guards against a changed boundary for the same body.
-let multipart_cache : Map[String, (String, Array[MultipartPart])] = Map([])
-
-///|
-/// Recency ticks for `multipart_cache`.
-let multipart_cache_ages : Map[String, Int] = Map([])
 
 ///|
 /// Copy one parsed part so callers get their own header map.
@@ -1839,41 +1912,14 @@ fn multipart_parts_lookup(
       }
     None => ()
   }
-  let parsed = match multipart_cache.get(body) {
-    Some((cached_type, parts)) =>
-      if cached_type == content_type {
-        cache_touch(multipart_cache_ages, body)
-        Some(parts)
-      } else {
-        None
-      }
-    None => None
-  }
-  let parsed = match parsed {
-    Some(parts) => Some(parts)
-    None => {
-      let result = parse_multipart(body, content_type)
-      match result {
-        Some(parts) =>
-          if body.length() <= PARSE_CACHE_MAX_KEY {
-            parse_cache_set(
-              multipart_cache,
-              multipart_cache_ages,
-              body,
-              (content_type, parts),
-            )
-          }
-        None => ()
-      }
-      result
-    }
-  }
+  let parsed = parse_multipart(body, content_type)
   match parsed {
-    Some(parts) => {
-      last_multipart_body.val = Some(body)
-      last_multipart_content_type.val = Some(content_type)
-      last_multipart_parts.val = Some(parts)
-    }
+    Some(parts) =>
+      if body.length() <= PARSE_CACHE_MAX_KEY {
+        last_multipart_body.val = Some(body)
+        last_multipart_content_type.val = Some(content_type)
+        last_multipart_parts.val = Some(parts)
+      }
     None => ()
   }
   parsed
@@ -2586,13 +2632,15 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
   let mut ascii_only = true
   let mut needs_decoding = false
   let mut i = 0
+  // One full scan decides the path up front: the ASCII byte loop must not do
+  // work that a later non-ASCII code unit would force it to discard in favor of
+  // the UTF-8 round trip.
   while i < length {
     let value = source.unsafe_get(i).to_int()
     if value > 127 {
       ascii_only = false
     } else if value == 37 || (value == 43 && plus_as_space) {
       needs_decoding = true
-      break
     }
     i = i + 1
   }
@@ -2621,8 +2669,6 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
       out_index = out_index + 1
       j = j + 1
       continue
-    } else if code > 127 {
-      return decode_url_bytes(@utf8.encode(source), plus_as_space)
     }
     out[out_index] = code.to_byte()
     out_index = out_index + 1
@@ -2765,21 +2811,21 @@ pub fn url_encode(source : String) -> String {
 let base64_alphabet : Bytes = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 ///|
-fn base64_value(value : UInt16) -> Int {
-  let code = value.to_int()
-  if code >= 65 && code <= 90 {
-    code - 65
-  } else if code >= 97 && code <= 122 {
-    code - 71
-  } else if code >= 48 && code <= 57 {
-    code + 4
-  } else if code == 43 {
-    62
-  } else if code == 47 {
-    63
-  } else {
-    -1
+/// Character code (0-255) to 6-bit value for standard base64; `-1` marks every
+/// character outside the alphabet. A flat table keeps decoding free of the
+/// per-character branch chain (and of an indirect call) on hot auth paths.
+let base64_lookup : FixedArray[Int] = {
+  let table = FixedArray::make(256, -1)
+  for i = 0; i < 26; i = i + 1 {
+    table[65 + i] = i
+    table[97 + i] = i + 26
   }
+  for i = 0; i < 10; i = i + 1 {
+    table[48 + i] = i + 52
+  }
+  table[43] = 62
+  table[47] = 63
+  table
 }
 
 ///|
@@ -2838,11 +2884,11 @@ pub fn base64_decode(text : String) -> Bytes? {
 }
 
 ///|
-/// `base64_decode` core: `decoder` maps a character to its 6-bit value, or
+/// `base64_decode` core: `table` maps a character code to its 6-bit value, or
 /// `-1` when the character is not in the alphabet.
 fn base64_decode_core(
   view : StringView,
-  decoder : (UInt16) -> Int,
+  table : FixedArray[Int],
 ) -> Bytes? {
   let length = view.length()
   if length == 0 {
@@ -2869,9 +2915,9 @@ fn base64_decode_core(
   let mut out_index = 0
   while i < length {
     let remaining = length - i
-    let first = decoder(view.unsafe_get(i))
+    let first = table[view.unsafe_get(i).to_int()]
     let second = if remaining >= 2 {
-      decoder(view.unsafe_get(i + 1))
+      table[view.unsafe_get(i + 1).to_int()]
     } else {
       -1
     }
@@ -2888,7 +2934,7 @@ fn base64_decode_core(
       if third_raw == ('=' : UInt16) {
         return None
       }
-      let third = decoder(third_raw)
+      let third = table[third_raw.to_int()]
       if third < 0 {
         return None
       }
@@ -2902,7 +2948,7 @@ fn base64_decode_core(
       }
       return Some(own_bytes_prefix(out, out_index))
     }
-    let third = decoder(third_raw)
+    let third = table[third_raw.to_int()]
     if third < 0 {
       return None
     }
@@ -2915,7 +2961,7 @@ fn base64_decode_core(
       }
       return Some(own_bytes_prefix(out, out_index))
     }
-    let fourth = decoder(fourth_raw)
+    let fourth = table[fourth_raw.to_int()]
     if fourth < 0 {
       return None
     }
@@ -2929,7 +2975,7 @@ fn base64_decode_core(
 ///|
 /// `base64_decode` for a `StringView`.
 fn base64_decode_view(view : StringView) -> Bytes? {
-  base64_decode_core(view, base64_value)
+  base64_decode_core(view, base64_lookup)
 }
 
 ///|
@@ -3116,11 +3162,13 @@ pub fn mime_type_for(path : String) -> String {
 ///|
 /// Estimated capacity for a url-encoded result map, based on the source length.
 fn urlencoded_capacity(source : StringView) -> Int {
+  // Pair count scales roughly with length / 8, but cap the hint so a very long
+  // source cannot make the initial map unreasonably large.
   let estimate = source.length() >> 3
   if estimate < 4 {
     4
-  } else if estimate > 8 {
-    8
+  } else if estimate > 256 {
+    256
   } else {
     estimate
   }
@@ -3174,6 +3222,10 @@ fn parse_urlencoded_multi(source : StringView) -> Map[String, Array[String]] {
     [],
     capacity=urlencoded_capacity(source),
   )
+  // Decoded spelling of keys that contain `%` or `+`, so repeated escaped keys
+  // are decoded (and re-allocated) once per parse instead of once per
+  // occurrence. Keys without either character keep their raw spelling.
+  let escaped_keys : Map[StringView, String] = Map([], capacity=4)
   let length = source.length()
   let mut pos = 0
   while pos <= length {
@@ -3190,15 +3242,28 @@ fn parse_urlencoded_multi(source : StringView) -> Map[String, Array[String]] {
       end = end + 1
     }
     if end > pos {
-      let key = if eq >= 0 {
-        decode_url(source[pos:eq])
-      } else {
-        decode_url(source[pos:end])
-      }
+      let raw_key = if eq >= 0 { source[pos:eq] } else { source[pos:end] }
       let value = if eq >= 0 { decode_url(source[eq + 1:end]) } else { "" }
-      match result.get(key) {
+      match result.get_from_string(raw_key) {
         Some(values) => values.push(value)
-        None => result.set(key, [value])
+        None => {
+          let key = if raw_key.contains("%") || raw_key.contains("+") {
+            match escaped_keys.get(raw_key) {
+              Some(key) => key
+              None => {
+                let key = decode_url(raw_key)
+                escaped_keys.set(raw_key, key)
+                key
+              }
+            }
+          } else {
+            decode_url(raw_key)
+          }
+          match result.get(key) {
+            Some(values) => values.push(value)
+            None => result.set(key, [value])
+          }
+        }
       }
     }
     if end >= length {
@@ -3311,7 +3376,7 @@ fn query_param(source : StringView, name : String) -> String {
 ///|
 pub fn Context::query(self : Context, name : String) -> String {
   let path = self.request.path
-  match path.find("?") {
+  match path_query_index(path) {
     Some(index) =>
       if name_needs_raw(name.view()) {
         query_param(path.view()[index + 1:], name)
@@ -3336,7 +3401,7 @@ pub fn Context::query_default(
   name : String,
   default : String,
 ) -> String {
-  match self.request.path.find("?") {
+  match path_query_index(self.request.path) {
     Some(index) =>
       if name_needs_raw(name.view()) {
         match query_param_opt(self.request.path.view()[index + 1:], name) {
@@ -3398,7 +3463,7 @@ pub fn Context::form_default(
 ///|
 pub fn Context::queries(self : Context) -> Map[String, String] {
   let path = self.request.path
-  match path.find("?") {
+  match path_query_index(path) {
     Some(index) => query_map_lookup(path, index).copy()
     None => Map([], capacity=0)
   }
@@ -3443,7 +3508,7 @@ fn collect_values(source : StringView, name : String) -> Array[String] {
 /// Collect every value of a possibly repeated query parameter, in the order
 /// they appear in the query string.
 pub fn Context::query_values(self : Context, name : String) -> Array[String] {
-  match self.request.path.find("?") {
+  match path_query_index(self.request.path) {
     Some(index) =>
       if name_needs_raw(name.view()) {
         collect_values(self.request.path[index + 1:].view(), name)
@@ -3651,22 +3716,81 @@ fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
 }
 
 ///|
+/// Whether `needle` starts at `index` in `view`. The caller guarantees
+/// `index + needle.length() <= view.length()`.
+fn view_matches_at(view : StringView, needle : StringView, index : Int) -> Bool {
+  let length = needle.length()
+  let mut i = 0
+  while i < length {
+    if view.unsafe_get(index + i) != needle.unsafe_get(i) {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+///|
+/// First index at or after `start` where `needle` appears and is terminated by
+/// whitespace, a line break or `--`. Scans forward once instead of restarting a
+/// substring search after every rejected candidate, so an adversarial body full
+/// of `needle` prefixes cannot drive it quadratic.
 fn find_terminated_delimiter(
   view : StringView,
   needle : StringView,
   start : Int32,
 ) -> Int32? {
   let needle_length = needle.length()
-  let mut search = start
-  while search <= view.length() - needle_length {
-    let index = match find_view_from(view, needle, search) {
-      Some(index) => index
-      None => return None
+  if needle_length == 0 {
+    return Some(start)
+  }
+  let length = view.length()
+  let last = length - needle_length
+  if start > last {
+    return None
+  }
+  let first = needle.unsafe_get(0)
+  let mut i = start
+  while i <= last {
+    if view.unsafe_get(i) == first &&
+      view_matches_at(view, needle, i) &&
+      delimiter_is_terminated(view, i + needle_length) {
+      return Some(i)
     }
-    if delimiter_is_terminated(view, index + needle_length) {
-      return Some(index)
+    i = i + 1
+  }
+  None
+}
+
+///|
+/// Find the earliest position where either the CRLF-prefixed or the LF-prefixed
+/// part delimiter starts and is properly terminated. A single forward scan
+/// serves both needles, so an LF-only body with many small parts does not pay a
+/// full failed CRLF scan per part.
+fn find_part_delimiter(
+  view : StringView,
+  crlf_delimiter : StringView,
+  lf_delimiter : StringView,
+  start : Int32,
+) -> Int32? {
+  let crlf_length = crlf_delimiter.length()
+  let lf_length = lf_delimiter.length()
+  let length = view.length()
+  let last = length - (if crlf_length < lf_length { crlf_length } else { lf_length })
+  let mut i = start
+  while i <= last {
+    let code = view.unsafe_get(i)
+    if code == ('\n' : UInt16) && i + lf_length <= length &&
+      view_matches_at(view, lf_delimiter, i) &&
+      delimiter_is_terminated(view, i + lf_length) {
+      return Some(i)
     }
-    search = index + 1
+    if code == ('\r' : UInt16) && i + crlf_length <= length &&
+      view_matches_at(view, crlf_delimiter, i) &&
+      delimiter_is_terminated(view, i + crlf_length) {
+      return Some(i)
+    }
+    i = i + 1
   }
   None
 }
@@ -3911,6 +4035,18 @@ fn get_header_ignore_case(
       }
     None => ()
   }
+  match cached_header_spelling(headers, name) {
+    Some(actual) => {
+      match headers.get(actual) {
+        Some(value) => {
+          index.set(lower, actual)
+          return Some(value)
+        }
+        None => ()
+      }
+    }
+    None => ()
+  }
   let target = name.view()
   let target_length = target.length()
   for key, value in headers {
@@ -3924,6 +4060,52 @@ fn get_header_ignore_case(
 }
 
 ///|
+/// Canonical spellings of recently encountered header names, keyed by their
+/// lower-cased form. Header maps are rebuilt per request, but the spellings
+/// are stable, so this turns the per-name O(H) fallback scan into a `contains`
+/// probe once a spelling has been seen.
+let header_spelling_cache : Map[String, String] = Map([])
+
+///|
+/// Find the spelling under which `name` is stored, ignoring case. Memoizes the
+/// spelling globally and re-validates it against the map before trusting it, so
+/// in-place replacements are picked up.
+fn cached_header_spelling(
+  headers : Map[String, String],
+  name : String,
+) -> String? {
+  let lower = header_name_lower(name)
+  match header_spelling_cache.get(lower) {
+    Some(actual) =>
+      if headers.contains(actual) &&
+        actual.view().equal_ignore_ascii_case(name.view()) {
+        return Some(actual)
+      }
+    None => ()
+  }
+  let target = name.view()
+  let target_length = target.length()
+  let mut found : String? = None
+  for key in headers.keys() {
+    if key.length() == target_length &&
+      key.view().equal_ignore_ascii_case(target) {
+      found = Some(key)
+      break
+    }
+  }
+  match found {
+    Some(key) => {
+      if header_spelling_cache.length() >= PARSE_CACHE_LIMIT {
+        header_spelling_cache.clear()
+      }
+      header_spelling_cache.set(lower, key)
+      Some(key)
+    }
+    None => None
+  }
+}
+
+///|
 /// Set a header under its canonical spelling, dropping any existing entry whose
 /// name differs only by case so the outgoing response has exactly one of it.
 fn set_header_ignore_case(
@@ -3931,17 +4113,9 @@ fn set_header_ignore_case(
   name : String,
   value : String,
 ) -> Unit {
-  let target = name.view()
-  let target_length = target.length()
   let mut stale : String? = None
   if !headers.contains(name) {
-    for key in headers.keys() {
-      if key.length() == target_length &&
-        key.view().equal_ignore_ascii_case(target) {
-        stale = Some(key)
-        break
-      }
-    }
+    stale = cached_header_spelling(headers, name)
   }
   match stale {
     Some(key) => ignore(headers.remove(key))
@@ -3959,17 +4133,7 @@ fn remove_header_ignore_case(
   if headers.remove_and_get(name) is Some(_) {
     return true
   }
-  let target = name.view()
-  let target_length = target.length()
-  let mut stale : String? = None
-  for key in headers.keys() {
-    if key.length() == target_length &&
-      key.view().equal_ignore_ascii_case(target) {
-      stale = Some(key)
-      break
-    }
-  }
-  match stale {
+  match cached_header_spelling(headers, name) {
     Some(key) => {
       ignore(headers.remove(key))
       true
@@ -4084,13 +4248,14 @@ pub fn parse_multipart(
       break
     }
     pos = skip_line_break(view, pos)
-    let data_end = match find_terminated_delimiter(view, crlf_delimiter_view, pos) {
+    let data_end = match find_part_delimiter(
+      view,
+      crlf_delimiter_view,
+      lf_delimiter_view,
+      pos,
+    ) {
       Some(index) => index
-      None =>
-        match find_terminated_delimiter(view, lf_delimiter_view, pos) {
-          Some(index) => index
-          None => break
-        }
+      None => break
     }
     // A part may carry no headers at all, in which case its blank line comes
     // immediately after the delimiter line.
@@ -4570,12 +4735,37 @@ fn parse_imf_fixdate(view : StringView) -> Int64? {
 
 ///|
 pub fn parse_http_date(value : String) -> Int64? {
-  let view = value.view()
+  parse_http_date_view(value.view())
+}
+
+///|
+/// `parse_http_date` for a view: callers that already hold a header view avoid
+/// copying the whole date just to parse it.
+fn parse_http_date_view(view : StringView) -> Int64? {
   match parse_imf_fixdate(view) {
     Some(seconds) => return Some(seconds)
     None => ()
   }
   let length = view.length()
+  // Count tokens before allocating: RFC-850 / asctime dates with unusual
+  // whitespace are rejected here without touching the heap.
+  let mut token_count = 0
+  let mut probe = 0
+  while probe < length {
+    while probe < length && view.unsafe_get(probe) == (' ' : UInt16) {
+      probe = probe + 1
+    }
+    if probe >= length {
+      break
+    }
+    token_count = token_count + 1
+    while probe < length && view.unsafe_get(probe) != (' ' : UInt16) {
+      probe = probe + 1
+    }
+  }
+  if token_count < 4 {
+    return None
+  }
   let parts : FixedArray[StringView] = FixedArray::make(6, "")
   let mut count = 0
   let mut i = 0
@@ -4758,7 +4948,7 @@ fn if_unmodified_since_ok(value : StringView, mtime_secs : Int64) -> Bool {
   if mtime_secs <= 0L {
     return true
   }
-  match parse_http_date(owned_trimmed(value)) {
+  match parse_http_date_view(trim_ascii_space(value)) {
     Some(since) => mtime_secs <= since
     None => true
   }
@@ -5185,6 +5375,7 @@ pub struct App {
   mut max_body_size : Int32
   mut timeout : Int32
   mut chain : Handler?
+  mut static_chain : Handler?
   static_mounts : Array[StaticMount]
   mut no_route_handler : Handler?
   ws_router : Router
@@ -5209,6 +5400,7 @@ fn App::fresh(timeout : Int32) -> App {
     max_body_size: DEFAULT_MAX_BODY_SIZE,
     timeout,
     chain: None,
+    static_chain: None,
     static_mounts: [],
     no_route_handler: None,
     ws_router: create_router(),
@@ -5233,6 +5425,7 @@ pub fn App::new() -> App {
 pub fn App::use(self : App, middleware : Middleware) -> App {
   self.middlewares.push(middleware)
   self.chain = None
+  self.static_chain = None
   self
 }
 
@@ -5316,6 +5509,9 @@ pub fn App::websocket(
 
 ///|
 pub fn App::has_websocket(self : App, path : String) -> Bool {
+  if self.ws_handlers.is_empty() {
+    return false
+  }
   self.ws_router.is_routable("GET", path)
 }
 
@@ -5337,6 +5533,9 @@ pub fn App::sse(self : App, path : String, handler : SseHandler) -> App {
 
 ///|
 pub fn App::has_sse(self : App, path : String) -> Bool {
+  if self.sse_handlers.is_empty() {
+    return false
+  }
   self.sse_router.is_routable("GET", path)
 }
 
@@ -5348,16 +5547,17 @@ pub fn App::resolve_sse(
   if self.sse_handlers.is_empty() {
     return None
   }
-  // The dispatch check goes through the router's miss cache, so unrelated GET
-  // requests only pay one cached lookup instead of a full tree match.
+  // One dispatch pass serves both the miss-cache fast path for unrelated GET
+  // requests and the parameter bindings, so a hit no longer walks the route
+  // tree a second time.
   match self.sse_router.match_dispatch("GET", clean_path_view(path)) {
-    DispatchFound(_) => ()
-    _ => return None
-  }
-  match self.sse_router.route("GET", path) {
-    RouteFound(route) =>
-      match self.sse_handlers.get(route.path) {
-        Some(handler) => Some((handler, route.params))
+    DispatchFound(node, params, _) =>
+      match self.sse_handlers.get(node.route_path) {
+        Some(handler) =>
+          Some((handler, match params {
+            Some(params) => params.copy()
+            None => Map([], capacity=0)
+          }))
         None => None
       }
     _ => None
@@ -5373,13 +5573,13 @@ pub fn App::resolve_websocket(
     return None
   }
   match self.ws_router.match_dispatch("GET", clean_path_view(path)) {
-    DispatchFound(_) => ()
-    _ => return None
-  }
-  match self.ws_router.route("GET", path) {
-    RouteFound(route) =>
-      match self.ws_handlers.get(route.path) {
-        Some(handler) => Some((handler, route.params))
+    DispatchFound(node, params, _) =>
+      match self.ws_handlers.get(node.route_path) {
+        Some(handler) =>
+          Some((handler, match params {
+            Some(params) => params.copy()
+            None => Map([], capacity=0)
+          }))
         None => None
       }
     _ => None
@@ -5410,6 +5610,9 @@ pub fn App::stream(self : App, path : String, handler : StreamHandler) -> App {
 
 ///|
 pub fn App::has_stream(self : App, path : String) -> Bool {
+  if self.stream_handlers.is_empty() {
+    return false
+  }
   self.stream_router.is_routable("GET", path)
 }
 
@@ -5422,13 +5625,13 @@ pub fn App::resolve_stream(
     return None
   }
   match self.stream_router.match_dispatch("GET", clean_path_view(path)) {
-    DispatchFound(_) => ()
-    _ => return None
-  }
-  match self.stream_router.route("GET", path) {
-    RouteFound(route) =>
-      match self.stream_handlers.get(route.path) {
-        Some(handler) => Some((handler, route.params))
+    DispatchFound(node, params, _) =>
+      match self.stream_handlers.get(node.route_path) {
+        Some(handler) =>
+          Some((handler, match params {
+            Some(params) => params.copy()
+            None => Map([], capacity=0)
+          }))
         None => None
       }
     _ => None
@@ -5476,24 +5679,27 @@ fn join_fs_path(root : String, relative : String) -> String {
 }
 
 ///|
-fn clean_relative_path(relative : StringView) -> String? {
-  if relative.contains("\u{0}") || relative.contains("\\") {
+/// Normalize a decoded relative path. Takes ownership so an already-clean path
+/// is handed back without another copy.
+fn clean_relative_path(relative : String) -> String? {
+  let view = relative.view()
+  if view.contains("\u{0}") || view.contains("\\") {
     return None
   }
-  let length = relative.length()
+  let length = view.length()
   let mut needs_clean = false
   let mut i = 0
   let mut at_start = true
   while i < length {
-    if relative.unsafe_get(i).to_int() == 47 {
-      if at_start || i + 1 == length || relative.unsafe_get(i - 1).to_int() == 47 {
+    if view.unsafe_get(i).to_int() == 47 {
+      if at_start || i + 1 == length || view.unsafe_get(i - 1).to_int() == 47 {
         needs_clean = true
       }
       i = i + 1
     } else {
       at_start = false
-      let end = segment_end(relative, i)
-      let segment = relative[i:end]
+      let end = segment_end(view, i)
+      let segment = view[i:end]
       if segment == "." {
         needs_clean = true
       } else if segment == ".." {
@@ -5503,10 +5709,10 @@ fn clean_relative_path(relative : StringView) -> String? {
     }
   }
   if !needs_clean {
-    return Some(relative.to_owned())
+    return Some(relative)
   }
   let segments : Array[StringView] = []
-  for segment in relative.split("/") {
+  for segment in view.split("/") {
     if segment.is_empty() || segment == "." {
       continue
     }
@@ -5555,6 +5761,36 @@ pub fn App::static_files(
 }
 
 ///|
+/// Collect every registered route endpoint below `node` into
+/// `(method, path, handler)` triples. Used by `App::mount` so routes live only
+/// in the matching trees instead of a second parallel list.
+fn collect_route_nodes(
+  node : RouteNode,
+  method : String,
+  out : Array[(String, String, Handler)],
+) -> Unit {
+  match node.handler {
+    Some(handler) => out.push((method, node.route_path, handler))
+    None => ()
+  }
+  match node.static_children {
+    Some(children) =>
+      for _, child in children {
+        collect_route_nodes(child, method, out)
+      }
+    None => ()
+  }
+  match node.param_child {
+    Some(child) => collect_route_nodes(child, method, out)
+    None => ()
+  }
+  match node.wildcard_child {
+    Some(child) => collect_route_nodes(child, method, out)
+    None => ()
+  }
+}
+
+///|
 /// Mount another application under `prefix`, keeping its routes, middleware,
 /// static mounts, named routes, websocket, server-sent events and streaming
 /// handlers.
@@ -5564,14 +5800,14 @@ pub fn App::static_files(
 /// those. Returns the parent so calls can be chained.
 pub fn App::mount(self : App, prefix : String, child : App) -> App {
   let base = normalize_prefix(prefix)
-  for route in child.router.routes {
-    match route.handler {
-      Some(handler) => {
-        let wrapped = apply_middleware(child.middlewares, handler)
-        self.router.add_route(route.method, join_paths(base, route.path), wrapped)
-      }
-      None => ()
-    }
+  let routes : Array[(String, String, Handler)] = []
+  for method, root in child.router.trees {
+    collect_route_nodes(root, method, routes)
+  }
+  for route in routes {
+    let (method, path, handler) = route
+    let wrapped = apply_middleware(child.middlewares, handler)
+    self.router.add_route(method, join_paths(base, path), wrapped)
   }
   for name, named in child.router.named {
     self.router.named.set(name, {
@@ -5609,13 +5845,14 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
     self.stream_handlers.set(mounted, handler)
   }
   self.chain = None
+  self.static_chain = None
   self
 }
 
 ///|
 fn Router::is_routable(self : Router, meth : String, path : String) -> Bool {
   match self.match_dispatch(normalize_method(meth), clean_path_view(path)) {
-    DispatchFound(_) => true
+    DispatchFound(_, _, _) => true
     _ => false
   }
 }
@@ -5691,11 +5928,17 @@ fn App::static_lookup(
   match self.static_lookup_cache.get_from_string(clean) {
     Some(cached) => cached
     None => {
-      let result = self.static_lookup_uncached(clean)
+      // Resolve the mount once: `static_lookup_uncached` uses it for the file
+      // path and the negative-cache decision below reuses it.
+      let mount = self.best_static_mount(clean)
+      let result = match mount {
+        Some(mount) => self.static_lookup_uncached(clean, mount)
+        None => None
+      }
       // Paths that match no mount at all are dynamic routes; caching their
       // negative result would only evict useful static entries.
       if clean.length() <= PARSE_CACHE_MAX_KEY &&
-        (result is Some(_) || self.best_static_mount(clean) is Some(_)) {
+        (result is Some(_) || mount is Some(_)) {
         if self.static_lookup_cache.length() >= STATIC_LOOKUP_CACHE_LIMIT {
           self.static_lookup_evict()
         }
@@ -5712,37 +5955,34 @@ fn App::static_lookup(
 fn App::static_lookup_uncached(
   self : App,
   path_view : StringView,
+  mount : StaticMount,
 ) -> (String, String, Bool)? {
-  match self.best_static_mount(path_view) {
-    None => None
-    Some(mount) => {
-      let prefix_view = mount.url_prefix.view()
-      let prefix_length = mount.url_prefix.length()
-      let relative : StringView = if prefix_length == 0 {
-        path_view
-      } else if path_view == prefix_view {
-        ""
-      } else {
-        path_view[prefix_length + 1:]
-      }
-      let decoded = decode_url_path(relative)
-      let clean = match clean_relative_path(decoded.view()) {
-        Some(clean) => clean
-        None => return None
-      }
-      let file_path = if clean.is_empty() || decoded.has_suffix("/") {
-        join_fs_path(join_fs_path(mount.root, clean), mount.index)
-      } else {
-        join_fs_path(mount.root, clean)
-      }
-      let cache_control = if mount.max_age > 0 {
-        "public, max-age=" + mount.max_age.to_string()
-      } else {
-        ""
-      }
-      Some((file_path, cache_control, mount.precompressed))
-    }
+  let prefix_view = mount.url_prefix.view()
+  let prefix_length = mount.url_prefix.length()
+  let relative : StringView = if prefix_length == 0 {
+    path_view
+  } else if path_view == prefix_view {
+    ""
+  } else {
+    path_view[prefix_length + 1:]
   }
+  let decoded = decode_url_path(relative)
+  let decoded_ends_with_slash = decoded.has_suffix("/")
+  let clean = match clean_relative_path(decoded) {
+    Some(clean) => clean
+    None => return None
+  }
+  let file_path = if clean.is_empty() || decoded_ends_with_slash {
+    join_fs_path(join_fs_path(mount.root, clean), mount.index)
+  } else {
+    join_fs_path(mount.root, clean)
+  }
+  let cache_control = if mount.max_age > 0 {
+    "public, max-age=" + mount.max_age.to_string()
+  } else {
+    ""
+  }
+  Some((file_path, cache_control, mount.precompressed))
 }
 
 ///|
@@ -5801,8 +6041,9 @@ pub fn App::respond(self : App, request : Request) -> Response {
       error_response_with_payload(ctx, status, message, payload)
     err => internal_error(ctx, "\{err}")
   }
-  if ctx.file_response() is None {
-    if self.etag_enabled {
+  if ctx.file_response() is None &&
+    !precondition_fails_early_facade(ctx.request, ctx.response) {
+    if self.etag_enabled && method_allows_auto_etag(ctx.request.method) {
       apply_etag(ctx.response)
     }
     apply_preconditions_facade(ctx.request, ctx.response)

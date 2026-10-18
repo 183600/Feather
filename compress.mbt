@@ -137,8 +137,8 @@ priv struct ChunkSink {
 }
 
 ///|
-fn ChunkSink::new() -> ChunkSink {
-  { buffer: @buffer.Buffer::Buffer(size_hint=1024) }
+fn ChunkSink::new(size_hint : Int) -> ChunkSink {
+  { buffer: @buffer.Buffer::Buffer(size_hint=size_hint) }
 }
 
 ///|
@@ -156,7 +156,18 @@ fn ChunkSink::to_bytes(self : ChunkSink) -> Bytes {
 
 ///|
 async fn gzip_compress(data : Bytes) -> Bytes {
-  let sink = ChunkSink::new()
+  // Start near the typical compressed size (a fraction of the input) instead
+  // of always 1024 bytes, but cap the up-front hint so a pathological body
+  // cannot force a huge allocation before a single byte is emitted.
+  let length = data.length()
+  let hint = if length < 2048 {
+    1024
+  } else if length < 524288 {
+    length / 2
+  } else {
+    262144
+  }
+  let sink = ChunkSink::new(hint)
   let encoder = @gzip.Encoder::Encoder(sink)
   encoder.write(data)
   encoder.end()

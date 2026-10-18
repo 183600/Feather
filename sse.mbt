@@ -10,11 +10,20 @@
 pub struct Sse {
   conn : @http.ServerConnection
   mut closed : Bool
+  buffer : StringBuilder
+  mut last_event : String?
+  mut last_event_clean : String
 }
 
 ///|
 fn Sse::new(conn : @http.ServerConnection) -> Sse {
-  { conn, closed: false, }
+  {
+    conn,
+    closed: false,
+    buffer: StringBuilder(size_hint=256),
+    last_event: None,
+    last_event_clean: "",
+  }
 }
 
 ///|
@@ -62,13 +71,12 @@ fn write_sse_data(builder : StringBuilder, data : String) -> Unit {
 ///|
 /// Strip carriage returns and line feeds from a single-line SSE field so a
 /// caller-supplied value cannot inject extra fields or forge a whole event.
-fn sanitize_sse_field(value : String) -> String {
-  let view = value.view()
-  let length = view.length()
+fn sanitize_sse_field_view(value : StringView) -> String {
+  let length = value.length()
   let mut i = 0
   let mut needs_clean = false
   while i < length {
-    let code = view.unsafe_get(i)
+    let code = value.unsafe_get(i)
     if code == ('\n' : UInt16) || code == ('\r' : UInt16) {
       needs_clean = true
       break
@@ -76,18 +84,40 @@ fn sanitize_sse_field(value : String) -> String {
     i = i + 1
   }
   if !needs_clean {
-    return value
+    return value.to_owned()
   }
   let builder = StringBuilder(size_hint=length)
   let mut index = 0
   while index < length {
-    let code = view.unsafe_get(index)
+    let code = value.unsafe_get(index)
     if code != ('\n' : UInt16) && code != ('\r' : UInt16) {
       builder.write_char(code.unsafe_to_char())
     }
     index = index + 1
   }
   builder.to_string()
+}
+
+///|
+fn sanitize_sse_field(value : String) -> String {
+  sanitize_sse_field_view(value.view())
+}
+
+///|
+/// Cleaned spelling of a single-line field, memoized so a stream that reuses
+/// the same `event` name on every event does not re-sanitize it each time.
+fn Sse::cleaned_event(self : Sse, name : String) -> String {
+  match self.last_event {
+    Some(cached) =>
+      if physical_equal(cached, name) {
+        return self.last_event_clean
+      }
+    None => ()
+  }
+  let clean = sanitize_sse_field(name)
+  self.last_event = Some(name)
+  self.last_event_clean = clean
+  clean
 }
 
 ///|
@@ -105,10 +135,11 @@ pub async fn Sse::send(
   if self.closed {
     return
   }
-  let builder = StringBuilder(size_hint=data.length() + 32)
+  let builder = self.buffer
+  builder.reset()
   match event {
     Some(name) => {
-      let clean = sanitize_sse_field(name)
+      let clean = self.cleaned_event(name)
       if clean != "" {
         builder.write_string("event: ")
         builder.write_string(clean)
@@ -164,14 +195,14 @@ pub async fn Sse::comment(self : Sse, text : String) -> Unit {
   if self.closed {
     return
   }
-  let builder = StringBuilder(size_hint=text.length() + 4)
+  let builder = self.buffer
+  builder.reset()
   for line in text.view().split("\n") {
-    let cleaned = sanitize_sse_field(line.to_owned())
-    let trimmed = trim_ascii_space(cleaned.view())
+    let cleaned = sanitize_sse_field_view(trim_ascii_space(line))
     builder.write_char(':')
-    if !trimmed.is_empty() {
+    if !cleaned.is_empty() {
       builder.write_char(' ')
-      builder.write_stringview(trimmed)
+      builder.write_string(cleaned)
     }
     builder.write_char('\n')
   }

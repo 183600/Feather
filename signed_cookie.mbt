@@ -127,8 +127,12 @@ let sha256_tail_bytes : FixedArray[Byte] = FixedArray::make(128, b'\x00')
 let sha256_work_state : FixedArray[UInt] = FixedArray::make(8, 0U)
 
 ///|
-/// Reusable key block for the two `hmac_sha256` hashes.
-let sha256_hmac_key_block : FixedArray[Byte] = FixedArray::make(64, b'\x00')
+/// Reusable inner/outer key blocks for `hmac_sha256`, memoized together with
+/// the normalized key they were derived from so repeated verifications with the
+/// same secret skip rebuilding them.
+let hmac_cached_key : Ref[Bytes?] = Ref(None)
+let hmac_inner_block : FixedArray[Byte] = FixedArray::make(64, b'\x00')
+let hmac_outer_block : FixedArray[Byte] = FixedArray::make(64, b'\x00')
 
 ///|
 /// Reusable inner-digest scratch for `hmac_sha256`.
@@ -210,25 +214,37 @@ pub fn sha256(data : Bytes) -> Bytes {
 ///
 /// The inner and outer hashes are streamed into the shared `sha256_update` /
 /// `sha256_finish_into` helpers, so only the returned digest is allocated.
+///|
+/// Fill `hmac_inner_block`/`hmac_outer_block` for `normalized` unless they
+/// already correspond to it.
+fn hmac_ensure_key_blocks(normalized : Bytes) -> Unit {
+  match hmac_cached_key.val {
+    Some(cached) =>
+      if constant_time_bytes_equal(cached, normalized) {
+        return
+      }
+    None => ()
+  }
+  let key_length = normalized.length()
+  for i = 0; i < 64; i = i + 1 {
+    let byte = if i < key_length { normalized[i] } else { b'\x00' }
+    hmac_inner_block[i] = byte ^ b'\x36'
+    hmac_outer_block[i] = byte ^ b'\x5c'
+  }
+  hmac_cached_key.val = Some(normalized)
+}
+
+///|
 pub fn hmac_sha256(key : Bytes, message : Bytes) -> Bytes {
   let normalized = if key.length() > 64 { sha256(key) } else { key }
-  let key_length = normalized.length()
+  hmac_ensure_key_blocks(normalized)
   let state = sha256_work_state
-  let block = sha256_hmac_key_block
-  for i = 0; i < 64; i = i + 1 {
-    let byte = if i < key_length { normalized[i] } else { b'\x00' }
-    block[i] = byte ^ b'\x36'
-  }
   sha256_state_reset(state)
-  sha256_compress(state, block.unsafe_reinterpret_as_bytes(), 0)
+  sha256_compress(state, hmac_inner_block.unsafe_reinterpret_as_bytes(), 0)
   sha256_update(state, message)
   sha256_finish_into(state, message, 64, sha256_hmac_inner_digest)
-  for i = 0; i < 64; i = i + 1 {
-    let byte = if i < key_length { normalized[i] } else { b'\x00' }
-    block[i] = byte ^ b'\x5c'
-  }
   sha256_state_reset(state)
-  sha256_compress(state, block.unsafe_reinterpret_as_bytes(), 0)
+  sha256_compress(state, hmac_outer_block.unsafe_reinterpret_as_bytes(), 0)
   let digest = FixedArray::make(32, b'\x00')
   sha256_finish_into(
     state,
@@ -303,23 +319,23 @@ fn base64url_encode(data : Bytes) -> String {
 }
 
 ///|
-/// Value of one URL-safe base64 character: `-` and `+` encode 62, `_` and `/`
-/// encode 63, other non-alphabet characters are `-1`.
-fn base64url_value(value : UInt16) -> Int {
-  let code = value.to_int()
-  if code >= 65 && code <= 90 {
-    code - 65
-  } else if code >= 97 && code <= 122 {
-    code - 71
-  } else if code >= 48 && code <= 57 {
-    code + 4
-  } else if code == 43 || code == 45 {
-    62
-  } else if code == 47 || code == 95 {
-    63
-  } else {
-    -1
+/// Character code (0-255) to 6-bit value for URL-safe base64; `-`/`+` encode
+/// 62 and `_`/`/` encode 63, other characters are `-1`. Kept as a flat table so
+/// token verification has no per-character branch chain.
+let base64url_lookup : FixedArray[Int] = {
+  let table = FixedArray::make(256, -1)
+  for i = 0; i < 26; i = i + 1 {
+    table[65 + i] = i
+    table[97 + i] = i + 26
   }
+  for i = 0; i < 10; i = i + 1 {
+    table[48 + i] = i + 52
+  }
+  table[43] = 62
+  table[45] = 62
+  table[47] = 63
+  table[95] = 63
+  table
 }
 
 ///|
@@ -340,7 +356,7 @@ fn base64url_decode_view(view : StringView) -> Bytes? {
     }
     i = i + 1
   }
-  base64_decode_core(view, base64url_value)
+  base64_decode_core(view, base64url_lookup)
 }
 
 ///|
@@ -382,34 +398,21 @@ fn parse_decimal_int64(view : StringView) -> Int64? {
 ///|
 fn signed_cookie_signing_input(
   name : String,
-  encoded_value : String,
+  encoded_value : StringView,
   expires_at : Int64,
 ) -> Bytes {
-  let name_bytes = @utf8.encode(name)
-  let encoded_bytes = @utf8.encode(encoded_value)
-  let expiry_bytes = @utf8.encode(expires_at.to_string())
-  let out = FixedArray::make(
-    name_bytes.length() + encoded_bytes.length() + expiry_bytes.length() + 2,
-    b'\x00',
+  // Assemble the text once and UTF-8 encode it in a single pass: encoding the
+  // three pieces separately and copying the bytes was 3 encodes + 1 full copy.
+  let expiry = expires_at.to_string()
+  let builder = StringBuilder(
+    size_hint=name.length() + encoded_value.length() + expiry.length() + 2,
   )
-  let mut index = 0
-  for i = 0; i < name_bytes.length(); i = i + 1 {
-    out[index] = name_bytes[i]
-    index = index + 1
-  }
-  out[index] = b'\n'
-  index = index + 1
-  for i = 0; i < encoded_bytes.length(); i = i + 1 {
-    out[index] = encoded_bytes[i]
-    index = index + 1
-  }
-  out[index] = b'.'
-  index = index + 1
-  for i = 0; i < expiry_bytes.length(); i = i + 1 {
-    out[index] = expiry_bytes[i]
-    index = index + 1
-  }
-  out.unsafe_reinterpret_as_bytes()
+  builder.write_string(name)
+  builder.write_char('\n')
+  builder.write_stringview(encoded_value)
+  builder.write_char('.')
+  builder.write_string(expiry)
+  @utf8.encode(builder.to_string())
 }
 
 ///|
@@ -435,7 +438,7 @@ pub fn signed_cookie_token(
   let encoded_value = base64url_encode(@utf8.encode(value))
   let mac = hmac_sha256(
     @utf8.encode(secret),
-    signed_cookie_signing_input(name, encoded_value, deadline),
+    signed_cookie_signing_input(name, encoded_value.view(), deadline),
   )
   encoded_value + "." + deadline.to_string() + "." + base64url_encode(mac)
 }
@@ -482,10 +485,9 @@ pub fn verify_signed_cookie_token(
       return None
     }
   }
-  let encoded_value_owned = encoded_value.to_owned()
   let expected = hmac_sha256(
     @utf8.encode(secret),
-    signed_cookie_signing_input(name, encoded_value_owned, deadline),
+    signed_cookie_signing_input(name, encoded_value, deadline),
   )
   let signature = match base64url_decode_view(signature_view) {
     Some(value) => value

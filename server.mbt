@@ -142,19 +142,14 @@ async fn read_body_bytes(reader : &@io.Reader, limit : Int32) -> Bytes {
     None => return b""
     Some(chunk) => chunk
   }
-  let first_length = first.length()
-  if first_length > limit {
-    raise PayloadTooLarge
-  }
-  let second = match reader.read_some(max_len=8192) {
-    None => return first
-    Some(chunk) => chunk
-  }
-  let mut total = first_length + second.length()
+  let mut total = first.length()
   if total > limit {
     raise PayloadTooLarge
   }
-  let chunks : Array[Bytes] = [first, second]
+  let limit_int = limit
+  let hint : Int = if limit_int < 65536 { limit_int } else { 65536 }
+  let buffer = @buffer.Buffer::Buffer(size_hint=hint)
+  buffer.write_bytes(first)
   let mut done = false
   while !done {
     match reader.read_some(max_len=8192) {
@@ -164,13 +159,9 @@ async fn read_body_bytes(reader : &@io.Reader, limit : Int32) -> Bytes {
         if total > limit {
           raise PayloadTooLarge
         }
-        chunks.push(chunk)
+        buffer.write_bytes(chunk)
       }
     }
-  }
-  let buffer = @buffer.Buffer::Buffer(size_hint=total)
-  for chunk in chunks {
-    buffer.write_bytes(chunk)
   }
   buffer.to_bytes()
 }
@@ -192,7 +183,13 @@ async fn decode_gzip_body(data : Bytes, limit : Int32) -> Bytes {
   })
   defer reader.close()
   let decoder = @gzip.Decoder::Decoder(reader)
-  let buffer = @buffer.Buffer::Buffer(size_hint=data.length() * 4)
+  let limit_int = limit
+  let hint : Int = if data.length() * 4 < limit_int {
+    data.length() * 4
+  } else {
+    limit_int
+  }
+  let buffer = @buffer.Buffer::Buffer(size_hint=hint)
   let mut total = 0
   let mut done = false
   while !done {
@@ -376,7 +373,7 @@ async fn send_file_response(
   )
   let headers : @http.Headers = Map([], capacity=response.headers.length() + 4)
   for name, value in response.headers {
-    headers.set(@http.CaseInsensitiveString(name), value)
+    headers.set(header_key(name), value)
   }
   if !headers.contains(header_content_type) {
     headers.set(header_content_type, file.content_type)
@@ -486,12 +483,18 @@ async fn send_file_response(
 }
 
 ///|
-/// Last peer address formatted by `socket_addr_host` and its host string.
-/// The async runtime is single threaded, so the plain refs are safe.
-let cached_peer_addr : Ref[@socket.Addr?] = Ref(None)
+/// Bounded cache of formatted peer hosts, keyed by peer address. Keep-alive
+/// connections reuse the same address across requests, so alternating clients
+/// no longer invalidate each other the way a single-slot cache did.
+let peer_host_cache : Map[@socket.Addr, String] = Map([])
 
 ///|
-let cached_peer_host : Ref[String] = Ref("")
+/// Recency ticks for `peer_host_cache`.
+let peer_host_cache_ages : Map[@socket.Addr, Int] = Map([])
+
+///|
+/// Maximum number of peer addresses tracked by `peer_host_cache`.
+const PEER_HOST_CACHE_LIMIT : Int = 64
 
 ///|
 /// Host part of a peer address, without the ephemeral port.
@@ -499,26 +502,32 @@ let cached_peer_host : Ref[String] = Ref("")
 /// Recorded as the `remote_addr` context state so IP-based logic (logging,
 /// `Context::ip`, rate limiting) keys by client rather than by connection.
 fn socket_addr_host(addr : @socket.Addr) -> String {
-  match cached_peer_addr.val {
-    Some(cached) =>
-      if cached == addr {
-        return cached_peer_host.val
-      }
-    None => ()
-  }
-  let host = if addr.is_ipv6() {
-    let text = addr.to_string()
-    match text.find("]") {
-      Some(index) => text[:index + 1].to_owned()
-      None => text
+  match peer_host_cache.get(addr) {
+    Some(host) => {
+      cache_touch(peer_host_cache_ages, addr)
+      host
     }
-  } else {
-    let ip = addr.ip()
-    "\{ip >> 24}.\{(ip >> 16) & 255}.\{(ip >> 8) & 255}.\{ip & 255}"
+    None => {
+      let host = if addr.is_ipv6() {
+        let text = addr.to_string()
+        match text.find("]") {
+          Some(index) => text[:index + 1].to_owned()
+          None => text
+        }
+      } else {
+        let ip = addr.ip()
+        "\{ip >> 24}.\{(ip >> 16) & 255}.\{(ip >> 8) & 255}.\{ip & 255}"
+      }
+      cache_set(
+        peer_host_cache,
+        peer_host_cache_ages,
+        PEER_HOST_CACHE_LIMIT,
+        addr,
+        host,
+      )
+      host
+    }
   }
-  cached_peer_addr.val = Some(addr)
-  cached_peer_host.val = host
-  host
 }
 
 ///|
@@ -553,6 +562,41 @@ fn utf8_byte_length(view : StringView) -> Int {
 }
 
 ///|
+/// Bounded cache of `CaseInsensitiveString` header keys. Response headers are
+/// copied into an `@http.Headers` map on every send; reusing the wrapper for
+/// names already seen avoids rebuilding them per response.
+let header_name_cache : Map[String, @http.CaseInsensitiveString] = Map([])
+
+///|
+/// Recency ticks for `header_name_cache`.
+let header_name_cache_ages : Map[String, Int] = Map([])
+
+///|
+/// Maximum number of header names tracked by `header_name_cache`.
+const HEADER_NAME_CACHE_LIMIT : Int = 128
+
+///|
+fn header_key(name : String) -> @http.CaseInsensitiveString {
+  match header_name_cache.get(name) {
+    Some(key) => {
+      cache_touch(header_name_cache_ages, name)
+      key
+    }
+    None => {
+      let key = @http.CaseInsensitiveString(name)
+      cache_set(
+        header_name_cache,
+        header_name_cache_ages,
+        HEADER_NAME_CACHE_LIMIT,
+        name,
+        key,
+      )
+      key
+    }
+  }
+}
+
+///|
 async fn send_response(
   conn : @http.ServerConnection,
   response : Response,
@@ -560,7 +604,7 @@ async fn send_response(
 ) -> Unit {
   let headers : @http.Headers = Map([], capacity=response.headers.length() + 1)
   for name, value in response.headers {
-    headers.set(@http.CaseInsensitiveString(name), value)
+    headers.set(header_key(name), value)
   }
   let body_allowed = response.status >= 200 &&
     response.status != 204 &&
@@ -620,7 +664,7 @@ async fn send_simple(
 ) -> Unit {
   let bytes = @utf8.encode(body)
   let headers : @http.Headers = Map([
-    (@http.CaseInsensitiveString("Content-Type"), "text/plain; charset=utf-8"),
+    (header_key("Content-Type"), "text/plain; charset=utf-8"),
     (header_content_length, bytes.length().to_string()),
   ])
   send_with_date(conn, code, status_text(code), headers)
@@ -684,6 +728,35 @@ fn append_trailing_slash(path : String) -> String {
 }
 
 ///|
+/// Recycled read buffers for `write_file_range`, so range requests do not
+/// allocate and zero-fill a fresh 64 KB buffer each time. The async runtime is
+/// single threaded, so a plain array is safe.
+let file_range_buffers : Array[FixedArray[Byte]] = []
+
+///|
+/// Maximum number of recycled range buffers retained.
+const FILE_RANGE_POOL_LIMIT : Int = 4
+
+///|
+/// Size of the recycled range buffers.
+const FILE_RANGE_CHUNK_SIZE : Int = 65536
+
+///|
+fn acquire_file_range_buffer() -> FixedArray[Byte] {
+  match file_range_buffers.pop() {
+    Some(buffer) => buffer
+    None => FixedArray::make(FILE_RANGE_CHUNK_SIZE, b'\x00')
+  }
+}
+
+///|
+fn release_file_range_buffer(buffer : FixedArray[Byte]) -> Unit {
+  if file_range_buffers.length() < FILE_RANGE_POOL_LIMIT {
+    file_range_buffers.push(buffer)
+  }
+}
+
+///|
 async fn write_file_range(
   conn : @http.ServerConnection,
   file : @fs.File,
@@ -693,8 +766,13 @@ async fn write_file_range(
   if length <= 0L {
     return
   }
-  let chunk_size : Int32 = if length < 65536L { length.to_int() } else { 65536 }
-  let buffer = FixedArray::make(chunk_size, b'\x00')
+  let chunk_size : Int32 = if length < FILE_RANGE_CHUNK_SIZE.to_int64() {
+    length.to_int()
+  } else {
+    65536
+  }
+  let buffer = acquire_file_range_buffer()
+  defer release_file_range_buffer(buffer)
   let mut remaining = length
   let mut position = start
   while remaining > 0 {
@@ -746,6 +824,21 @@ fn add_vary_header(headers : @http.Headers, value : String) -> Unit {
 }
 
 ///|
+/// Bounded cache recording whether a static file has a precompressed `.gz`
+/// sibling, keyed by path and validated against the base file's `(size, mtime)`
+/// so a changed file is probed again. Without it, every gzip-accepting request
+/// for an asset without a sibling pays a failed `open`.
+let gzip_probe_cache : Map[String, (Int64, Int64, Int, Bool)] = Map([])
+
+///|
+/// Recency ticks for `gzip_probe_cache`.
+let gzip_probe_ages : Map[String, Int] = Map([])
+
+///|
+/// Maximum number of paths tracked by `gzip_probe_cache`.
+const GZIP_PROBE_CACHE_LIMIT : Int = 64
+
+///|
 /// Serve a static file, seeding every response with the headers and cookies a
 /// request context accumulated (middleware and handler output), so static
 /// responses carry the same security, CORS and session headers as dynamic
@@ -770,7 +863,7 @@ async fn serve_static_file(
         name.view().equal_ignore_ascii_case("set-cookie".view()) {
         continue
       }
-      headers.set(@http.CaseInsensitiveString(name), value)
+      headers.set(header_key(name), value)
     }
     headers
   }
@@ -785,28 +878,14 @@ async fn serve_static_file(
     }
     conn.end_response()
   }
-  let mut precompressed_handle : @fs.File? = None
-  if precompressed {
-    match request.headers.get(header_accept_encoding) {
-      Some(value) =>
-        if accept_encoding_allows_gzip_cached(value) {
-          precompressed_handle = open_precompressed_gzip(file_path)
-        }
-      None => ()
+  let base = @fs.open(file_path, mode=@fs.ReadOnly) catch {
+    _ => {
+      send_error(404, "404 Not Found")
+      return
     }
   }
-  let serving_gzip = precompressed_handle is Some(_)
-  let file = match precompressed_handle {
-    Some(handle) => handle
-    None => @fs.open(file_path, mode=@fs.ReadOnly) catch {
-      _ => {
-        send_error(404, "404 Not Found")
-        return
-      }
-    }
-  }
-  defer file.close()
-  if file.kind() is @fs.Directory {
+  if base.kind() is @fs.Directory {
+    base.close()
     let location = append_trailing_slash(request.path)
     let headers = base_headers(1)
     headers.set(@http.CaseInsensitiveString("Location"), location)
@@ -814,6 +893,66 @@ async fn serve_static_file(
     conn.end_response()
     return
   }
+  let mut gzip_handle : @fs.File? = None
+  if precompressed {
+    match request.headers.get(header_accept_encoding) {
+      Some(value) =>
+        if accept_encoding_allows_gzip_cached(value) {
+          let base_size = base.size() catch {
+            _ => 0L
+          }
+          let base_mtime = base.mtime() catch {
+            _ => (0L, 0)
+          }
+          let (base_secs, base_nanos) = base_mtime
+          let mut has_gzip = false
+          let mut known = false
+          match gzip_probe_cache.get(file_path) {
+            Some((cached_size, cached_secs, cached_nanos, cached_has)) =>
+              if cached_size == base_size &&
+                cached_secs == base_secs &&
+                cached_nanos == base_nanos {
+                has_gzip = cached_has
+                known = true
+                cache_touch(gzip_probe_ages, file_path)
+              }
+            None => ()
+          }
+          if !known {
+            gzip_handle = open_precompressed_gzip(file_path)
+            has_gzip = gzip_handle is Some(_)
+            cache_set(
+              gzip_probe_cache,
+              gzip_probe_ages,
+              GZIP_PROBE_CACHE_LIMIT,
+              file_path,
+              (base_size, base_secs, base_nanos, has_gzip),
+            )
+          } else if has_gzip {
+            gzip_handle = open_precompressed_gzip(file_path)
+            if gzip_handle is None {
+              cache_set(
+                gzip_probe_cache,
+                gzip_probe_ages,
+                GZIP_PROBE_CACHE_LIMIT,
+                file_path,
+                (base_size, base_secs, base_nanos, false),
+              )
+            }
+          }
+        }
+      None => ()
+    }
+  }
+  let serving_gzip = gzip_handle is Some(_)
+  let file = match gzip_handle {
+    Some(handle) => {
+      base.close()
+      handle
+    }
+    None => base
+  }
+  defer file.close()
   let decorate_headers = fn(headers : @http.Headers) {
     if precompressed {
       add_vary_header(headers, "Accept-Encoding")
@@ -931,6 +1070,11 @@ async fn serve_static_file(
 }
 
 ///|
+/// Context state key the cached static middleware chain sets when the request
+/// falls through to the file, standing in for a per-request terminal closure.
+const STATIC_CHAIN_PASS_KEY : String = "__feather_static_pass"
+
+///|
 /// Serve a static mount after running the application middleware chain.
 ///
 /// Middleware used to be skipped for static mounts, so authentication, CORS,
@@ -979,16 +1123,24 @@ async fn handle_static(
   let ctx = Context::new(req)
   defer ctx.run_cleanups()
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
-  let passed_through = Ref(false)
-  let terminal : Handler = fn(_ctx) { passed_through.val = true }
-  let chain = apply_middleware(app.middlewares, terminal)
+  let chain = match app.static_chain {
+    Some(chain) => chain
+    None => {
+      let terminal : Handler = fn(ctx) {
+        ctx.state.set(STATIC_CHAIN_PASS_KEY, "1")
+      }
+      let chain = apply_middleware(app.middlewares, terminal)
+      app.static_chain = Some(chain)
+      chain
+    }
+  }
   chain(ctx) catch {
     HttpError(status, message) => error_response(ctx, status, message)
     HttpErrorPayload(status, message, payload) =>
       error_response_with_payload(ctx, status, message, payload)
     err => internal_error(ctx, "\{err}")
   }
-  if passed_through.val {
+  if ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) {
     serve_static_file(
       conn,
       file_path,
@@ -1003,13 +1155,15 @@ async fn handle_static(
     match ctx.file_response() {
       Some(file) => send_file_response(conn, ctx.response, file, head, request)
       None => {
-        if app.compress_enabled {
-          compress_response(request, ctx.response, app.compress_min_size)
+        if !precondition_fails_early_http(request, ctx.response) {
+          if app.compress_enabled {
+            compress_response(request, ctx.response, app.compress_min_size)
+          }
+          if app.etag_enabled && request_allows_auto_etag(request) {
+            apply_etag(ctx.response)
+          }
+          apply_preconditions(request, ctx.response)
         }
-        if app.etag_enabled {
-          apply_etag(ctx.response)
-        }
-        apply_preconditions(request, ctx.response)
         send_response(conn, ctx.response, head)
       }
     }
@@ -1033,14 +1187,16 @@ async fn build_response(
     err => internal_error(ctx, "\{err}")
   }
   let file = ctx.file_response()
-  if file is None && app.compress_enabled {
-    compress_response(request, ctx.response, app.compress_min_size)
-  }
   if file is None {
-    if app.etag_enabled {
-      apply_etag(ctx.response)
+    if !precondition_fails_early_http(request, ctx.response) {
+      if app.compress_enabled {
+        compress_response(request, ctx.response, app.compress_min_size)
+      }
+      if app.etag_enabled && request_allows_auto_etag(request) {
+        apply_etag(ctx.response)
+      }
+      apply_preconditions(request, ctx.response)
     }
-    apply_preconditions(request, ctx.response)
   }
   (ctx.response, file)
 }
@@ -1230,30 +1386,38 @@ async fn handle_request(
         }
     }
   }
-  if (head || request.meth is @http.Get) && !app.static_mounts.is_empty() {
-    // Dynamic routes take precedence over static mounts, so check them first
-    // and skip the static lookup (and cache bookkeeping) entirely when the
-    // request is handled elsewhere.
-    if !app.has_route(if head { "HEAD" } else { "GET" }, request.path) &&
-      !app.has_websocket(request.path) &&
-      !app.has_sse(request.path) &&
-      !app.has_stream(request.path) {
-      match app.static_lookup(request.path) {
-        Some((file_path, cache_control, precompressed)) => {
-          handle_static(
-            app,
-            request,
-            body,
-            conn,
-            file_path,
-            cache_control,
-            precompressed,
-            head,
-          )
-          return
-        }
-        None => ()
+  // Dynamic routes take precedence over static mounts, so check them first
+  // and skip the static lookup (and cache bookkeeping) entirely when the
+  // request is handled elsewhere. A failed GET resolve above already proves
+  // there is no websocket, SSE or stream route for the path, so only the
+  // ordinary route table still needs checking.
+  let static_eligible = if request.meth is @http.Get {
+    !app.static_mounts.is_empty() && !app.has_route("GET", request.path)
+  } else if head {
+    !app.static_mounts.is_empty() &&
+    !app.has_route("HEAD", request.path) &&
+    !app.has_websocket(request.path) &&
+    !app.has_sse(request.path) &&
+    !app.has_stream(request.path)
+  } else {
+    false
+  }
+  if static_eligible {
+    match app.static_lookup(request.path) {
+      Some((file_path, cache_control, precompressed)) => {
+        handle_static(
+          app,
+          request,
+          body,
+          conn,
+          file_path,
+          cache_control,
+          precompressed,
+          head,
+        )
+        return
       }
+      None => ()
     }
   }
   let (response, file) = if app.timeout > 0 {

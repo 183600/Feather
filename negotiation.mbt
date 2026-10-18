@@ -170,6 +170,16 @@ let last_accept_header : Ref[String?] = Ref(None)
 let last_accept_entries : Ref[Array[AcceptEntry]?] = Ref(None)
 
 ///|
+/// Parsed `Accept` headers keyed by content, so repeated headers from different
+/// requests (the common case, since request header strings are rebuilt) can
+/// still reuse a parse. The stored key owns the text the entry views point at.
+let accept_entries_cache : Map[String, Array[AcceptEntry]] = Map([])
+
+///|
+/// Recency ticks for `accept_entries_cache`.
+let accept_entries_cache_ages : Map[String, Int] = Map([])
+
+///|
 fn accept_entries_cached(header : String) -> Array[AcceptEntry] {
   match last_accept_header.val {
     Some(cached) =>
@@ -181,10 +191,62 @@ fn accept_entries_cached(header : String) -> Array[AcceptEntry] {
       }
     None => ()
   }
+  match accept_entries_cache.get(header) {
+    Some(entries) => {
+      cache_touch(accept_entries_cache_ages, header)
+      last_accept_header.val = Some(header)
+      last_accept_entries.val = Some(entries)
+      return entries
+    }
+    None => ()
+  }
   let entries = parse_accept_entries(header.view())
+  if header.length() <= PARSE_CACHE_MAX_KEY {
+    cache_set(accept_entries_cache, accept_entries_cache_ages, 32, header, entries)
+  }
   last_accept_header.val = Some(header)
   last_accept_entries.val = Some(entries)
   entries
+}
+
+///|
+/// Parsed spellings of media types passed to `Context::accepts`, keyed by
+/// content. Handlers typically test several constant media types per request.
+let media_type_parts_cache : Map[String, (String, String)] = Map([])
+
+///|
+/// Recency ticks for `media_type_parts_cache`.
+let media_type_parts_cache_ages : Map[String, Int] = Map([])
+
+///|
+fn media_type_parts_cached(media_type : String) -> (String, String)? {
+  match media_type_parts_cache.get(media_type) {
+    Some(parts) => {
+      cache_touch(media_type_parts_cache_ages, media_type)
+      Some(parts)
+    }
+    None => {
+      let parts = match media_range_parts(media_type.view()) {
+        Some((media_type, subtype)) => Some((media_type.to_owned(), subtype.to_owned()))
+        None => None
+      }
+      match parts {
+        Some(parts) => {
+          if media_type.length() <= PARSE_CACHE_MAX_KEY {
+            cache_set(
+              media_type_parts_cache,
+              media_type_parts_cache_ages,
+              32,
+              media_type,
+              parts,
+            )
+          }
+          Some(parts)
+        }
+        None => None
+      }
+    }
+  }
 }
 
 ///|
@@ -194,7 +256,7 @@ fn accept_entries_cached(header : String) -> Array[AcceptEntry] {
 /// wildcards such as `text/*` or `*/*`. A missing or empty `Accept` header
 /// accepts everything; `q=0` entries reject the matched media type.
 pub fn Context::accepts(self : Context, media_type : String) -> Bool {
-  let (want_type, want_subtype) = match media_range_parts(media_type.view()) {
+  let (want_type, want_subtype) = match media_type_parts_cached(media_type) {
     Some(parts) => parts
     None => return false
   }
@@ -202,7 +264,12 @@ pub fn Context::accepts(self : Context, media_type : String) -> Bool {
   if trim_ascii_space(header.view()).is_empty() {
     return true
   }
-  accept_quality_from(accept_entries_cached(header), want_type, want_subtype) > 0
+  accept_quality_from(
+    accept_entries_cached(header),
+    want_type.view(),
+    want_subtype.view(),
+  ) >
+  0
 }
 
 ///|
@@ -219,11 +286,15 @@ pub fn Context::preferred_type(
   let mut best : String? = None
   let mut best_q = 0
   for offer in offers {
-    let (want_type, want_subtype) = match media_range_parts(offer.view()) {
+    let (want_type, want_subtype) = match media_type_parts_cached(offer) {
       Some(parts) => parts
       None => continue
     }
-    let quality = accept_quality_from(entries, want_type, want_subtype)
+    let quality = accept_quality_from(
+      entries,
+      want_type.view(),
+      want_subtype.view(),
+    )
     if quality > best_q {
       best_q = quality
       best = Some(offer)
@@ -330,6 +401,15 @@ let last_encoding_header : Ref[String?] = Ref(None)
 let last_encoding_entries : Ref[Array[EncodingEntry]?] = Ref(None)
 
 ///|
+/// Parsed `Accept-Encoding` headers keyed by content; compression negotiation
+/// reads the same header a few times per request, so this is a hot path.
+let encoding_entries_cache : Map[String, Array[EncodingEntry]] = Map([])
+
+///|
+/// Recency ticks for `encoding_entries_cache`.
+let encoding_entries_cache_ages : Map[String, Int] = Map([])
+
+///|
 fn encoding_entries_cached(header : String) -> Array[EncodingEntry] {
   match last_encoding_header.val {
     Some(cached) =>
@@ -341,7 +421,19 @@ fn encoding_entries_cached(header : String) -> Array[EncodingEntry] {
       }
     None => ()
   }
+  match encoding_entries_cache.get(header) {
+    Some(entries) => {
+      cache_touch(encoding_entries_cache_ages, header)
+      last_encoding_header.val = Some(header)
+      last_encoding_entries.val = Some(entries)
+      return entries
+    }
+    None => ()
+  }
   let entries = parse_encoding_entries(header.view())
+  if header.length() <= PARSE_CACHE_MAX_KEY {
+    cache_set(encoding_entries_cache, encoding_entries_cache_ages, 32, header, entries)
+  }
   last_encoding_header.val = Some(header)
   last_encoding_entries.val = Some(entries)
   entries
@@ -484,6 +576,14 @@ let last_language_header : Ref[String?] = Ref(None)
 let last_language_entries : Ref[Array[LanguageEntry]?] = Ref(None)
 
 ///|
+/// Parsed `Accept-Language` headers keyed by content.
+let language_entries_cache : Map[String, Array[LanguageEntry]] = Map([])
+
+///|
+/// Recency ticks for `language_entries_cache`.
+let language_entries_cache_ages : Map[String, Int] = Map([])
+
+///|
 fn language_entries_cached(header : String) -> Array[LanguageEntry] {
   match last_language_header.val {
     Some(cached) =>
@@ -495,7 +595,19 @@ fn language_entries_cached(header : String) -> Array[LanguageEntry] {
       }
     None => ()
   }
+  match language_entries_cache.get(header) {
+    Some(entries) => {
+      cache_touch(language_entries_cache_ages, header)
+      last_language_header.val = Some(header)
+      last_language_entries.val = Some(entries)
+      return entries
+    }
+    None => ()
+  }
   let entries = parse_language_entries(header.view())
+  if header.length() <= PARSE_CACHE_MAX_KEY {
+    cache_set(language_entries_cache, language_entries_cache_ages, 32, header, entries)
+  }
   last_language_header.val = Some(header)
   last_language_entries.val = Some(entries)
   entries

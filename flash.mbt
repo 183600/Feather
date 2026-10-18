@@ -7,6 +7,21 @@ const FLASH_PREFIX : String = "__flash:"
 const FLASH_DEFAULT_CATEGORY : String = "default"
 
 ///|
+/// Upper bound on messages retained per category. Extra messages are dropped
+/// so a handler that never drains its flashes cannot grow the session value
+/// without bound.
+const FLASH_MAX_MESSAGES_PER_CATEGORY : Int = 32
+
+///|
+/// Upper bound on flash categories retained for one session.
+const FLASH_MAX_CATEGORIES : Int = 16
+
+///|
+/// Approximate upper bound, in encoded characters, on the flash additions one
+/// request may queue.
+const FLASH_MAX_ENCODED_BYTES : Int = 8192
+
+///|
 /// Encode a list of flash messages as a JSON array, the representation stored
 /// in the session.
 fn flash_encode(messages : Array[String]) -> String {
@@ -36,6 +51,35 @@ fn flash_decode(text : String) -> Array[String] {
 }
 
 ///|
+/// The request-local pending additions for this session, created on first use.
+/// Messages queued by `Context::flash` land here and are encoded once, at
+/// persist time, so appending N messages costs O(N) instead of O(N²).
+fn Session::flash_pending_map(self : Session) -> Map[String, Array[String]] {
+  match self.flash_pending {
+    Some(pending) => pending
+    None => {
+      let pending : Map[String, Array[String]] = Map([])
+      self.flash_pending = Some(pending)
+      pending
+    }
+  }
+}
+
+///|
+/// Approximate encoded size of the pending additions, used to bound how much
+/// one request may queue.
+fn flash_pending_bytes(pending : Map[String, Array[String]]) -> Int {
+  let mut total = 0
+  for _category, messages in pending {
+    for message in messages {
+      total = total + message.length() + 8
+    }
+  }
+  total
+}
+
+///|
+/// Decode the messages stored in the session under `key`.
 fn Context::flash_messages(self : Context, key : String) -> Array[String] {
   match self.session {
     Some(session) =>
@@ -44,6 +88,49 @@ fn Context::flash_messages(self : Context, key : String) -> Array[String] {
         None => []
       }
     None => []
+  }
+}
+
+///|
+/// Write pending additions into the session data, encoding each category once.
+/// Values identical to what is already stored are left alone so a read-only
+/// `flash_peek` does not mark the session as modified.
+fn Session::flush_flash(self : Session) -> Unit {
+  match self.flash_pending {
+    Some(pending) => {
+      self.flash_pending = None
+      if pending.is_empty() {
+        return
+      }
+      let mut categories = 0
+      for key, _ in self.data {
+        if key.has_prefix(FLASH_PREFIX) {
+          categories = categories + 1
+        }
+      }
+      for category, messages in pending {
+        let key = FLASH_PREFIX + category
+        if messages.is_empty() {
+          if self.data.contains(key) {
+            ignore(self.data.remove_and_get(key))
+            self.modified = true
+          }
+        } else {
+          if !self.data.contains(key) {
+            if categories >= FLASH_MAX_CATEGORIES {
+              continue
+            }
+            categories = categories + 1
+          }
+          let text = flash_encode(messages)
+          if self.data.get(key) != Some(text) {
+            self.data.set(key, text)
+            self.modified = true
+          }
+        }
+      }
+    }
+    None => ()
   }
 }
 
@@ -57,7 +144,8 @@ fn Context::flash_messages(self : Context, key : String) -> Array[String] {
 /// render "errors" apart from "notices".
 ///
 /// Returns `false` when the request has no session, for example when
-/// `middleware_session` is not installed.
+/// `middleware_session` is not installed. Messages beyond the per-category and
+/// per-request caps are dropped.
 pub fn Context::flash(
   self : Context,
   message : String,
@@ -65,11 +153,20 @@ pub fn Context::flash(
 ) -> Bool {
   match self.session {
     Some(session) => {
-      let key = FLASH_PREFIX + category
-      let messages = self.flash_messages(key)
-      messages.push(message)
-      session.data.set(key, flash_encode(messages))
-      session.modified = true
+      let pending = session.flash_pending_map()
+      let messages = match pending.get(category) {
+        Some(messages) => messages
+        None => self.flash_messages(FLASH_PREFIX + category)
+      }
+      let is_new_category = !pending.contains(category)
+      if !(is_new_category && pending.length() >= FLASH_MAX_CATEGORIES) &&
+        messages.length() < FLASH_MAX_MESSAGES_PER_CATEGORY &&
+        flash_pending_bytes(pending) + message.length() + 8 <=
+        FLASH_MAX_ENCODED_BYTES {
+        messages.push(message)
+        pending.set(category, messages)
+        session.modified = true
+      }
       true
     }
     None => false
@@ -87,12 +184,29 @@ pub fn Context::flash_take(
   match self.session {
     Some(session) => {
       let key = FLASH_PREFIX + category
-      match session.data.remove_and_get(key) {
-        Some(text) => {
-          session.modified = true
-          flash_decode(text)
-        }
-        None => []
+      let mut taken : Array[String]? = None
+      match session.flash_pending {
+        Some(pending) =>
+          match pending.remove_and_get(category) {
+            Some(messages) => {
+              ignore(session.data.remove_and_get(key))
+              session.modified = true
+              taken = Some(messages)
+            }
+            None => ()
+          }
+        None => ()
+      }
+      match taken {
+        Some(messages) => messages
+        None =>
+          match session.data.remove_and_get(key) {
+            Some(text) => {
+              session.modified = true
+              flash_decode(text)
+            }
+            None => []
+          }
       }
     }
     None => []
@@ -107,22 +221,43 @@ pub fn Context::flash_take_all(self : Context) -> Map[String, Array[String]] {
   let result : Map[String, Array[String]] = Map([], capacity=4)
   match self.session {
     Some(session) => {
-      let keys : Array[String] = []
+      let categories : Array[String] = []
+      match session.flash_pending {
+        Some(pending) =>
+          for category, _ in pending {
+            categories.push(category)
+          }
+        None => ()
+      }
       for key, _ in session.data {
         if key.has_prefix(FLASH_PREFIX) {
-          keys.push(key)
+          categories.push(key[FLASH_PREFIX.length():].to_owned())
         }
       }
-      for key in keys {
-        match session.data.remove_and_get(key) {
-          Some(text) => {
-            session.modified = true
-            let messages = flash_decode(text)
-            if !messages.is_empty() {
-              result.set(key[FLASH_PREFIX.length():].to_owned(), messages)
+      for category in categories {
+        let mut taken : Array[String]? = None
+        match session.flash_pending {
+          Some(pending) =>
+            match pending.remove_and_get(category) {
+              Some(messages) => {
+                ignore(session.data.remove_and_get(FLASH_PREFIX + category))
+                taken = Some(messages)
+              }
+              None => ()
             }
-          }
           None => ()
+        }
+        let messages = match taken {
+          Some(messages) => messages
+          None =>
+            match session.data.remove_and_get(FLASH_PREFIX + category) {
+              Some(text) => flash_decode(text)
+              None => continue
+            }
+        }
+        session.modified = true
+        if !messages.is_empty() {
+          result.set(category, messages)
         }
       }
     }
@@ -138,5 +273,16 @@ pub fn Context::flash_peek(
   self : Context,
   category~ : String = FLASH_DEFAULT_CATEGORY,
 ) -> Array[String] {
-  self.flash_messages(FLASH_PREFIX + category)
+  match self.session {
+    Some(session) =>
+      match session.flash_pending {
+        Some(pending) =>
+          match pending.get(category) {
+            Some(messages) => messages
+            None => self.flash_messages(FLASH_PREFIX + category)
+          }
+        None => self.flash_messages(FLASH_PREFIX + category)
+      }
+    None => []
+  }
 }

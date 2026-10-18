@@ -120,6 +120,7 @@ pub struct App {
   mut max_body_size : Int
   mut timeout : Int
   mut chain : ((Context) -> Unit raise)?
+  mut static_chain : ((Context) -> Unit raise)?
   static_mounts : Array[StaticMount]
   mut no_route_handler : ((Context) -> Unit raise)?
   ws_router : Router
@@ -428,10 +429,9 @@ pub(all) enum RouteOutcome {
 }
 
 pub(all) struct Router {
-  routes : Array[Route]
   trees : Map[String, RouteNode]
   named : Map[String, NamedRoute]
-  dynamic_caches : Map[String, Map[String, (RouteNode, Int)]]
+  dynamic_caches : Map[String, Map[String, (RouteNode, Map[String, String]?, String)]]
   miss_caches : Map[String, Map[String, Array[String]]]
 }
 pub fn Router::add_named_route(Self, String, String, String, (Context) -> Unit raise) -> Unit
@@ -451,6 +451,8 @@ pub(all) struct Session {
   mut modified : Bool
   mut destroyed : Bool
   mut regenerate : Bool
+  mut flash_pending : Map[String, Array[String]]?
+  json_cache : Map[String, (String, Json)]
 }
 
 pub struct SessionStore {
@@ -472,6 +474,9 @@ pub fn SessionStore::ttl(Self) -> Int64
 pub struct Sse {
   conn : @http.ServerConnection
   mut closed : Bool
+  buffer : StringBuilder
+  mut last_event : String?
+  mut last_event_clean : String
 }
 pub async fn Sse::close(Self) -> Unit
 pub async fn Sse::comment(Self, String) -> Unit

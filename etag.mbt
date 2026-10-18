@@ -190,6 +190,107 @@ fn apply_preconditions_facade(request : Request, response : Response) -> Unit {
 }
 
 ///|
+/// Whether the input carries any precondition header at all.
+fn has_precondition_headers(input : PreconditionInput) -> Bool {
+  input.if_match is Some(_) ||
+  input.if_none_match is Some(_) ||
+  input.if_modified_since is Some(_) ||
+  input.if_unmodified_since is Some(_)
+}
+
+///|
+/// Whether the request's preconditions already fail against the response's own
+/// validators. Compression only weakens tags, which cannot turn a strong
+/// mismatch into a match, so a failure detected here is the same one the
+/// post-compression evaluation would report: the `412` can be produced without
+/// paying for gzip and hashing. Only handler-supplied validators are consulted,
+/// so this never fires for responses whose validator would be generated later.
+fn precondition_fails_before_compression(
+  input : PreconditionInput,
+  allows_not_modified : Bool,
+  response : Response,
+) -> Bool {
+  if response.status < 200 ||
+    response.status >= 300 ||
+    response.status == 204 ||
+    response.status == 205 ||
+    response.status == 206 {
+    return false
+  }
+  match get_header_ignore_case(response.headers, "Cache-Control") {
+    Some(control) =>
+      if contains_ignore_ascii_case(control.view(), "no-store".view()) {
+        return false
+      }
+    None => ()
+  }
+  if !has_precondition_headers(input) {
+    return false
+  }
+  let etag = match get_header_ignore_case(response.headers, "ETag") {
+    Some(value) => value
+    None =>
+      if get_header_ignore_case(response.headers, "Last-Modified") is None {
+        return false
+      } else {
+        ""
+      }
+  }
+  let mtime_secs = match get_header_ignore_case(response.headers, "Last-Modified") {
+    Some(value) =>
+      match parse_http_date(value) {
+        Some(seconds) => seconds
+        None => 0L
+      }
+    None => 0L
+  }
+  match evaluate_preconditions_input(input, etag, mtime_secs, allows_not_modified) {
+    PreconditionFailed => {
+      apply_preconditions_input(input, allows_not_modified, response)
+      true
+    }
+    _ => false
+  }
+}
+
+///|
+fn precondition_fails_early_http(
+  request : @http.Request,
+  response : Response,
+) -> Bool {
+  precondition_fails_before_compression(
+    precondition_input_from_http(request),
+    request.meth is @http.Get || request.meth is @http.Head,
+    response,
+  )
+}
+
+///|
+fn precondition_fails_early_facade(request : Request, response : Response) -> Bool {
+  let method = request.method.to_upper()
+  precondition_fails_before_compression(
+    precondition_input_from_map(request.headers),
+    method == "GET" || method == "HEAD",
+    response,
+  )
+}
+
+///|
+/// Whether automatic `ETag` generation applies to this request method. Tags
+/// derived from POST/PUT bodies buy nothing (clients do not revalidate them)
+/// and cost a full encode and hash of the body.
+fn request_allows_auto_etag(request : @http.Request) -> Bool {
+  request.meth is @http.Get || request.meth is @http.Head
+}
+
+///|
+/// The facade counterpart of `request_allows_auto_etag`.
+fn method_allows_auto_etag(method : String) -> Bool {
+  let upper = method.to_upper()
+  upper == "GET" || upper == "HEAD"
+}
+
+///|
 pub fn Feather::etag(self : Feather) -> Feather {
   ignore(self.app.etag())
   self

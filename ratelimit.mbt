@@ -11,8 +11,8 @@ const RATE_LIMIT_SWEEP_INTERVAL : Int64 = 60_000L
 
 ///|
 /// Hard upper bound on retained buckets. When the map is full and nothing has
-/// expired yet, the least recently started window is dropped so attacker
-/// chosen keys cannot grow the limiter without bound.
+/// expired yet, an arbitrary bucket is dropped so attacker chosen keys cannot
+/// grow the limiter without bound.
 const RATE_LIMIT_MAX_BUCKETS : Int = 4096
 
 ///|
@@ -82,7 +82,7 @@ fn RateLimiter::allow_with_remaining(
     None => {
       self.maybe_sweep(now)
       if self.buckets.length() >= RATE_LIMIT_MAX_BUCKETS {
-        self.evict_oldest()
+        self.evict_one()
       }
       self.buckets.set(key, { start: now, count: 1 })
       (true, self.max - 1)
@@ -161,37 +161,18 @@ pub fn RateLimiter::sweep(self : RateLimiter) -> Unit {
   }
   let now = @async.now()
   self.last_sweep = now
-  let stale : Array[String] = []
-  for key, bucket in self.buckets {
-    if now - bucket.start >= self.window {
-      stale.push(key)
-    }
-  }
-  for key in stale {
-    ignore(self.buckets.remove(key))
-  }
+  self.buckets.retain(fn(_key, bucket) {
+    now - bucket.start < self.window
+  })
 }
 
 ///|
-/// Drop the bucket whose window started first, keeping the limiter under
-/// `RATE_LIMIT_MAX_BUCKETS` when no bucket has expired yet.
-fn RateLimiter::evict_oldest(self : RateLimiter) -> Unit {
-  let mut oldest_key : String? = None
-  let mut oldest_start = 0L
-  for key, bucket in self.buckets {
-    match oldest_key {
-      Some(_) =>
-        if bucket.start < oldest_start {
-          oldest_start = bucket.start
-          oldest_key = Some(key)
-        }
-      None => {
-        oldest_start = bucket.start
-        oldest_key = Some(key)
-      }
-    }
-  }
-  match oldest_key {
+/// Drop one arbitrary bucket, keeping the limiter under `RATE_LIMIT_MAX_BUCKETS`
+/// when no bucket has expired yet. The map is a bounded cache of windows, so
+/// dropping an arbitrary entry is enough; scanning for the oldest one would let
+/// key-rotating traffic turn every request into a full scan.
+fn RateLimiter::evict_one(self : RateLimiter) -> Unit {
+  match self.buckets.keys().next() {
     Some(key) => ignore(self.buckets.remove(key))
     None => ()
   }
