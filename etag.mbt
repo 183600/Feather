@@ -13,22 +13,22 @@ pub fn App::etag(self : App) -> App {
 }
 
 ///|
-/// FNV-1a hash of `data`, rendered as 16 lowercase hex digits.
-fn fnv1a_hex(data : Bytes) -> String {
+/// Append the FNV-1a hash of `data` to `builder` as 16 lowercase hex digits.
+fn write_fnv1a_hex(builder : StringBuilder, data : Bytes) -> Unit {
   let mut hash = 14695981039346656037UL
   for byte in data {
     hash = (hash ^ byte.to_uint64()) * 1099511628211UL
   }
-  let hex = FixedArray::make(16, b'0')
   for i = 0; i < 16; i = i + 1 {
     let nibble = ((hash >> ((15 - i) * 4)) & 15UL).to_int()
-    hex[i] = (if nibble < 10 {
-      b'0'.to_int() + nibble
-    } else {
-      b'a'.to_int() + nibble - 10
-    }).to_byte()
+    builder.write_char(
+      (if nibble < 10 {
+        b'0'.to_int() + nibble
+      } else {
+        b'a'.to_int() + nibble - 10
+      }).unsafe_to_char(),
+    )
   }
-  @utf8.decode_lossy(hex.unsafe_reinterpret_as_bytes())
 }
 
 ///|
@@ -69,7 +69,15 @@ fn apply_etag(response : Response) -> Unit {
   }
   response.headers.set(
     "ETag",
-    "\"" + data.length().to_string() + "-" + fnv1a_hex(data) + "\"",
+    {
+      let builder = StringBuilder(size_hint=32)
+      builder.write_char('"')
+      builder.write_string(data.length().to_string())
+      builder.write_char('-')
+      write_fnv1a_hex(builder, data)
+      builder.write_char('"')
+      builder.to_string()
+    },
   )
 }
 
@@ -87,10 +95,16 @@ fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
     return
   }
   // These are the only request headers `evaluate_preconditions` consults.
-  if !request.headers.contains(header_if_match) &&
-    !request.headers.contains(header_if_none_match) &&
-    !request.headers.contains(header_if_modified_since) &&
-    !request.headers.contains(header_if_unmodified_since) {
+  let has_if_match = request.headers.contains(header_if_match)
+  let has_if_none_match = request.headers.contains(header_if_none_match)
+  let has_if_modified_since = request.headers.contains(header_if_modified_since)
+  let has_if_unmodified_since = request.headers.contains(
+    header_if_unmodified_since,
+  )
+  if !has_if_match &&
+    !has_if_none_match &&
+    !has_if_modified_since &&
+    !has_if_unmodified_since {
     return
   }
   match get_header_ignore_case(response.headers, "Cache-Control") {
@@ -100,20 +114,27 @@ fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
       }
     None => ()
   }
-  let etag = match get_header_ignore_case(response.headers, "ETag") {
-    Some(existing) => existing
-    None => ""
+  // Only resolve the validators the present precondition headers compare
+  // against; parsing a `Last-Modified` the request never consults is wasted.
+  let etag = if has_if_match || has_if_none_match {
+    match get_header_ignore_case(response.headers, "ETag") {
+      Some(existing) => existing
+      None => ""
+    }
+  } else {
+    ""
   }
-  let mtime_secs = match get_header_ignore_case(
-    response.headers,
-    "Last-Modified",
-  ) {
-    Some(value) =>
-      match parse_http_date(value) {
-        Some(seconds) => seconds
-        None => 0L
-      }
-    None => 0L
+  let mtime_secs = if has_if_modified_since || has_if_unmodified_since {
+    match get_header_ignore_case(response.headers, "Last-Modified") {
+      Some(value) =>
+        match parse_http_date(value) {
+          Some(seconds) => seconds
+          None => 0L
+        }
+      None => 0L
+    }
+  } else {
+    0L
   }
   let allows_not_modified = request.meth is @http.Get || request.meth is @http.Head
   match evaluate_preconditions(request, etag, mtime_secs, allows_not_modified) {

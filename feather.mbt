@@ -1397,11 +1397,10 @@ pub fn Context::is_secure(self : Context) -> Bool {
 pub fn Context::full_url(self : Context) -> String {
   let scheme = self.protocol()
   let authority = trim_ascii_space(self.header("Host").view()).to_owned()
-  let host = if authority != "" { authority } else { self.host() }
-  if host == "" {
+  if authority == "" {
     return self.request.path
   }
-  scheme + "://" + host + self.request.path
+  scheme + "://" + authority + self.request.path
 }
 
 ///|
@@ -3631,12 +3630,8 @@ fn remove_header_ignore_case(
   headers : Map[String, String],
   name : String,
 ) -> Bool {
-  match headers.get(name) {
-    Some(_) => {
-      headers.remove(name)
-      return true
-    }
-    None => ()
+  if headers.remove_and_get(name) is Some(_) {
+    return true
   }
   let target = name.view()
   let target_length = target.length()
