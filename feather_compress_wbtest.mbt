@@ -63,6 +63,64 @@ test "contains ignore ascii case" {
 }
 
 ///|
+test "add vary accept encoding keeps a single header entry" {
+  let response : Response = {
+    status: 200,
+    headers: Map([("vary", "Origin")]),
+    body: "",
+    data: None,
+    cookies: [],
+  }
+  add_vary_accept_encoding(response)
+  assert_eq(
+    get_header_ignore_case(response.headers, "Vary"),
+    Some("Origin, Accept-Encoding"),
+  )
+  assert_eq(response.headers.length(), 1)
+}
+
+///|
+test "add vary accept encoding skips an existing token" {
+  let response : Response = {
+    status: 200,
+    headers: Map([("Vary", "accept-encoding, Origin")]),
+    body: "",
+    data: None,
+    cookies: [],
+  }
+  add_vary_accept_encoding(response)
+  assert_eq(
+    get_header_ignore_case(response.headers, "Vary"),
+    Some("accept-encoding, Origin"),
+  )
+  assert_eq(response.headers.length(), 1)
+}
+
+///|
+async test "compression drops a differently-cased Content-Length" {
+  let request : @http.Request = {
+    meth: @http.Get,
+    path: "/big",
+    headers: Map([
+      (@http.CaseInsensitiveString("Accept-Encoding"), "gzip"),
+    ]),
+  }
+  let response : Response = {
+    status: 200,
+    headers: Map([
+      ("content-length", "999999"),
+      ("Content-Type", "text/plain; charset=utf-8"),
+    ]),
+    body: "compress me ".repeat(200),
+    data: None,
+    cookies: [],
+  }
+  compress_response(request, response, 16)
+  assert_eq(get_header_ignore_case(response.headers, "Content-Encoding"), Some("gzip"))
+  assert_eq(get_header_ignore_case(response.headers, "Content-Length"), None)
+}
+
+///|
 async test "gzip compress round trips" {
   let payload = @utf8.encode("hello compressible world ".repeat(200))
   let compressed = gzip_compress(payload)

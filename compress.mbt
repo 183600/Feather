@@ -120,7 +120,11 @@ fn add_vary_accept_encoding(response : Response) -> Unit {
   match get_header_ignore_case(response.headers, "Vary") {
     Some(existing) =>
       if !header_list_has_token(existing.view(), "accept-encoding".view()) {
-        response.headers.set("Vary", existing + ", Accept-Encoding")
+        set_header_ignore_case(
+          response.headers,
+          "Vary",
+          existing + ", Accept-Encoding",
+        )
       }
     None => response.headers.set("Vary", "Accept-Encoding")
   }
@@ -240,7 +244,7 @@ async fn compress_response(
   response.body = ""
   response.data = Some(compressed)
   response.headers.set("Content-Encoding", "gzip")
-  response.headers.remove("Content-Length")
+  ignore(remove_header_ignore_case(response.headers, "Content-Length"))
   match get_header_ignore_case(response.headers, "ETag") {
     Some(existing) =>
       if !existing.has_prefix("W/") {

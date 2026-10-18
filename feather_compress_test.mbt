@@ -138,6 +138,25 @@ async test "server leaves bodies plain for identity clients" {
 }
 
 ///|
+async test "compression merges into a case-insensitively spelled Vary" {
+  let payload = "vary merge payload ".repeat(128)
+  let app = @feather.App::new().compress(min_size=16).get("/big", fn(ctx) {
+    ctx.set_header("vary", "Origin")
+    ctx.text(200, payload)
+  })
+  with_server(app, client => {
+    let response = client.get(
+      "/big",
+      extra_headers=Map([(accept_encoding_key, "gzip")]),
+    )
+    assert_eq(response.code, 200)
+    assert_eq(response.headers.get(vary_key), Some("Origin, Accept-Encoding"))
+    let decoded = decode_gzip_body(client.read_all().binary())
+    assert_eq(@utf8.decode_lossy(decoded), payload)
+  })
+}
+
+///|
 async test "server honors gzip rejection quality value" {
   let app = @feather.App::new().compress(min_size=16).get("/big", fn(ctx) {
     ctx.text(200, "body ".repeat(128))
