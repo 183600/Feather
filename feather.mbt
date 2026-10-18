@@ -3688,10 +3688,12 @@ pub fn multipart_boundary(content_type : String) -> String? {
 
 ///|
 /// Most recently indexed header map, its size and its lower-cased name index.
-/// The index maps a lower-cased header name to the spelling stored in the map
-/// (`""` marks a name probed and absent). It is reused while the same map keeps
-/// the same number of entries, so repeated lookups cost one hash probe instead
-/// of a full scan.
+/// The index maps a lower-cased header name to the spelling stored in the map.
+/// It is reused while the same map keeps the same number of entries, so
+/// repeated lookups cost one hash probe instead of a full scan. Only positive
+/// entries are cached: the map can be mutated in place with its size unchanged,
+/// so a remembered absence could be stale, while a remembered spelling is
+/// always re-validated against the map before it is trusted.
 let last_header_index_map : Ref[Map[String, String]?] = Ref(None)
 
 ///|
@@ -3748,15 +3750,11 @@ fn get_header_ignore_case(
   let index = header_index_for(headers)
   let lower = header_name_lower(name)
   match index.get(lower) {
-    Some(actual) => {
-      if actual == "" {
-        return None
-      }
+    Some(actual) =>
       match headers.get(actual) {
         Some(value) => return Some(value)
         None => ()
       }
-    }
     None => ()
   }
   let target = name.view()
@@ -3767,9 +3765,6 @@ fn get_header_ignore_case(
       index.set(lower, key)
       return Some(value)
     }
-  }
-  if index.length() < headers.length() + 64 {
-    index.set(lower, "")
   }
   None
 }
