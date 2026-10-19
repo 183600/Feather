@@ -42,6 +42,12 @@ fn apply_etag(response : Response) -> Unit {
     response.status == 205 {
     return
   }
+  // Probe the cheap exact-spelling case for each guard: a response that
+  // already carries an `ETag` is by far the most common opt-out, and an exact
+  // hit avoids building the case-insensitive header index for the rest.
+  if response.headers.get("ETag") is Some(_) {
+    return
+  }
   if get_header_ignore_case(response.headers, "Content-Range") is Some(_) {
     return
   }
@@ -228,15 +234,18 @@ fn precheck_preconditions(
     response.status == 206 {
     return (false, input)
   }
+  // Requests without any precondition header skip the case-insensitive
+  // `Cache-Control` probe (and the header index it would build) entirely; the
+  // result is `(false, input)` either way.
+  if !has_precondition_headers(input) {
+    return (false, input)
+  }
   match get_header_ignore_case(response.headers, "Cache-Control") {
     Some(control) =>
       if contains_ignore_ascii_case(control.view(), "no-store".view()) {
         return (false, input)
       }
     None => ()
-  }
-  if !has_precondition_headers(input) {
-    return (false, input)
   }
   let response_etag = get_header_ignore_case(response.headers, "ETag")
   let response_mtime = get_header_ignore_case(response.headers, "Last-Modified")

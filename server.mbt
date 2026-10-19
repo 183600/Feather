@@ -97,6 +97,11 @@ let header_expect : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
 )
 
 ///|
+let header_location : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Location",
+)
+
+///|
 /// Raised when a request body declares a content coding but cannot be decoded.
 priv suberror MalformedRequestBody
 
@@ -694,7 +699,7 @@ async fn send_simple(
 ) -> Unit {
   let bytes = @utf8.encode(body)
   let headers : @http.Headers = Map([
-    (header_key("Content-Type"), "text/plain; charset=utf-8"),
+    (header_content_type, "text/plain; charset=utf-8"),
     (header_content_length, bytes.length().to_string()),
   ])
   send_with_date(conn, code, status_text(code), headers)
@@ -1077,7 +1082,7 @@ async fn serve_static_file(
         handle.close()
         let location = append_trailing_slash(request.path)
         let headers = static_base_headers(extra_headers, cookies, 1)
-        headers.set(header_key("Location"), location)
+        headers.set(header_location, location)
         send_with_date(conn, 301, "Moved Permanently", headers, cookies~)
         conn.end_response()
         return

@@ -3320,7 +3320,7 @@ fn parse_urlencoded_multi(source : StringView) -> Map[String, Array[String]] {
       // A key with neither `%` nor `+` decodes to its raw spelling, so it can
       // be looked up without allocating a decoded copy; escaped keys must be
       // decoded before the lookup, since the map stores decoded spellings.
-      if !raw_key.contains("%") && !raw_key.contains("+") {
+      if !name_needs_raw(raw_key) {
         match result.get_from_string(raw_key) {
           Some(values) => values.push(value)
           None => result.set(raw_key.to_owned(), [value])
@@ -3373,7 +3373,7 @@ fn query_key_matches(
     }
   }
   let key = source[start:end]
-  if !key.contains("%") && !key.contains("+") {
+  if !name_needs_raw(key) {
     return false
   }
   name.equal_to_string(decode_url(key))
@@ -4146,6 +4146,9 @@ fn get_header_ignore_case(
   headers : Map[String, String],
   name : String,
 ) -> String? {
+  if headers.is_empty() {
+    return None
+  }
   match headers.get(name) {
     Some(value) => return Some(value)
     None => ()
@@ -5123,17 +5126,42 @@ fn precondition_input_from_http(request : @http.Request) -> PreconditionInput {
 }
 
 ///|
+/// Find a header value by ASCII-case-insensitive name with one allocation-free
+/// pass over the map. The precondition lookup is a one-off probe against names
+/// that are almost always absent, so the shared header index (which lowercases
+/// every name it sees) would cost more than this scan.
+fn find_header_value_ci(
+  headers : Map[String, String],
+  name : String,
+) -> String? {
+  let target = name.view()
+  let target_length = target.length()
+  for key, value in headers {
+    if key.length() == target_length &&
+      key.view().equal_ignore_ascii_case(target) {
+      return Some(value)
+    }
+  }
+  None
+}
+
+///|
 fn precondition_input_from_map(
   headers : Map[String, String],
 ) -> PreconditionInput {
+  if headers.is_empty() {
+    return {
+      if_match: None,
+      if_none_match: None,
+      if_modified_since: None,
+      if_unmodified_since: None,
+    }
+  }
   {
-    if_match: get_header_ignore_case(headers, "If-Match"),
-    if_none_match: get_header_ignore_case(headers, "If-None-Match"),
-    if_modified_since: get_header_ignore_case(headers, "If-Modified-Since"),
-    if_unmodified_since: get_header_ignore_case(
-      headers,
-      "If-Unmodified-Since",
-    ),
+    if_match: find_header_value_ci(headers, "If-Match"),
+    if_none_match: find_header_value_ci(headers, "If-None-Match"),
+    if_modified_since: find_header_value_ci(headers, "If-Modified-Since"),
+    if_unmodified_since: find_header_value_ci(headers, "If-Unmodified-Since"),
   }
 }
 
@@ -6689,6 +6717,7 @@ fn basic_auth_middleware(
   check : (String, String) -> Bool,
   realm : String,
 ) -> Middleware {
+  let challenge = basic_auth_challenge(realm)
   fn(next) {
     fn(ctx) raise {
       let authorized = match ctx.basic_auth() {
@@ -6700,7 +6729,7 @@ fn basic_auth_middleware(
       } else {
         ctx.file = None
         ctx.response.status = 401
-        ctx.response.headers.set("WWW-Authenticate", basic_auth_challenge(realm))
+        ctx.response.headers.set("WWW-Authenticate", challenge)
         ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
         ctx.response.data = None
         ctx.response.body = "401 Unauthorized"

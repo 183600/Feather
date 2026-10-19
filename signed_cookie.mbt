@@ -169,7 +169,9 @@ fn sha256_finish_into(
   let remainder = length - full_blocks * 64
   let tail_length = if remainder < 56 { 64 } else { 128 }
   let tail = sha256_tail_bytes
-  for i = 0; i < tail_length; i = i + 1 {
+  // Only the padding gap has to be cleared: the message bytes are overwritten
+  // below and the length field is written after it.
+  for i = remainder; i < tail_length - 8; i = i + 1 {
     tail[i] = b'\x00'
   }
   for i = 0; i < remainder; i = i + 1 {
@@ -379,6 +381,38 @@ fn base64url_decode_slow(view : StringView) -> Bytes? {
 }
 
 ///|
+/// UTF-8 encoding of the most recent HMAC secret, so repeated sign/verify calls
+/// with the same secret string skip re-encoding it on every request. Strings
+/// are immutable and the async runtime is single threaded, so keying the cached
+/// bytes on string identity is sound: a different secret can only miss.
+let last_secret_text : Ref[String?] = Ref(None)
+
+///|
+/// Encoded form matching `last_secret_text`.
+let last_secret_bytes : Ref[Bytes?] = Ref(None)
+
+///|
+/// UTF-8 bytes of `secret`, reusing the previous encoding when the caller
+/// passes the same string object again (the common case for a configured
+/// secret).
+fn secret_utf8(secret : String) -> Bytes {
+  match last_secret_text.val {
+    Some(cached) =>
+      if physical_equal(cached, secret) {
+        match last_secret_bytes.val {
+          Some(bytes) => return bytes
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let bytes = @utf8.encode(secret)
+  last_secret_text.val = Some(secret)
+  last_secret_bytes.val = Some(bytes)
+  bytes
+}
+
+///|
 fn parse_decimal_int64(view : StringView) -> Int64? {
   let length = view.length()
   if length == 0 || length > 19 {
@@ -436,7 +470,7 @@ pub fn signed_cookie_token(
   }
   let encoded_value = base64url_encode(@utf8.encode(value))
   let mac = hmac_sha256(
-    @utf8.encode(secret),
+    secret_utf8(secret),
     signed_cookie_signing_input(name, encoded_value.view(), deadline),
   )
   encoded_value + "." + deadline.to_string() + "." + base64url_encode(mac)
@@ -485,7 +519,7 @@ pub fn verify_signed_cookie_token(
     }
   }
   let expected = hmac_sha256(
-    @utf8.encode(secret),
+    secret_utf8(secret),
     signed_cookie_signing_input(name, encoded_value, deadline),
   )
   let signature = match base64url_decode_view(signature_view) {
