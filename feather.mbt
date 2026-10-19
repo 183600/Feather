@@ -1131,12 +1131,18 @@ pub fn internal_error(ctx : Context, detail : String) -> Unit {
 let error_body_cache : Map[Int32, Map[String, String]] = Map([])
 
 ///|
+/// Recency ticks for the cached error bodies, keyed by message. Messages can
+/// repeat across statuses, so one shared recency map approximates the LRU for
+/// all buckets.
+let error_body_cache_ages : Map[String, Int] = Map([])
+
+///|
 fn cached_error_body(status : Int32, message : String) -> String {
   let by_message = match error_body_cache.get(status) {
     Some(by_message) => by_message
     None => {
       if error_body_cache.length() >= 32 {
-        // Same clear-and-restart policy as the other bounded caches.
+        // Statuses are few, so restarting the outer map stays rare.
         error_body_cache.clear()
       }
       let by_message : Map[String, String] = Map([], capacity=4)
@@ -1145,7 +1151,10 @@ fn cached_error_body(status : Int32, message : String) -> String {
     }
   }
   match by_message.get(message) {
-    Some(body) => body
+    Some(body) => {
+      cache_touch(error_body_cache_ages, message)
+      body
+    }
     None => {
       let payload : Map[String, Json] = Map([], capacity=2)
       payload.set("status", Json::number(status.to_double()))
@@ -1153,11 +1162,8 @@ fn cached_error_body(status : Int32, message : String) -> String {
       let body = Json::object(payload).stringify()
       // Long or highly variable messages are not worth remembering: they
       // would evict the fixed messages that do repeat.
-      if message.length() <= 128 && by_message.length() >= 8 {
-        by_message.clear()
-      }
       if message.length() <= 128 {
-        by_message.set(message, body)
+        cache_set(by_message, error_body_cache_ages, 8, message, body)
       }
       body
     }
@@ -1254,16 +1260,19 @@ pub fn Context::get(self : Context, key : String) -> String {
 let param_key_cache : Map[String, String] = Map([])
 
 ///|
+/// Recency ticks for `param_key_cache`.
+let param_key_cache_ages : Map[String, Int] = Map([])
+
+///|
 fn param_state_key(name : String) -> String {
   match param_key_cache.get(name) {
-    Some(key) => key
+    Some(key) => {
+      cache_touch(param_key_cache_ages, name)
+      key
+    }
     None => {
       let key = PARAM_PREFIX + name
-      if param_key_cache.length() >= PARSE_CACHE_LIMIT {
-        // Same clear-and-restart policy as the other bounded caches.
-        param_key_cache.clear()
-      }
-      param_key_cache.set(name, key)
+      parse_cache_set(param_key_cache, param_key_cache_ages, name, key)
       key
     }
   }
@@ -4179,6 +4188,10 @@ fn get_header_ignore_case(
 let header_spelling_cache : Map[String, String] = Map([])
 
 ///|
+/// Recency ticks for `header_spelling_cache`.
+let header_spelling_cache_ages : Map[String, Int] = Map([])
+
+///|
 /// Find the spelling under which `name` is stored, ignoring case. Memoizes the
 /// spelling globally and re-validates it against the map before trusting it, so
 /// in-place replacements are picked up.
@@ -4188,11 +4201,13 @@ fn cached_header_spelling(
 ) -> String? {
   let lower = header_name_lower(name)
   match header_spelling_cache.get(lower) {
-    Some(actual) =>
+    Some(actual) => {
+      cache_touch(header_spelling_cache_ages, lower)
       if headers.contains(actual) &&
         actual.view().equal_ignore_ascii_case(name.view()) {
         return Some(actual)
       }
+    }
     None => ()
   }
   let target = name.view()
@@ -4207,10 +4222,12 @@ fn cached_header_spelling(
   }
   match found {
     Some(key) => {
-      if header_spelling_cache.length() >= PARSE_CACHE_LIMIT {
-        header_spelling_cache.clear()
-      }
-      header_spelling_cache.set(lower, key)
+      parse_cache_set(
+        header_spelling_cache,
+        header_spelling_cache_ages,
+        lower,
+        key,
+      )
       Some(key)
     }
     None => None
