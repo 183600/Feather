@@ -286,3 +286,27 @@ async test "strong if-match survives compression weakening" {
     ignore(client.read_all())
   })
 }
+
+///|
+test "etag body hash matches standard FNV-1a 64" {
+  let app = @feather.App::new()
+    .etag()
+    .get("/foobar", fn(ctx) { ctx.text(200, "foobar") })
+    .get("/long", fn(ctx) { ctx.text(200, "hello world") })
+  let short = app.respond({
+    method: "GET",
+    path: "/foobar",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(short.status, 200)
+  assert_eq(short.headers.get("ETag"), Some("\"6-85944171f73967e8\""))
+  let long = app.respond({
+    method: "GET",
+    path: "/long",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(long.status, 200)
+  assert_eq(long.headers.get("ETag"), Some("\"11-779a65e7023cd2e7\""))
+}
