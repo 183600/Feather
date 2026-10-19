@@ -4714,7 +4714,7 @@ pub fn parse_multipart(
 
 ///|
 /// Cached parts of a multipart request, or `None` when the body is not
-/// multipart. Reads and normalizes the `Content-Type` header once.
+/// multipart. Reads and normalizes the `Content-Type` header.
 fn Context::multipart_entries(self : Context) -> Array[MultipartPart]? {
   let header = self.header("Content-Type")
   if parsed_content_type(header) != "multipart/form-data" {
@@ -7060,8 +7060,7 @@ pub fn middleware_cors(
     fn(ctx) raise {
       let is_options = ctx.request.method == "OPTIONS"
       // The default response (`*`, no credentials) does not depend on the
-      // request's `Origin`, so only read that header when it can affect the
-      // result.
+      // request's `Origin`.
       let request_origin = if allow_credentials || is_options {
         ctx.header("Origin")
       } else {

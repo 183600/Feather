@@ -204,9 +204,7 @@ async fn compress_response(
     response.status == 206 {
     return
   }
-  // Without a compressible `Content-Type` there is nothing else to decide;
-  // checking it first avoids building the case-insensitive header index for
-  // responses that opt out simply by carrying no content type.
+  // Without a compressible `Content-Type` there is nothing else to decide.
   let content_type = match get_header_ignore_case(response.headers, "Content-Type") {
     Some(value) => value.view()
     None => return

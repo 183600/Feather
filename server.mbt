@@ -142,20 +142,16 @@ async fn send_with_date(
 }
 
 ///|
-/// Size of the chunks read from a request body. Larger reads reduce the number
-/// of async round trips for uploads while staying cache friendly.
+/// Size of the chunks read from a request body.
 const BODY_READ_CHUNK_SIZE : Int = 65536
 
 ///|
-/// Upper bound on the buffer pre-sized from `Content-Length`. A client can
-/// declare more than it sends, so the hint stays modest and the buffer grows
-/// only as bytes actually arrive.
+/// Upper bound on the buffer pre-sized from `Content-Length`.
 const BODY_SIZE_HINT_LIMIT : Int = 1048576
 
 ///|
 /// `Content-Length` clamped to the body limit and the pre-size cap, or `0` when
-/// the header is absent or malformed. Only used as an allocation hint; the body
-/// limit is still enforced on the bytes actually read.
+/// the header is absent or malformed.
 fn body_size_hint(request : @http.Request, limit : Int32) -> Int {
   let limit_int = limit
   let cap : Int = if limit_int < BODY_SIZE_HINT_LIMIT {
@@ -716,9 +712,6 @@ let request_header_name_ages : Map[@http.CaseInsensitiveString, Int] = Map([])
 
 ///|
 fn header_key(name : String) -> @http.CaseInsensitiveString {
-  // Responses overwhelmingly use a small set of canonical spellings; mapping
-  // those directly avoids two cache-map probes (and the recency bookkeeping)
-  // for every header sent.
   if name == "Content-Type" {
     return header_content_type
   } else if name == "Content-Length" {
