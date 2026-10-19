@@ -66,14 +66,11 @@ fn Session::flash_pending_map(self : Session) -> Map[String, Array[String]] {
 }
 
 ///|
-/// Approximate encoded size of the pending additions, used to bound how much
-/// one request may queue.
-fn flash_pending_bytes(pending : Map[String, Array[String]]) -> Int {
+/// Approximate encoded size of one category's messages.
+fn flash_message_bytes(messages : Array[String]) -> Int {
   let mut total = 0
-  for _category, messages in pending {
-    for message in messages {
-      total = total + message.length() + 8
-    }
+  for message in messages {
+    total = total + message.length() + 8
   }
   total
 }
@@ -99,6 +96,7 @@ fn Session::flush_flash(self : Session) -> Unit {
   match self.flash_pending {
     Some(pending) => {
       self.flash_pending = None
+      self.flash_pending_bytes = 0
       if pending.is_empty() {
         return
       }
@@ -161,10 +159,18 @@ pub fn Context::flash(
       let is_new_category = !pending.contains(category)
       if !(is_new_category && pending.length() >= FLASH_MAX_CATEGORIES) &&
         messages.length() < FLASH_MAX_MESSAGES_PER_CATEGORY &&
-        flash_pending_bytes(pending) + message.length() + 8 <=
+        session.flash_pending_bytes + message.length() + 8 <=
         FLASH_MAX_ENCODED_BYTES {
         messages.push(message)
         pending.set(category, messages)
+        if is_new_category {
+          session.flash_pending_bytes = session.flash_pending_bytes +
+            flash_message_bytes(messages)
+        } else {
+          session.flash_pending_bytes = session.flash_pending_bytes +
+            message.length() +
+            8
+        }
         session.modified = true
       }
       true
@@ -190,6 +196,8 @@ pub fn Context::flash_take(
           match pending.remove_and_get(category) {
             Some(messages) => {
               ignore(session.data.remove_and_get(key))
+              session.flash_pending_bytes = session.flash_pending_bytes -
+                flash_message_bytes(messages)
               session.modified = true
               taken = Some(messages)
             }
@@ -241,6 +249,8 @@ pub fn Context::flash_take_all(self : Context) -> Map[String, Array[String]] {
             match pending.remove_and_get(category) {
               Some(messages) => {
                 ignore(session.data.remove_and_get(FLASH_PREFIX + category))
+                session.flash_pending_bytes = session.flash_pending_bytes -
+                  flash_message_bytes(messages)
                 taken = Some(messages)
               }
               None => ()

@@ -94,9 +94,6 @@ pub struct RouteNode {
   mut route_wildcard_name : String
   mut route_wildcard_key : String
   mut exact_cache : Map[String, RouteNode]?
-  mut cached_path : String
-  mut cached_values : Array[String]
-  mut cached_wildcard : String
 }
 
 ///|
@@ -111,6 +108,8 @@ pub(all) struct Router {
   named : Map[String, NamedRoute]
   dynamic_caches : Map[String, Map[String, (RouteNode, Map[String, String]?, String)]]
   miss_caches : Map[String, Map[String, String]]
+  dynamic_cache_ages : Map[String, Map[String, Int]]
+  miss_cache_ages : Map[String, Map[String, Int]]
 }
 
 ///|
@@ -140,9 +139,6 @@ fn RouteNode::new() -> RouteNode {
     route_wildcard_name: "",
     route_wildcard_key: "",
     exact_cache: None,
-    cached_path: "",
-    cached_values: [],
-    cached_wildcard: "",
   }
 }
 
@@ -153,6 +149,8 @@ pub fn create_router() -> Router {
     named: Map([]),
     dynamic_caches: Map([]),
     miss_caches: Map([]),
+    dynamic_cache_ages: Map([]),
+    miss_cache_ages: Map([]),
   }
 }
 
@@ -312,14 +310,13 @@ fn match_dynamic_node(
 }
 
 ///|
-/// Extract the per-path bindings for `node`.
+/// Extract the per-path bindings for `node`. Repeated visits of the same URL
+/// are already served from the per-method dispatch cache, so no per-node path
+/// copy is kept here.
 fn RouteNode::bound_values(
   self : RouteNode,
   path : StringView,
 ) -> (Array[String], String) {
-  if self.cached_path != "" && self.cached_path.view() == path {
-    return (self.cached_values, self.cached_wildcard)
-  }
   let values : Array[String] = Array(capacity=self.param_names.length())
   let mut wildcard_value = ""
   let mut path_pos = skip_slashes(path, 0)
@@ -335,9 +332,6 @@ fn RouteNode::bound_values(
       break
     }
   }
-  self.cached_path = path.to_owned()
-  self.cached_values = values
-  self.cached_wildcard = wildcard_value
   (values, wildcard_value)
 }
 
@@ -516,7 +510,9 @@ pub fn Router::add_route(
     }
   }
   self.dynamic_caches.remove(method_key)
+  self.dynamic_cache_ages.remove(method_key)
   self.miss_caches.clear()
+  self.miss_cache_ages.clear()
 }
 
 ///|
@@ -769,6 +765,14 @@ fn Router::find_node_raw(
       cache
     }
   }
+  let ages = match self.dynamic_cache_ages.get(tree_key) {
+    Some(ages) => ages
+    None => {
+      let ages : Map[String, Int] = Map([])
+      self.dynamic_cache_ages.set(tree_key, ages)
+      ages
+    }
+  }
   match cache.get_from_string(clean_path) {
     Some(hit) => return Some(hit)
     None => ()
@@ -779,7 +783,7 @@ fn Router::find_node_raw(
         Some(node) => {
           let (params, wildcard_value) = route_params_for(node, -1, clean_path)
           let hit = (node, params, wildcard_value)
-          remember_dynamic_hit(cache, clean_path, hit)
+          remember_dynamic_hit(cache, ages, clean_path, hit)
           return Some(hit)
         }
         None => ()
@@ -794,7 +798,7 @@ fn Router::find_node_raw(
         clean_path,
       )
       let hit = (outcome.node, params, wildcard_value)
-      remember_dynamic_hit(cache, clean_path, hit)
+      remember_dynamic_hit(cache, ages, clean_path, hit)
       Some(hit)
     }
     None => None
@@ -802,17 +806,19 @@ fn Router::find_node_raw(
 }
 
 ///|
-/// Insert into a per-method dynamic dispatch cache. A full cache is cleared
-/// before the new entry is stored.
+/// Maximum number of paths kept by a per-method dynamic dispatch cache.
+const DYNAMIC_CACHE_LIMIT : Int = 256
+
+///|
+/// Insert into a per-method dynamic dispatch cache, evicting the least recently
+/// used entry when the cache is full instead of dropping every entry.
 fn remember_dynamic_hit(
   cache : Map[String, (RouteNode, Map[String, String]?, String)],
+  ages : Map[String, Int],
   clean_path : StringView,
   hit : (RouteNode, Map[String, String]?, String),
 ) -> Unit {
-  if cache.length() >= 128 {
-    cache.clear()
-  }
-  cache.set(clean_path.to_owned(), hit)
+  cache_set(cache, ages, DYNAMIC_CACHE_LIMIT, clean_path.to_owned(), hit)
 }
 
 ///|
@@ -889,6 +895,10 @@ fn Router::find_miss_cache(
 }
 
 ///|
+/// Maximum number of method/path entries kept by the negative caches.
+const MISS_CACHE_LIMIT : Int = 256
+
+///|
 fn Router::remember_miss(
   self : Router,
   meth : String,
@@ -903,11 +913,15 @@ fn Router::remember_miss(
       cache
     }
   }
-  if cache.length() >= 128 {
-    // Same clear-and-restart policy as the dynamic dispatch caches.
-    cache.clear()
+  let ages = match self.miss_cache_ages.get(meth) {
+    Some(ages) => ages
+    None => {
+      let ages : Map[String, Int] = Map([])
+      self.miss_cache_ages.set(meth, ages)
+      ages
+    }
   }
-  cache.set(clean_path.to_owned(), allow)
+  cache_set(cache, ages, MISS_CACHE_LIMIT, clean_path.to_owned(), allow)
 }
 
 ///|
@@ -916,16 +930,19 @@ fn Router::match_dispatch(
   meth : String,
   clean_path : StringView,
 ) -> DispatchMatch {
-  match self.find_node_raw(meth, clean_path) {
-    Some(hit) => DispatchFound(hit.0, hit.1, hit.2)
+  // The negative cache is consulted first: a path that is known to have no
+  // route for `meth` is answered without walking the trie again. `add_route`
+  // clears both caches, so a cached miss cannot outlive its removal.
+  match self.find_miss_cache(meth, clean_path) {
+    Some(allow) =>
+      if allow != "" {
+        DispatchMethods(allow)
+      } else {
+        DispatchMissing
+      }
     None =>
-      match self.find_miss_cache(meth, clean_path) {
-        Some(allow) =>
-          if allow != "" {
-            DispatchMethods(allow)
-          } else {
-            DispatchMissing
-          }
+      match self.find_node_raw(meth, clean_path) {
+        Some(hit) => DispatchFound(hit.0, hit.1, hit.2)
         None => {
           let allowed = if meth == "HEAD" {
             match self.find_node_raw("GET", clean_path) {
@@ -4026,19 +4043,34 @@ pub fn multipart_boundary(content_type : String) -> String? {
 }
 
 ///|
-/// Most recently indexed header map, its size and its lower-cased name index.
-/// The index maps a lower-cased header name to the spelling stored in the map.
-/// It is reused while the same map keeps the same number of entries. Only
-/// positive entries are cached: the map can be mutated in place with its size
-/// unchanged, so a remembered absence could be stale, while a remembered
-/// spelling is always re-validated against the map before it is trusted.
-let last_header_index_map : Ref[Map[String, String]?] = Ref(None)
+/// Two most recently indexed header maps, their sizes and their lower-cased
+/// name indexes. The index maps a lower-cased header name to the spelling
+/// stored in the map. A slot is reused while the same map keeps the same number
+/// of entries. Two slots keep request and response header maps from evicting
+/// each other when their lookups alternate. Only positive entries are cached:
+/// the map can be mutated in place with its size unchanged, so a remembered
+/// absence could be stale, while a remembered spelling is always re-validated
+/// against the map before it is trusted.
+let header_index_map0 : Ref[Map[String, String]?] = Ref(None)
 
 ///|
-let last_header_index_size : Ref[Int] = Ref(-1)
+let header_index_size0 : Ref[Int] = Ref(-1)
 
 ///|
-let last_header_index : Ref[Map[String, String]?] = Ref(None)
+let header_index_value0 : Ref[Map[String, String]?] = Ref(None)
+
+///|
+let header_index_map1 : Ref[Map[String, String]?] = Ref(None)
+
+///|
+let header_index_size1 : Ref[Int] = Ref(-1)
+
+///|
+let header_index_value1 : Ref[Map[String, String]?] = Ref(None)
+
+///|
+/// Slot that receives the next rebuilt index.
+let header_index_next : Ref[Int] = Ref(0)
 
 ///|
 /// Lower-case a header name only when it contains upper-case letters.
@@ -4056,11 +4088,22 @@ fn header_name_lower(name : String) -> String {
 fn header_index_for(
   headers : Map[String, String],
 ) -> (Map[String, String], Bool) {
-  match last_header_index_map.val {
+  match header_index_map0.val {
     Some(cached) =>
       if physical_equal(cached, headers) &&
-        last_header_index_size.val == headers.length() {
-        match last_header_index.val {
+        header_index_size0.val == headers.length() {
+        match header_index_value0.val {
+          Some(index) => return (index, false)
+          None => ()
+        }
+      }
+    None => ()
+  }
+  match header_index_map1.val {
+    Some(cached) =>
+      if physical_equal(cached, headers) &&
+        header_index_size1.val == headers.length() {
+        match header_index_value1.val {
           Some(index) => return (index, false)
           None => ()
         }
@@ -4074,9 +4117,18 @@ fn header_index_for(
       index.set(lower, name)
     }
   }
-  last_header_index_map.val = Some(headers)
-  last_header_index_size.val = headers.length()
-  last_header_index.val = Some(index)
+  let size = headers.length()
+  if header_index_next.val == 0 {
+    header_index_map0.val = Some(headers)
+    header_index_size0.val = size
+    header_index_value0.val = Some(index)
+    header_index_next.val = 1
+  } else {
+    header_index_map1.val = Some(headers)
+    header_index_size1.val = size
+    header_index_value1.val = Some(index)
+    header_index_next.val = 0
+  }
   (index, true)
 }
 

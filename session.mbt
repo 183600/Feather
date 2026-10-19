@@ -13,6 +13,7 @@ pub(all) struct Session {
   mut destroyed : Bool
   mut regenerate : Bool
   mut flash_pending : Map[String, Array[String]]?
+  mut flash_pending_bytes : Int
   json_cache : Map[String, (String, Json)]
 }
 
@@ -133,6 +134,7 @@ pub fn SessionStore::create(self : SessionStore) -> Session {
     destroyed: false,
     regenerate: false,
     flash_pending: None,
+    flash_pending_bytes: 0,
     json_cache: Map([]),
   }
 }
@@ -150,6 +152,7 @@ fn session_detached(ttl : Int64) -> Session {
     destroyed: false,
     regenerate: false,
     flash_pending: None,
+    flash_pending_bytes: 0,
     json_cache: Map([]),
   }
 }

@@ -146,8 +146,12 @@ async fn read_body_bytes(reader : &@io.Reader, limit : Int32) -> Bytes {
   if total > limit {
     raise PayloadTooLarge
   }
+  // Pre-size from the chunk already read (bounded by the limit) instead of the
+  // limit itself, so a small body under a large `max_body_size` does not
+  // allocate a fixed 64 KiB up front.
   let limit_int = limit
-  let hint : Int = if limit_int < 65536 { limit_int } else { 65536 }
+  let first_length = first.length()
+  let hint : Int = if first_length < limit_int { first_length } else { limit_int }
   let buffer = @buffer.Buffer::Buffer(size_hint=hint)
   buffer.write_bytes(first)
   let mut done = false
@@ -238,7 +242,23 @@ async fn request_from_http(
   }
   let headers : Map[String, String] = Map([], capacity=request.headers.length())
   for name, value in request.headers {
-    let text = name.to_string()
+    let text = match request_header_name_cache.get(name) {
+      Some(text) => {
+        cache_touch(request_header_name_ages, name)
+        text
+      }
+      None => {
+        let text = name.to_string()
+        cache_set(
+          request_header_name_cache,
+          request_header_name_ages,
+          HEADER_NAME_CACHE_LIMIT,
+          name,
+          text,
+        )
+        text
+      }
+    }
     let stale_length = gzip_encoded &&
       (text.view().equal_ignore_ascii_case("content-encoding".view()) ||
         text.view().equal_ignore_ascii_case("content-length".view()))
@@ -572,6 +592,18 @@ let header_name_cache_ages : Map[String, Int] = Map([])
 ///|
 /// Maximum number of header names tracked by `header_name_cache`.
 const HEADER_NAME_CACHE_LIMIT : Int = 128
+
+///|
+/// Request header name spellings, keyed case-insensitively. The parser hands
+/// each header name over as a fresh `CaseInsensitiveString`; looking it up here
+/// avoids copying the same name into a new `String` on every request.
+let request_header_name_cache : Map[@http.CaseInsensitiveString, String] = Map(
+  [],
+)
+
+///|
+/// Recency ticks for `request_header_name_cache`.
+let request_header_name_ages : Map[@http.CaseInsensitiveString, Int] = Map([])
 
 ///|
 fn header_key(name : String) -> @http.CaseInsensitiveString {
@@ -944,6 +976,66 @@ let gzip_probe_ages : Map[String, Int] = Map([])
 const GZIP_PROBE_CACHE_LIMIT : Int = 64
 
 ///|
+/// Build the outgoing headers for a static response, seeding them with the
+/// headers a request context accumulated. A `Set-Cookie` entry is dropped when
+/// the response carries cookies, which are sent separately.
+fn static_base_headers(
+  extra_headers : Map[String, String],
+  cookies : Array[@http.Cookie],
+  capacity : Int,
+) -> @http.Headers {
+  let headers : @http.Headers = Map(
+    [],
+    capacity=extra_headers.length() + capacity,
+  )
+  for name, value in extra_headers {
+    if cookies.length() > 0 &&
+      name.view().equal_ignore_ascii_case("set-cookie".view()) {
+      continue
+    }
+    headers.set(header_key(name), value)
+  }
+  headers
+}
+
+///|
+/// Send a plain-text error response for a static request, carrying the request
+/// context's headers and cookies.
+async fn send_static_error(
+  conn : @http.ServerConnection,
+  extra_headers : Map[String, String],
+  cookies : Array[@http.Cookie],
+  head : Bool,
+  code : Int32,
+  body : String,
+) -> Unit {
+  let bytes = @utf8.encode(body)
+  let headers = static_base_headers(extra_headers, cookies, 2)
+  headers.set(header_content_type, "text/plain; charset=utf-8")
+  headers.set(header_content_length, bytes.length().to_string())
+  send_with_date(conn, code, status_text(code), headers, cookies~)
+  if !head {
+    conn.write(bytes)
+  }
+  conn.end_response()
+}
+
+///|
+/// Add the negotiation headers a static file response needs.
+fn decorate_static_headers(
+  headers : @http.Headers,
+  precompressed : Bool,
+  serving_gzip : Bool,
+) -> Unit {
+  if precompressed {
+    add_vary_header(headers, "Accept-Encoding")
+  }
+  if serving_gzip {
+    headers.set(header_content_encoding, "gzip")
+  }
+}
+
+///|
 /// Serve a static file, seeding every response with the headers and cookies a
 /// request context accumulated (middleware and handler output), so static
 /// responses carry the same security, CORS and session headers as dynamic
@@ -958,31 +1050,6 @@ async fn serve_static_file(
   extra_headers : Map[String, String],
   cookies : Array[@http.Cookie],
 ) -> Unit {
-  let base_headers = fn(capacity : Int) -> @http.Headers {
-    let headers : @http.Headers = Map(
-      [],
-      capacity=extra_headers.length() + capacity,
-    )
-    for name, value in extra_headers {
-      if cookies.length() > 0 &&
-        name.view().equal_ignore_ascii_case("set-cookie".view()) {
-        continue
-      }
-      headers.set(header_key(name), value)
-    }
-    headers
-  }
-  let send_error = async fn(code : Int32, body : String) {
-    let bytes = @utf8.encode(body)
-    let headers = base_headers(2)
-    headers.set(header_content_type, "text/plain; charset=utf-8")
-    headers.set(header_content_length, bytes.length().to_string())
-    send_with_date(conn, code, status_text(code), headers, cookies~)
-    if !head {
-      conn.write(bytes)
-    }
-    conn.end_response()
-  }
   let mut gzip_handle : @fs.File? = None
   let base : @fs.File? = Some(@fs.open(file_path, mode=@fs.ReadOnly)) catch {
     _ => {
@@ -998,7 +1065,7 @@ async fn serve_static_file(
         }
       }
       if gzip_handle is None {
-        send_error(404, "404 Not Found")
+        send_static_error(conn, extra_headers, cookies, head, 404, "404 Not Found")
         return
       }
       None
@@ -1009,8 +1076,8 @@ async fn serve_static_file(
       if handle.kind() is @fs.Directory {
         handle.close()
         let location = append_trailing_slash(request.path)
-        let headers = base_headers(1)
-        headers.set(@http.CaseInsensitiveString("Location"), location)
+        let headers = static_base_headers(extra_headers, cookies, 1)
+        headers.set(header_key("Location"), location)
         send_with_date(conn, 301, "Moved Permanently", headers, cookies~)
         conn.end_response()
         return
@@ -1084,20 +1151,12 @@ async fn serve_static_file(
       match base {
         Some(base_file) => base_file
         None => {
-          send_error(404, "404 Not Found")
+          send_static_error(conn, extra_headers, cookies, head, 404, "404 Not Found")
           return
         }
       }
   }
   defer file.close()
-  let decorate_headers = fn(headers : @http.Headers) {
-    if precompressed {
-      add_vary_header(headers, "Accept-Encoding")
-    }
-    if serving_gzip {
-      headers.set(header_content_encoding, "gzip")
-    }
-  }
   let size = file.size() catch {
     _ => 0L
   }
@@ -1116,17 +1175,17 @@ async fn serve_static_file(
   let cache_control_key = header_cache_control
   match evaluate_preconditions(request, etag, mtime_secs, true) {
     PreconditionFailed => {
-      send_error(412, "412 Precondition Failed")
+      send_static_error(conn, extra_headers, cookies, head, 412, "412 Precondition Failed")
       return
     }
     PreconditionNotModified => {
-      let headers = base_headers(2)
+      let headers = static_base_headers(extra_headers, cookies, 2)
       headers.set(etag_key, etag)
       headers.set(last_modified_key, last_modified)
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
       }
-      decorate_headers(headers)
+      decorate_static_headers(headers, precompressed, serving_gzip)
       send_with_date(conn, 304, "Not Modified", headers, cookies~)
       conn.end_response()
       return
@@ -1152,16 +1211,16 @@ async fn serve_static_file(
   let accept_ranges_key = header_accept_ranges
   match range {
     ByteRangeInvalid => {
-      let headers = base_headers(2)
+      let headers = static_base_headers(extra_headers, cookies, 2)
       headers.set(content_range_key, "bytes */" + size.to_string())
       headers.set(accept_ranges_key, "bytes")
-      decorate_headers(headers)
+      decorate_static_headers(headers, precompressed, serving_gzip)
       send_with_date(conn, 416, "Range Not Satisfiable", headers, cookies~)
       conn.end_response()
     }
     ByteRangeSpec(start, end) => {
       let length = end - start + 1L
-      let headers = base_headers(6)
+      let headers = static_base_headers(extra_headers, cookies, 6)
       headers.set(content_type_key, content_type_value)
       headers.set(content_length_key, length.to_string())
       headers.set(
@@ -1179,7 +1238,7 @@ async fn serve_static_file(
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
       }
-      decorate_headers(headers)
+      decorate_static_headers(headers, precompressed, serving_gzip)
       send_with_date(conn, 206, "Partial Content", headers, cookies~)
       if !head {
         write_file_range(conn, file, start, length)
@@ -1187,7 +1246,7 @@ async fn serve_static_file(
       conn.end_response()
     }
     ByteRangeFull => {
-      let headers = base_headers(5)
+      let headers = static_base_headers(extra_headers, cookies, 5)
       headers.set(content_type_key, content_type_value)
       headers.set(content_length_key, size.to_string())
       headers.set(etag_key, etag)
@@ -1196,7 +1255,7 @@ async fn serve_static_file(
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
       }
-      decorate_headers(headers)
+      decorate_static_headers(headers, precompressed, serving_gzip)
       send_with_date(conn, 200, "OK", headers, cookies~)
       if !head {
         conn.write_reader(file)

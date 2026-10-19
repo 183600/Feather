@@ -154,6 +154,12 @@ fn ChunkSink::to_bytes(self : ChunkSink) -> Bytes {
 }
 
 ///|
+/// Input chunk size fed to the gzip encoder between scheduler yields. A large
+/// response is compressed in several chunks so other tasks on the single
+/// threaded runtime can run while it is being produced.
+const GZIP_CHUNK_SIZE : Int = 65536
+
+///|
 async fn gzip_compress(data : Bytes) -> Bytes {
   // Start near the typical compressed size (a fraction of the input), but cap
   // the up-front hint so a pathological body cannot force a huge allocation
@@ -168,7 +174,20 @@ async fn gzip_compress(data : Bytes) -> Bytes {
   }
   let sink = ChunkSink::new(hint)
   let encoder = @gzip.Encoder::Encoder(sink)
-  encoder.write(data)
+  let mut offset = 0
+  while offset < length {
+    let remaining = length - offset
+    let end = if remaining < GZIP_CHUNK_SIZE {
+      length
+    } else {
+      offset + GZIP_CHUNK_SIZE
+    }
+    encoder.write(data[offset:end])
+    offset = end
+    if offset < length {
+      @async.pause()
+    }
+  }
   encoder.end()
   sink.to_bytes()
 }
