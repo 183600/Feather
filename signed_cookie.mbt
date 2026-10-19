@@ -222,7 +222,8 @@ pub fn sha256(data : Bytes) -> Bytes {
 fn hmac_ensure_key_blocks(normalized : Bytes) -> Unit {
   match hmac_cached_key.val {
     Some(cached) =>
-      if constant_time_bytes_equal(cached, normalized) {
+      if physical_equal(cached, normalized) ||
+        constant_time_bytes_equal(cached, normalized) {
         return
       }
     None => ()
@@ -518,14 +519,17 @@ pub fn verify_signed_cookie_token(
       return None
     }
   }
-  let expected = hmac_sha256(
-    secret_utf8(secret),
-    signed_cookie_signing_input(name, encoded_value, deadline),
-  )
   let signature = match base64url_decode_view(signature_view) {
     Some(value) => value
     None => return None
   }
+  if signature.length() != 32 {
+    return None
+  }
+  let expected = hmac_sha256(
+    secret_utf8(secret),
+    signed_cookie_signing_input(name, encoded_value, deadline),
+  )
   if !constant_time_bytes_equal(signature, expected) {
     return None
   }

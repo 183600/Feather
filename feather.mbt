@@ -4113,12 +4113,43 @@ let header_index_value1 : Ref[Map[String, String]?] = Ref(None)
 let header_index_next : Ref[Int] = Ref(0)
 
 ///|
-/// Lower-case a header name only when it contains upper-case letters.
+/// Lower-cased spellings of recently seen header names. Header names repeat
+/// heavily across requests, so memoizing the `to_lower()` copy avoids
+/// re-allocating the same lower-cased name on every case-insensitive lookup.
+let header_lower_cache : Map[String, String] = Map([])
+
+///|
+/// Recency ticks for `header_lower_cache`.
+let header_lower_cache_ages : Map[String, Int] = Map([])
+
+///|
+/// Maximum number of header names tracked by `header_lower_cache`.
+const HEADER_LOWER_CACHE_LIMIT : Int = 128
+
+///|
+/// Lower-case a header name only when it contains upper-case letters. The
+/// lower-cased form is memoized in a bounded cache so repeated lookups of the
+/// same name (the overwhelming majority) do not allocate.
 fn header_name_lower(name : String) -> String {
-  if has_ascii_upper(name.view()) {
-    name.to_lower()
-  } else {
-    name
+  if !has_ascii_upper(name.view()) {
+    return name
+  }
+  match header_lower_cache.get(name) {
+    Some(lower) => {
+      cache_touch(header_lower_cache_ages, name)
+      lower
+    }
+    None => {
+      let lower = name.to_lower()
+      cache_set(
+        header_lower_cache,
+        header_lower_cache_ages,
+        HEADER_LOWER_CACHE_LIMIT,
+        name,
+        lower,
+      )
+      lower
+    }
   }
 }
 
