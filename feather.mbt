@@ -516,6 +516,21 @@ pub fn Router::add_route(
 }
 
 ///|
+/// Register a route whose handler is wrapped in route-level middleware.
+///
+/// The middlewares are composed with `apply_middleware`, so the first entry is
+/// the outermost layer, and run only for requests that match this route.
+pub fn Router::add_route_with(
+  self : Router,
+  meth : String,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : Handler,
+) -> Unit {
+  self.add_route(meth, path, apply_middleware(middlewares, handler))
+}
+
+///|
 pub fn Router::add_named_route(
   self : Router,
   name : String,
@@ -525,6 +540,22 @@ pub fn Router::add_named_route(
 ) -> Unit {
   let clean_path = clean_route_path(path)
   self.add_route(meth, clean_path, handler)
+  self.named.set(name, { method: normalize_method(meth), path: clean_path, })
+}
+
+///|
+/// Named version of `Router::add_route_with`: the route can be registered with
+/// route-level middleware and still be looked up by name via `Router::url_for`.
+pub fn Router::add_named_route_with(
+  self : Router,
+  name : String,
+  meth : String,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : Handler,
+) -> Unit {
+  let clean_path = clean_route_path(path)
+  self.add_route_with(meth, clean_path, middlewares, handler)
   self.named.set(name, { method: normalize_method(meth), path: clean_path, })
 }
 
@@ -5424,6 +5455,26 @@ pub fn RouteGroup::route(
 }
 
 ///|
+/// Register a group route with additional route-level middleware.
+///
+/// The group middlewares (`RouteGroup::use`) wrap the route middlewares, which
+/// in turn wrap the handler, so the execution order is group, route, handler.
+pub fn RouteGroup::route_with(
+  self : RouteGroup,
+  meth : String,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : Handler,
+) -> RouteGroup {
+  self.router.add_route(
+    meth,
+    join_paths(self.prefix, path),
+    self.wrap(apply_middleware(middlewares, handler)),
+  )
+  self
+}
+
+///|
 pub fn RouteGroup::route_named(
   self : RouteGroup,
   name : String,
@@ -5436,6 +5487,26 @@ pub fn RouteGroup::route_named(
     meth,
     join_paths(self.prefix, path),
     self.wrap(handler),
+  )
+  self
+}
+
+///|
+/// Register a named group route with additional route-level middleware. Group
+/// middlewares stay outermost, mirroring `RouteGroup::route_with`.
+pub fn RouteGroup::route_named_with(
+  self : RouteGroup,
+  name : String,
+  meth : String,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : Handler,
+) -> RouteGroup {
+  self.router.add_named_route(
+    name,
+    meth,
+    join_paths(self.prefix, path),
+    self.wrap(apply_middleware(middlewares, handler)),
   )
   self
 }
@@ -5620,6 +5691,25 @@ pub fn App::route(
 }
 
 ///|
+/// Register a route wrapped in route-level middleware.
+///
+/// The middlewares run after every application middleware (`App::use`) and
+/// only for requests that match `meth path`, which makes them the right place
+/// for per-route authentication, rate limiting or header decoration. They are
+/// composed left to right like `apply_middleware`, see `App::group` for
+/// middleware shared by a whole prefix.
+pub fn App::route_with(
+  self : App,
+  meth : String,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : Handler,
+) -> App {
+  self.router.add_route_with(meth, path, middlewares, handler)
+  self
+}
+
+///|
 pub fn App::get(self : App, path : String, handler : Handler) -> App {
   self.route("GET", path, handler)
 }
@@ -5680,10 +5770,29 @@ pub fn App::websocket(
   path : String,
   handler : WebSocketHandler,
 ) -> App {
+  self.websocket_with(path, [], handler)
+}
+
+///|
+/// Register a websocket handler wrapped in route-level middleware.
+///
+/// The middlewares run after `App::use` middleware and only for the matching
+/// path. Middleware that does not call through answers the request instead of
+/// starting the upgrade; middleware that calls through may add headers or
+/// cookies to the handshake response.
+pub fn App::websocket_with(
+  self : App,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : WebSocketHandler,
+) -> App {
   let clean_path = clean_route_path(path)
   self.ws_router.add_route("GET", clean_path, fn(_ctx) { () })
   self.ws_handlers.set(clean_path, handler)
-  self.ws_middlewares.set(clean_path, async_chain_terminal)
+  self.ws_middlewares.set(
+    clean_path,
+    apply_middleware(middlewares, async_chain_terminal),
+  )
   self
 }
 
@@ -5708,10 +5817,29 @@ pub fn App::has_websocket(self : App, path : String) -> Bool {
 /// through replaces the stream entirely. Path parameters are available through
 /// `Context::param`.
 pub fn App::sse(self : App, path : String, handler : SseHandler) -> App {
+  self.sse_with(path, [], handler)
+}
+
+///|
+/// Register a server-sent events handler wrapped in route-level middleware.
+///
+/// Like `App::sse`, but the given middlewares run first (after `App::use`
+/// middleware) for this path only. Middleware that calls through may add
+/// headers to the event-stream response; middleware that answers replaces the
+/// stream entirely.
+pub fn App::sse_with(
+  self : App,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : SseHandler,
+) -> App {
   let clean_path = clean_route_path(path)
   self.sse_router.add_route("GET", clean_path, fn(_ctx) { () })
   self.sse_handlers.set(clean_path, handler)
-  self.sse_middlewares.set(clean_path, async_chain_terminal)
+  self.sse_middlewares.set(
+    clean_path,
+    apply_middleware(middlewares, async_chain_terminal),
+  )
   self
 }
 
@@ -5823,10 +5951,29 @@ fn App::resolve_websocket_full(
 /// replaces the stream entirely. Path parameters are available through
 /// `Context::param`.
 pub fn App::stream(self : App, path : String, handler : StreamHandler) -> App {
+  self.stream_with(path, [], handler)
+}
+
+///|
+/// Register a chunked streaming handler wrapped in route-level middleware.
+///
+/// Like `App::stream`, but the given middlewares run first (after `App::use`
+/// middleware) for this path only. Middleware that calls through may choose
+/// the status or add headers before the first chunk is written; middleware
+/// that answers replaces the stream entirely.
+pub fn App::stream_with(
+  self : App,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : StreamHandler,
+) -> App {
   let clean_path = clean_route_path(path)
   self.stream_router.add_route("GET", clean_path, fn(_ctx) { () })
   self.stream_handlers.set(clean_path, handler)
-  self.stream_middlewares.set(clean_path, async_chain_terminal)
+  self.stream_middlewares.set(
+    clean_path,
+    apply_middleware(middlewares, async_chain_terminal),
+  )
   self
 }
 
@@ -5887,6 +6034,21 @@ pub fn App::route_named(
   handler : Handler,
 ) -> App {
   self.router.add_named_route(name, meth, path, handler)
+  self
+}
+
+///|
+/// Register a named route wrapped in route-level middleware. The route can be
+/// generated with `App::url_for` like any other named route.
+pub fn App::route_named_with(
+  self : App,
+  name : String,
+  meth : String,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : Handler,
+) -> App {
+  self.router.add_named_route_with(name, meth, path, middlewares, handler)
   self
 }
 
@@ -6881,12 +7043,35 @@ pub fn Feather::request_timeout(self : Feather, millis : Int32) -> Feather {
 }
 
 ///|
+pub fn Feather::route_with(
+  self : Feather,
+  meth : String,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : Handler,
+) -> Feather {
+  ignore(self.app.route_with(meth, path, middlewares, handler))
+  self
+}
+
+///|
 pub fn Feather::websocket(
   self : Feather,
   path : String,
   handler : WebSocketHandler,
 ) -> Feather {
   ignore(self.app.websocket(path, handler))
+  self
+}
+
+///|
+pub fn Feather::websocket_with(
+  self : Feather,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : WebSocketHandler,
+) -> Feather {
+  ignore(self.app.websocket_with(path, middlewares, handler))
   self
 }
 
@@ -6903,12 +7088,34 @@ pub fn Feather::sse(self : Feather, path : String, handler : SseHandler) -> Feat
 }
 
 ///|
+pub fn Feather::sse_with(
+  self : Feather,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : SseHandler,
+) -> Feather {
+  ignore(self.app.sse_with(path, middlewares, handler))
+  self
+}
+
+///|
 pub fn Feather::stream(
   self : Feather,
   path : String,
   handler : StreamHandler,
 ) -> Feather {
   ignore(self.app.stream(path, handler))
+  self
+}
+
+///|
+pub fn Feather::stream_with(
+  self : Feather,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : StreamHandler,
+) -> Feather {
+  ignore(self.app.stream_with(path, middlewares, handler))
   self
 }
 
@@ -6926,6 +7133,19 @@ pub fn Feather::route_named(
   handler : Handler,
 ) -> Feather {
   ignore(self.app.route_named(name, meth, path, handler))
+  self
+}
+
+///|
+pub fn Feather::route_named_with(
+  self : Feather,
+  name : String,
+  meth : String,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : Handler,
+) -> Feather {
+  ignore(self.app.route_named_with(name, meth, path, middlewares, handler))
   self
 }
 
