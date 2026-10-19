@@ -576,6 +576,7 @@ pub fn Context::set_signed_cookie(
   same_site? : String,
   http_only~ : Bool = false,
   secure~ : Bool = false,
+  partitioned~ : Bool = false,
 ) -> Unit {
   let expires_at = match max_age {
     Some(seconds) => Some(@async.now() + seconds * 1000L)
@@ -591,6 +592,7 @@ pub fn Context::set_signed_cookie(
     same_site?,
     http_only~,
     secure~,
+    partitioned~,
   )
 }
 

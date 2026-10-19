@@ -566,6 +566,54 @@ pub fn Router::route_name(self : Router, name : String) -> NamedRoute? {
 }
 
 ///|
+/// Collect `(method, path)` pairs for every node that has a handler.
+fn collect_route_paths(
+  node : RouteNode,
+  method : String,
+  out : Array[(String, String)],
+) -> Unit {
+  if node.handler is Some(_) && !node.route_path.is_empty() {
+    out.push((method, node.route_path))
+  }
+  match node.static_children {
+    Some(children) =>
+      for _segment, child in children {
+        collect_route_paths(child, method, out)
+      }
+    None => ()
+  }
+  match node.param_child {
+    Some(child) => collect_route_paths(child, method, out)
+    None => ()
+  }
+  match node.wildcard_child {
+    Some(child) => collect_route_paths(child, method, out)
+    None => ()
+  }
+}
+
+///|
+/// Every route registered in the router as `(method, path)` pairs, sorted by
+/// method and then by path. The paths are the registered patterns, so
+/// parameter routes appear as `/users/:id` and wildcard routes as
+/// `/files/*path`. Useful for startup logging, documentation and debugging.
+pub fn Router::routes(self : Router) -> Array[(String, String)] {
+  let out : Array[(String, String)] = []
+  for method, root in self.trees {
+    collect_route_paths(root, method, out)
+  }
+  out.sort_by(fn(a, b) {
+    let by_method = a.0.lexical_compare(b.0)
+    if by_method != 0 {
+      by_method
+    } else {
+      a.1.lexical_compare(b.1)
+    }
+  })
+  out
+}
+
+///|
 /// Percent-encode a wildcard capture for URL generation. Empty segments are
 /// dropped and the rest joined with a single `/`, mirroring how route matching
 /// reads a wildcard back (`join_wildcard`), so `url_for` round-trips.
@@ -2494,6 +2542,7 @@ fn build_cookie(
   same_site? : String,
   http_only : Bool,
   secure : Bool,
+  partitioned : Bool,
 ) -> @http.Cookie {
   let clean_path = match path {
     Some(value) => Some(sanitize_cookie_attribute(value))
@@ -2514,6 +2563,9 @@ fn build_cookie(
         None => ()
       }
     None => ()
+  }
+  if partitioned {
+    extensions.push("Partitioned")
   }
   @http.Cookie(
     sanitize_cookie_token(name, true),
@@ -2538,9 +2590,20 @@ pub fn Context::add_cookie(
   same_site? : String,
   http_only~ : Bool = false,
   secure~ : Bool = false,
+  partitioned~ : Bool = false,
 ) -> Unit {
   self.response.cookies.push(
-    build_cookie(name, value, path?, max_age?, domain?, same_site?, http_only, secure),
+    build_cookie(
+      name,
+      value,
+      path?,
+      max_age?,
+      domain?,
+      same_site?,
+      http_only,
+      secure,
+      partitioned,
+    ),
   )
 }
 
@@ -2597,6 +2660,7 @@ pub fn Context::set_cookie(
   same_site? : String,
   http_only~ : Bool = false,
   secure~ : Bool = false,
+  partitioned~ : Bool = false,
 ) -> Unit {
   let cookie = build_cookie(
     name,
@@ -2607,6 +2671,7 @@ pub fn Context::set_cookie(
     same_site?,
     http_only,
     secure,
+    partitioned,
   )
   self.response.headers.set("Set-Cookie", render_cookie(cookie))
   self.response.cookies.push(cookie)
@@ -6925,6 +6990,13 @@ pub fn App::has_route(self : App, meth : String, path : String) -> Bool {
 }
 
 ///|
+/// Every HTTP route registered on the application as sorted `(method, path)`
+/// pairs, including routes contributed by mounted applications.
+pub fn App::routes(self : App) -> Array[(String, String)] {
+  self.router.routes()
+}
+
+///|
 fn App::best_static_mount(
   self : App,
   path_view : StringView,
@@ -7826,6 +7898,54 @@ pub fn Feather::static_files_with(
 ///|
 pub fn Feather::handle(self : Feather, request : Request) -> Response {
   self.app.respond(request)
+}
+
+///|
+/// Every HTTP route registered on the application as sorted `(method, path)`
+/// pairs, including routes contributed by mounted applications.
+pub fn Feather::routes(self : Feather) -> Array[(String, String)] {
+  self.app.routes()
+}
+
+///|
+/// Whether an ordinary HTTP route matches `method` and `path`.
+pub fn Feather::has_route(self : Feather, meth : String, path : String) -> Bool {
+  self.app.has_route(meth, path)
+}
+
+///|
+/// Whether a WebSocket endpoint is registered for `path`.
+pub fn Feather::has_websocket(self : Feather, path : String) -> Bool {
+  self.app.has_websocket(path)
+}
+
+///|
+/// Whether a server-sent events endpoint is registered for `path`.
+pub fn Feather::has_sse(self : Feather, path : String) -> Bool {
+  self.app.has_sse(path)
+}
+
+///|
+/// Whether a streaming endpoint is registered for `path`.
+pub fn Feather::has_stream(self : Feather, path : String) -> Bool {
+  self.app.has_stream(path)
+}
+
+///|
+/// Resolve a request path through the static mounts, returning the file on
+/// disk that would be served.
+pub fn Feather::static_file_for(self : Feather, path : String) -> String? {
+  self.app.static_file_for(path)
+}
+
+///|
+/// The `Cache-Control` value configured for the static mount that serves
+/// `path`, or `""` when no mount matches.
+pub fn Feather::static_cache_control_for(
+  self : Feather,
+  path : String,
+) -> String {
+  self.app.static_cache_control_for(path)
 }
 
 ///|

@@ -1907,6 +1907,37 @@ pub async fn App::serve(self : App, addr : @socket.Addr) -> Unit {
 }
 
 ///|
+/// Serve `server` until the `stop` task resolves.
+///
+/// `stop` runs concurrently with the accept loop. When it completes the
+/// listener is closed and the serving task is cancelled, so an application can
+/// be shut down from any task, for example after a signal handler or a test
+/// timer fires. An error raised by `stop` (or by the server itself)
+/// propagates once the server is torn down.
+pub async fn App::serve_with_until(
+  self : App,
+  server : @http.Server,
+  stop~ : async () -> Unit,
+  max_connections? : Int32,
+) -> Unit {
+  @async.with_task_group(group => {
+    group.spawn_bg(no_wait=true, () => self.serve_with(server, max_connections?))
+    stop()
+    server.close()
+  })
+}
+
+///|
+/// Listen on `addr` until the `stop` task resolves.
+pub async fn App::serve_until(
+  self : App,
+  addr : @socket.Addr,
+  stop~ : async () -> Unit,
+) -> Unit {
+  self.serve_with_until(@http.Server(addr), stop~)
+}
+
+///|
 pub fn Feather::listen_address(self : Feather) -> String {
   let host = self.config.host
   let needs_brackets = host.contains(":") &&
@@ -1916,11 +1947,17 @@ pub fn Feather::listen_address(self : Feather) -> String {
 }
 
 ///|
-pub async fn Feather::serve(self : Feather) -> Unit {
-  let addr = @socket.Addr::parse(self.listen_address()) catch {
+/// Resolve the configured host and port, falling back to a loopback address
+/// when the host is not directly parseable (for example a host name).
+fn Feather::resolve_addr(self : Feather) -> @socket.Addr raise {
+  @socket.Addr::parse(self.listen_address()) catch {
     _ => @socket.Addr::parse("127.0.0.1:" + self.config.port.to_string())
   }
-  self.app.serve(addr)
+}
+
+///|
+pub async fn Feather::serve(self : Feather) -> Unit {
+  self.app.serve(self.resolve_addr())
 }
 
 ///|
@@ -1930,4 +1967,24 @@ pub async fn Feather::serve_with(
   max_connections? : Int32,
 ) -> Unit {
   self.app.serve_with(server, max_connections?)
+}
+
+///|
+/// Serve the application until the `stop` task resolves.
+pub async fn Feather::serve_with_until(
+  self : Feather,
+  server : @http.Server,
+  stop~ : async () -> Unit,
+  max_connections? : Int32,
+) -> Unit {
+  self.app.serve_with_until(server, stop~, max_connections?)
+}
+
+///|
+/// Listen on the configured address until the `stop` task resolves.
+pub async fn Feather::serve_until(
+  self : Feather,
+  stop~ : async () -> Unit,
+) -> Unit {
+  self.app.serve_until(self.resolve_addr(), stop~)
 }

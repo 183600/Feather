@@ -293,6 +293,58 @@ pub fn Context::accepts(self : Context, media_type : String) -> Bool {
 }
 
 ///|
+/// Whether a parsed `Accept` range asks for JSON.
+fn accept_entry_asks_json(entry : AcceptEntry) -> Bool {
+  let range_type = entry.range_type
+  if range_type == "*" {
+    return false
+  }
+  if !range_type.equal_ignore_ascii_case("application".view()) {
+    return false
+  }
+  let subtype = entry.range_subtype
+  if subtype.equal_ignore_ascii_case("json".view()) {
+    return true
+  }
+  let length = subtype.length()
+  length > 5 && subtype[length - 5:].equal_ignore_ascii_case("+json".view())
+}
+
+///|
+/// Whether the request prefers a JSON response.
+///
+/// True when the client sends `X-Requested-With: XMLHttpRequest`, or when the
+/// most preferred media range of the `Accept` header asks for JSON
+/// (`application/json`, `application/problem+json`, ...). A missing or empty
+/// `Accept` header is not a JSON preference, so plain browser requests keep
+/// getting HTML. This is the usual switch for handlers that render JSON for
+/// API clients and HTML for browsers.
+pub fn Context::wants_json(self : Context) -> Bool {
+  let requested_with = trim_ascii_space(self.header("X-Requested-With").view())
+  if requested_with.equal_ignore_ascii_case("XMLHttpRequest".view()) {
+    return true
+  }
+  let header = self.header("Accept")
+  if trim_ascii_space(header.view()).is_empty() {
+    return false
+  }
+  let mut found = false
+  let mut best_quality = 0
+  let mut best_asks_json = false
+  for entry in accept_entries_cached(header) {
+    if entry.quality <= 0 {
+      continue
+    }
+    if !found || entry.quality > best_quality {
+      found = true
+      best_quality = entry.quality
+      best_asks_json = accept_entry_asks_json(entry)
+    }
+  }
+  found && best_asks_json
+}
+
+///|
 /// Pick the most preferred media type from `offers` according to the
 /// request's `Accept` header.
 ///

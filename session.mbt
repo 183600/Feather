@@ -460,6 +460,7 @@ priv struct SessionCookieConfig {
   same_site : String
   http_only : Bool
   secure : Bool
+  partitioned : Bool
   max_age : Int64?
 }
 
@@ -479,6 +480,7 @@ fn session_send_cookie(
     same_site=config.same_site,
     http_only=config.http_only,
     secure=config.secure,
+    partitioned=config.partitioned,
   )
 }
 
@@ -529,6 +531,7 @@ pub fn middleware_session(
   same_site~ : String = "Lax",
   http_only~ : Bool = true,
   secure~ : Bool = false,
+  partitioned~ : Bool = false,
 ) -> Middleware {
   let config : SessionCookieConfig = {
     name: cookie,
@@ -536,6 +539,7 @@ pub fn middleware_session(
     same_site,
     http_only,
     secure,
+    partitioned,
     max_age: if store.ttl() >= 1000L {
       Some(store.ttl() / 1000L)
     } else {
