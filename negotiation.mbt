@@ -402,7 +402,7 @@ let last_encoding_entries : Ref[Array[EncodingEntry]?] = Ref(None)
 
 ///|
 /// Parsed `Accept-Encoding` headers keyed by content; compression negotiation
-/// reads the same header a few times per request, so this is a hot path.
+/// reads the same header a few times per request.
 let encoding_entries_cache : Map[String, Array[EncodingEntry]] = Map([])
 
 ///|

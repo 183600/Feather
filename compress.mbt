@@ -130,8 +130,7 @@ fn add_vary_accept_encoding(response : Response) -> Unit {
 
 ///|
 /// A `@io.Writer` that collects every written chunk in one growable buffer, so
-/// the compressed result is copied exactly once instead of once per chunk plus
-/// a final concatenation.
+/// the compressed result is assembled from a single buffer.
 priv struct ChunkSink {
   buffer : @buffer.Buffer
 }
@@ -156,9 +155,9 @@ fn ChunkSink::to_bytes(self : ChunkSink) -> Bytes {
 
 ///|
 async fn gzip_compress(data : Bytes) -> Bytes {
-  // Start near the typical compressed size (a fraction of the input) instead
-  // of always 1024 bytes, but cap the up-front hint so a pathological body
-  // cannot force a huge allocation before a single byte is emitted.
+  // Start near the typical compressed size (a fraction of the input), but cap
+  // the up-front hint so a pathological body cannot force a huge allocation
+  // before a single byte is emitted.
   let length = data.length()
   let hint = if length < 2048 {
     1024

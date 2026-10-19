@@ -665,9 +665,7 @@ fn Router::allowed_methods(self : Router, path : StringView) -> Array[String] {
 }
 
 ///|
-/// Rendered `Allow` header values, keyed by the joined method list. Scanners
-/// hit the same 405/OPTIONS answers repeatedly, so rendering once per distinct
-/// method set avoids rebuilding and sorting the list on every request.
+/// Rendered `Allow` header values, keyed by the joined method list.
 let allow_header_values : Map[String, String] = Map([])
 
 ///|
@@ -804,10 +802,8 @@ fn Router::find_node_raw(
 }
 
 ///|
-/// Insert into a per-method dynamic dispatch cache. A full cache is cleared and
-/// restarted instead of refusing every later path (which would stop caching for
-/// any service with more than the cap of distinct dynamic URLs); rebuilding the
-/// hot entries costs one tree walk each.
+/// Insert into a per-method dynamic dispatch cache. A full cache is cleared
+/// before the new entry is stored.
 fn remember_dynamic_hit(
   cache : Map[String, (RouteNode, Map[String, String]?, String)],
   clean_path : StringView,
@@ -906,8 +902,7 @@ fn Router::remember_miss(
     }
   }
   if cache.length() >= 128 {
-    // Same clear-and-restart policy as the dynamic dispatch caches: a scanner
-    // rotating unknown paths must not disable miss caching permanently.
+    // Same clear-and-restart policy as the dynamic dispatch caches.
     cache.clear()
   }
   cache.set(clean_path.to_owned(), allowed)
@@ -1111,8 +1106,7 @@ fn cached_error_body(status : Int32, message : String) -> String {
     Some(by_message) => by_message
     None => {
       if error_body_cache.length() >= 32 {
-        // Restart the key table rather than pinning the first 32 statuses
-        // forever; rebuilding it on the next calls is cheap.
+        // Same clear-and-restart policy as the other bounded caches.
         error_body_cache.clear()
       }
       let by_message : Map[String, String] = Map([], capacity=4)
@@ -1236,9 +1230,7 @@ fn param_state_key(name : String) -> String {
     None => {
       let key = PARAM_PREFIX + name
       if param_key_cache.length() >= PARSE_CACHE_LIMIT {
-        // Restart the cache instead of refusing new names forever: rebuilt
-        // entries are cheap and every later request for a fresh name would
-        // otherwise re-concatenate the prefix on each call.
+        // Same clear-and-restart policy as the other bounded caches.
         param_key_cache.clear()
       }
       param_key_cache.set(name, key)
@@ -3236,8 +3228,8 @@ fn parse_urlencoded_multi(source : StringView) -> Map[String, Array[String]] {
     capacity=urlencoded_capacity(source),
   )
   // Decoded spelling of keys that contain `%` or `+`, so repeated escaped keys
-  // are decoded (and re-allocated) once per parse instead of once per
-  // occurrence. Keys without either character keep their raw spelling.
+  // share one decoded copy per parse. Keys without either character keep their
+  // raw spelling.
   let escaped_keys : Map[StringView, String] = Map([], capacity=4)
   let length = source.length()
   let mut pos = 0
@@ -3746,9 +3738,8 @@ fn view_matches_at(view : StringView, needle : StringView, index : Int) -> Bool 
 
 ///|
 /// First index at or after `start` where `needle` appears and is terminated by
-/// whitespace, a line break or `--`. Scans forward once instead of restarting a
-/// substring search after every rejected candidate, so an adversarial body full
-/// of `needle` prefixes cannot drive it quadratic.
+/// whitespace, a line break or `--`. A single forward scan visits each position
+/// at most once.
 fn find_terminated_delimiter(
   view : StringView,
   needle : StringView,
@@ -3779,8 +3770,7 @@ fn find_terminated_delimiter(
 ///|
 /// Find the earliest position where either the CRLF-prefixed or the LF-prefixed
 /// part delimiter starts and is properly terminated. A single forward scan
-/// serves both needles, so an LF-only body with many small parts does not pay a
-/// full failed CRLF scan per part.
+/// serves both needles.
 fn find_part_delimiter(
   view : StringView,
   crlf_delimiter : StringView,
@@ -3981,11 +3971,10 @@ pub fn multipart_boundary(content_type : String) -> String? {
 ///|
 /// Most recently indexed header map, its size and its lower-cased name index.
 /// The index maps a lower-cased header name to the spelling stored in the map.
-/// It is reused while the same map keeps the same number of entries, so
-/// repeated lookups cost one hash probe instead of a full scan. Only positive
-/// entries are cached: the map can be mutated in place with its size unchanged,
-/// so a remembered absence could be stale, while a remembered spelling is
-/// always re-validated against the map before it is trusted.
+/// It is reused while the same map keeps the same number of entries. Only
+/// positive entries are cached: the map can be mutated in place with its size
+/// unchanged, so a remembered absence could be stale, while a remembered
+/// spelling is always re-validated against the map before it is trusted.
 let last_header_index_map : Ref[Map[String, String]?] = Ref(None)
 
 ///|
@@ -4076,8 +4065,7 @@ fn get_header_ignore_case(
 ///|
 /// Canonical spellings of recently encountered header names, keyed by their
 /// lower-cased form. Header maps are rebuilt per request, but the spellings
-/// are stable, so this turns the per-name O(H) fallback scan into a `contains`
-/// probe once a spelling has been seen.
+/// are stable, so a seen spelling can be re-validated with a `contains` probe.
 let header_spelling_cache : Map[String, String] = Map([])
 
 ///|
@@ -5583,9 +5571,8 @@ fn App::resolve_sse_full(
   if self.sse_handlers.is_empty() {
     return None
   }
-  // One dispatch pass serves both the miss-cache fast path for unrelated GET
-  // requests and the parameter bindings, so a hit no longer walks the route
-  // tree a second time.
+  // One dispatch pass serves both the miss-cache path for unrelated GET
+  // requests and the parameter bindings.
   match self.sse_router.match_dispatch("GET", clean_path_view(path)) {
     DispatchFound(node, params, _) =>
       match self.sse_handlers.get(node.route_path) {

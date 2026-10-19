@@ -66,8 +66,8 @@ fn read_uint32_be(data : Bytes, offset : Int) -> UInt {
 
 ///|
 /// Reusable message schedule for `sha256_compress`. The async runtime is
-/// single threaded and compression never yields, so a shared scratch buffer
-/// avoids one allocation per 64-byte block.
+/// single threaded and compression never yields, so a shared scratch buffer is
+/// safe.
 let sha256_schedule : FixedArray[UInt] = FixedArray::make(64, 0U)
 
 ///|
@@ -401,8 +401,7 @@ fn signed_cookie_signing_input(
   encoded_value : StringView,
   expires_at : Int64,
 ) -> Bytes {
-  // Assemble the text once and UTF-8 encode it in a single pass: encoding the
-  // three pieces separately and copying the bytes was 3 encodes + 1 full copy.
+  // Assemble the text once and UTF-8 encode it in a single pass.
   let expiry = expires_at.to_string()
   let builder = StringBuilder(
     size_hint=name.length() + encoded_value.length() + expiry.length() + 2,

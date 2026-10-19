@@ -484,8 +484,7 @@ async fn send_file_response(
 
 ///|
 /// Bounded cache of formatted peer hosts, keyed by peer address. Keep-alive
-/// connections reuse the same address across requests, so alternating clients
-/// no longer invalidate each other the way a single-slot cache did.
+/// connections reuse the same address across requests.
 let peer_host_cache : Map[@socket.Addr, String] = Map([])
 
 ///|
@@ -562,9 +561,8 @@ fn utf8_byte_length(view : StringView) -> Int {
 }
 
 ///|
-/// Bounded cache of `CaseInsensitiveString` header keys. Response headers are
-/// copied into an `@http.Headers` map on every send; reusing the wrapper for
-/// names already seen avoids rebuilding them per response.
+/// Bounded cache of `CaseInsensitiveString` header keys, reused across
+/// responses.
 let header_name_cache : Map[String, @http.CaseInsensitiveString] = Map([])
 
 ///|
@@ -916,8 +914,7 @@ fn add_vary_header(headers : @http.Headers, value : String) -> Unit {
 ///|
 /// Bounded cache recording whether a static file has a precompressed `.gz`
 /// sibling, keyed by path and validated against the base file's `(size, mtime)`
-/// so a changed file is probed again. Without it, every gzip-accepting request
-/// for an asset without a sibling pays a failed `open`.
+/// so a changed file is probed again.
 let gzip_probe_cache : Map[String, (Int64, Int64, Int, Bool)] = Map([])
 
 ///|
@@ -1199,12 +1196,9 @@ const STATIC_CHAIN_PASS_KEY : String = "__feather_static_pass"
 ///|
 /// Serve a static mount after running the application middleware chain.
 ///
-/// Middleware used to be skipped for static mounts, so authentication, CORS,
-/// security headers, request ids and sessions silently did not apply to
-/// assets. The chain now wraps the static lookup: middleware that
-/// short-circuits (for example an authenticator) decides the response, while
-/// middleware that calls through gets its response headers and cookies merged
-/// into the file response.
+/// The chain wraps the static lookup: middleware that short-circuits (for
+/// example an authenticator) decides the response, while middleware that calls
+/// through gets its response headers and cookies merged into the file response.
 async fn handle_static(
   app : App,
   request : @http.Request,

@@ -78,8 +78,8 @@ fn platform_rand() -> @random.Rand {
 }
 
 ///|
-/// Generator used to materialize ids for sessions that were first written to
-/// lazily, outside the store's own generator.
+/// Generator for ids of sessions first written lazily, outside the store's own
+/// generator.
 let session_id_rng : @random.Rand = platform_rand()
 
 ///|
@@ -192,9 +192,7 @@ pub fn SessionStore::save(self : SessionStore, session : Session) -> Unit {
 
 ///|
 /// Drop one arbitrary session, keeping the store under its cap when nothing has
-/// expired yet. The store is a bounded cache, so any victim is acceptable;
-/// scanning every session for the nearest expiry would turn each write into an
-/// O(capacity) operation once the store fills up.
+/// expired yet. The store is a bounded cache, so any victim is acceptable.
 fn SessionStore::evict_one(self : SessionStore) -> Unit {
   match self.sessions.keys().next() {
     Some(id) => ignore(self.sessions.remove(id))

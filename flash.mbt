@@ -53,7 +53,7 @@ fn flash_decode(text : String) -> Array[String] {
 ///|
 /// The request-local pending additions for this session, created on first use.
 /// Messages queued by `Context::flash` land here and are encoded once, at
-/// persist time, so appending N messages costs O(N) instead of O(N²).
+/// persist time.
 fn Session::flash_pending_map(self : Session) -> Map[String, Array[String]] {
   match self.flash_pending {
     Some(pending) => pending

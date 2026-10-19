@@ -178,8 +178,7 @@ fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
 
 ///|
 /// Apply the preconditions of a facade request (the offline `App::respond`
-/// path), reading the headers in place instead of copying them into a
-/// `@http.Headers` map.
+/// path), reading the headers directly from the request map.
 fn apply_preconditions_facade(request : Request, response : Response) -> Unit {
   let method = request.method.to_upper()
   apply_preconditions_input(
@@ -202,9 +201,9 @@ fn has_precondition_headers(input : PreconditionInput) -> Bool {
 /// Whether the request's preconditions already fail against the response's own
 /// validators. Compression only weakens tags, which cannot turn a strong
 /// mismatch into a match, so a failure detected here is the same one the
-/// post-compression evaluation would report: the `412` can be produced without
-/// paying for gzip and hashing. Only handler-supplied validators are consulted,
-/// so this never fires for responses whose validator would be generated later.
+/// post-compression evaluation would report. Only handler-supplied validators
+/// are consulted, so this never fires for responses whose validator would be
+/// generated later.
 fn precondition_fails_before_compression(
   input : PreconditionInput,
   allows_not_modified : Bool,
