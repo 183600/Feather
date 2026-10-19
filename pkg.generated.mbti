@@ -451,6 +451,7 @@ pub(all) struct Router {
   named : Map[String, NamedRoute]
   dynamic_caches : Map[String, Map[String, (RouteNode, Map[String, String]?, String)]]
   miss_caches : Map[String, Map[String, String]]
+  miss_method_caches : Map[String, Map[String, Array[String]]]
   dynamic_cache_ages : Map[String, Map[String, Int32]]
   miss_cache_ages : Map[String, Map[String, Int32]]
 }

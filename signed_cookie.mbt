@@ -22,41 +22,49 @@ let sha256_initial_state : Array[UInt] = [
 ]
 
 ///|
+#inline
 fn rotr32(value : UInt, bits : Int) -> UInt {
   (value >> bits) | (value << (32 - bits))
 }
 
 ///|
+#inline
 fn sha256_choose(x : UInt, y : UInt, z : UInt) -> UInt {
   (x & y) ^ (x.lnot() & z)
 }
 
 ///|
+#inline
 fn sha256_majority(x : UInt, y : UInt, z : UInt) -> UInt {
   (x & y) ^ (x & z) ^ (y & z)
 }
 
 ///|
+#inline
 fn sha256_sigma0(value : UInt) -> UInt {
   rotr32(value, 7) ^ rotr32(value, 18) ^ (value >> 3)
 }
 
 ///|
+#inline
 fn sha256_sigma1(value : UInt) -> UInt {
   rotr32(value, 17) ^ rotr32(value, 19) ^ (value >> 10)
 }
 
 ///|
+#inline
 fn sha256_big_sigma0(value : UInt) -> UInt {
   rotr32(value, 2) ^ rotr32(value, 13) ^ rotr32(value, 22)
 }
 
 ///|
+#inline
 fn sha256_big_sigma1(value : UInt) -> UInt {
   rotr32(value, 6) ^ rotr32(value, 11) ^ rotr32(value, 25)
 }
 
 ///|
+#inline
 fn read_uint32_be(data : Bytes, offset : Int) -> UInt {
   (data[offset].to_uint() << 24) |
     (data[offset + 1].to_uint() << 16) |

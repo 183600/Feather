@@ -218,10 +218,28 @@ let media_type_parts_cache : Map[String, (String, String)] = Map([])
 let media_type_parts_cache_ages : Map[String, Int] = Map([])
 
 ///|
+/// Most recently parsed media type and its parts. Offers are usually string
+/// literals reused across calls, so a physical-equality fast path skips the
+/// map lookups for the common case.
+let last_media_type_text : Ref[String?] = Ref(None)
+let last_media_type_value : Ref[(String, String)?] = Ref(None)
+let last_media_type_hit : Ref[Bool] = Ref(false)
+
+///|
 fn media_type_parts_cached(media_type : String) -> (String, String)? {
+  match last_media_type_text.val {
+    Some(cached) =>
+      if physical_equal(cached, media_type) && last_media_type_hit.val {
+        return last_media_type_value.val
+      }
+    None => ()
+  }
   match media_type_parts_cache.get(media_type) {
     Some(parts) => {
       cache_touch(media_type_parts_cache_ages, media_type)
+      last_media_type_text.val = Some(media_type)
+      last_media_type_value.val = Some(parts)
+      last_media_type_hit.val = true
       Some(parts)
     }
     None => {
@@ -229,6 +247,9 @@ fn media_type_parts_cached(media_type : String) -> (String, String)? {
         Some((media_type, subtype)) => Some((media_type.to_owned(), subtype.to_owned()))
         None => None
       }
+      last_media_type_text.val = Some(media_type)
+      last_media_type_value.val = parts
+      last_media_type_hit.val = true
       match parts {
         Some(parts) => {
           if media_type.length() <= PARSE_CACHE_MAX_KEY {

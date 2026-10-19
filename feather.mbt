@@ -108,6 +108,7 @@ pub(all) struct Router {
   named : Map[String, NamedRoute]
   dynamic_caches : Map[String, Map[String, (RouteNode, Map[String, String]?, String)]]
   miss_caches : Map[String, Map[String, String]]
+  miss_method_caches : Map[String, Map[String, Array[String]]]
   dynamic_cache_ages : Map[String, Map[String, Int]]
   miss_cache_ages : Map[String, Map[String, Int]]
 }
@@ -149,6 +150,7 @@ pub fn create_router() -> Router {
     named: Map([]),
     dynamic_caches: Map([]),
     miss_caches: Map([]),
+    miss_method_caches: Map([]),
     dynamic_cache_ages: Map([]),
     miss_cache_ages: Map([]),
   }
@@ -160,12 +162,12 @@ pub fn Context::new(request : Request) -> Context {
     request,
     response: {
       status: 200,
-      headers: Map([], capacity=4),
+      headers: Map([], capacity=2),
       body: "",
       data: None,
       cookies: [],
     },
-    state: Map([], capacity=4),
+    state: Map([], capacity=2),
     json_state: Map([], capacity=0),
     cleanups: [],
     file: None,
@@ -510,6 +512,7 @@ pub fn Router::add_route(
   self.dynamic_caches.remove(method_key)
   self.dynamic_cache_ages.remove(method_key)
   self.miss_caches.clear()
+  self.miss_method_caches.clear()
   self.miss_cache_ages.clear()
 }
 
@@ -952,6 +955,46 @@ fn Router::remember_miss(
 }
 
 ///|
+/// Cached raw method list for a method/path pair that has no route. An empty
+/// array records that no method matches the path at all.
+fn Router::find_miss_methods(
+  self : Router,
+  meth : String,
+  clean_path : StringView,
+) -> Array[String]? {
+  match self.miss_method_caches.get(meth) {
+    Some(cache) => cache.get_from_string(clean_path)
+    None => None
+  }
+}
+
+///|
+fn Router::remember_miss_methods(
+  self : Router,
+  meth : String,
+  clean_path : StringView,
+  methods : Array[String],
+) -> Unit {
+  let cache = match self.miss_method_caches.get(meth) {
+    Some(cache) => cache
+    None => {
+      let cache : Map[String, Array[String]] = Map([], capacity=16)
+      self.miss_method_caches.set(meth, cache)
+      cache
+    }
+  }
+  let ages = match self.miss_cache_ages.get(meth) {
+    Some(ages) => ages
+    None => {
+      let ages : Map[String, Int] = Map([])
+      self.miss_cache_ages.set(meth, ages)
+      ages
+    }
+  }
+  cache_set(cache, ages, MISS_CACHE_LIMIT, clean_path.to_owned(), methods.copy())
+}
+
+///|
 fn Router::match_dispatch(
   self : Router,
   meth : String,
@@ -1000,23 +1043,50 @@ fn Router::match_route(
     Some(hit) => MatchFound(hit.0, hit.1, hit.2)
     None =>
       if meth == "HEAD" {
+        // `HEAD` falls back to the `GET` route before the negative cache: a
+        // GET match is a hit, and only a GET miss can be cached as absent.
         match self.find_node("GET", clean_path) {
           Some(hit) => MatchFound(hit.0, hit.1, hit.2)
+          None =>
+            match self.find_miss_methods(meth, clean_path) {
+              Some(methods) =>
+                if methods.length() > 0 {
+                  MatchMethods(methods.copy())
+                } else {
+                  MatchMissing
+                }
+              None => {
+                let allowed = self.allowed_methods(clean_path)
+                self.remember_miss_methods(meth, clean_path, allowed)
+                if allowed.length() > 0 {
+                  MatchMethods(allowed)
+                } else {
+                  MatchMissing
+                }
+              }
+            }
+        }
+      } else {
+        // A path that resolved to no route for this method is very likely to
+        // miss again, so the raw method list is cached. Checking the cache
+        // only after the node lookup keeps the common hit path free of the
+        // extra map access.
+        match self.find_miss_methods(meth, clean_path) {
+          Some(methods) =>
+            if methods.length() > 0 {
+              MatchMethods(methods.copy())
+            } else {
+              MatchMissing
+            }
           None => {
             let allowed = self.allowed_methods(clean_path)
+            self.remember_miss_methods(meth, clean_path, allowed)
             if allowed.length() > 0 {
               MatchMethods(allowed)
             } else {
               MatchMissing
             }
           }
-        }
-      } else {
-        let allowed = self.allowed_methods(clean_path)
-        if allowed.length() > 0 {
-          MatchMethods(allowed)
-        } else {
-          MatchMissing
         }
       }
   }
@@ -2858,6 +2928,7 @@ fn trim_ascii_space(view : StringView) -> StringView {
 }
 
 ///|
+#inline
 fn hex_digit(value : Int) -> Int {
   if value >= 48 && value <= 57 {
     value - 48
@@ -2965,6 +3036,7 @@ pub fn url_decode(source : String) -> String {
 }
 
 ///|
+#inline
 fn is_url_unreserved(value : Int32) -> Bool {
   (value >= 48 && value <= 57) ||
   (value >= 65 && value <= 90) ||
@@ -2976,6 +3048,7 @@ fn is_url_unreserved(value : Int32) -> Bool {
 }
 
 ///|
+#inline
 fn percent_hex_byte(value : Int) -> Byte {
   if value < 10 {
     (b'0'.to_int() + value).to_byte()
@@ -2985,6 +3058,7 @@ fn percent_hex_byte(value : Int) -> Byte {
 }
 
 ///|
+#inline
 fn write_percent_to(out : FixedArray[Byte], offset : Int, value : Int) -> Unit {
   out[offset] = b'%'
   out[offset + 1] = percent_hex_byte(value / 16)
@@ -3158,6 +3232,7 @@ pub fn base64_decode(text : String) -> Bytes? {
 /// Look up a character code in a base64 value table. Characters outside the
 /// table (anything past Latin-1) are not part of any base64 alphabet, so they
 /// map to `-1` instead of indexing out of bounds.
+#inline
 fn base64_table_value(table : FixedArray[Int], code : UInt16) -> Int {
   let index = code.to_int()
   if index < table.length() {
@@ -3197,6 +3272,32 @@ fn base64_decode_core(
   let out = FixedArray::make(out_len, b' ')
   let mut i = 0
   let mut out_index = 0
+  // Fast path: four alphabet characters at a time, which is the common case
+  // for well-formed base64. Invalid or padded groups fall back below.
+  while i + 4 <= length {
+    let first_code = view.unsafe_get(i).to_int()
+    let second_code = view.unsafe_get(i + 1).to_int()
+    let third_code = view.unsafe_get(i + 2).to_int()
+    let fourth_code = view.unsafe_get(i + 3).to_int()
+    if first_code >= 256 ||
+      second_code >= 256 ||
+      third_code >= 256 ||
+      fourth_code >= 256 {
+      break
+    }
+    let first = table[first_code]
+    let second = table[second_code]
+    let third = table[third_code]
+    let fourth = table[fourth_code]
+    if first < 0 || second < 0 || third < 0 || fourth < 0 {
+      break
+    }
+    out[out_index] = ((first << 2) | (second >> 4)).to_byte()
+    out[out_index + 1] = (((second & 15) << 4) | (third >> 2)).to_byte()
+    out[out_index + 2] = (((third & 3) << 6) | fourth).to_byte()
+    i = i + 4
+    out_index = out_index + 3
+  }
   while i < length {
     let remaining = length - i
     let first = base64_table_value(table, view.unsafe_get(i))
@@ -3513,22 +3614,40 @@ fn parse_urlencoded_multi(source : StringView) -> Map[String, Array[String]] {
   while pos <= length {
     let mut end = pos
     let mut eq = -1
+    let mut key_escaped = false
+    let mut value_escaped = false
     while end < length {
       let code = source.unsafe_get(end)
       if code == ('&' : UInt16) {
         break
       }
-      if code == ('=' : UInt16) && eq < 0 {
-        eq = end
+      if code == ('=' : UInt16) {
+        if eq < 0 {
+          eq = end
+        }
+      } else if code == ('%' : UInt16) || code == ('+' : UInt16) {
+        if eq < 0 {
+          key_escaped = true
+        } else {
+          value_escaped = true
+        }
       }
       end = end + 1
     }
     if end > pos {
       let raw_key = if eq >= 0 { source[pos:eq] } else { source[pos:end] }
-      let value = if eq >= 0 { decode_url(source[eq + 1:end]) } else { "" }
+      let value = if eq >= 0 {
+        if value_escaped {
+          decode_url(source[eq + 1:end])
+        } else {
+          source[eq + 1:end].to_owned()
+        }
+      } else {
+        ""
+      }
       // A key with neither `%` nor `+` uses its raw spelling; escaped keys are
       // decoded before the lookup, since the map stores decoded spellings.
-      if !name_needs_raw(raw_key) {
+      if !key_escaped {
         match result.get_from_string(raw_key) {
           Some(values) => values.push(value)
           None => result.set(raw_key.to_owned(), [value])
@@ -3911,6 +4030,114 @@ pub fn Context::is_form(self : Context) -> Bool {
 }
 
 ///|
+/// The `name` and `filename` parameters of a `Content-Disposition` value,
+/// extracted in one pass. `filename` prefers a well-formed RFC 8187
+/// `filename*`, falling back to the plain parameter, matching
+/// `header_ext_parameter` followed by `header_parameter`.
+priv struct DispositionNames {
+  name : String
+  filename : String
+}
+
+///|
+fn disposition_names(value : StringView) -> DispositionNames {
+  let length = value.length()
+  let mut pos = 0
+  while pos < length && value.unsafe_get(pos) != (';' : UInt16) {
+    pos = pos + 1
+  }
+  let mut name : String? = None
+  let mut filename : String? = None
+  let mut filename_ext : String? = None
+  while pos < length {
+    pos = pos + 1
+    while pos < length &&
+      (value.unsafe_get(pos) == (' ' : UInt16) ||
+        value.unsafe_get(pos) == ('\t' : UInt16)) {
+      pos = pos + 1
+    }
+    let name_start = pos
+    while pos < length &&
+      value.unsafe_get(pos) != ('=' : UInt16) &&
+      value.unsafe_get(pos) != (';' : UInt16) {
+      pos = pos + 1
+    }
+    let attribute = trim_ascii_space(value[name_start:pos])
+    if pos < length && value.unsafe_get(pos) == ('=' : UInt16) {
+      pos = pos + 1
+      while pos < length &&
+        (value.unsafe_get(pos) == (' ' : UInt16) ||
+          value.unsafe_get(pos) == ('\t' : UInt16)) {
+        pos = pos + 1
+      }
+      let parsed : String? = if pos < length &&
+        value.unsafe_get(pos) == ('"' : UInt16) {
+        let quoted_start = pos + 1
+        let mut end = quoted_start
+        while end < length && value.unsafe_get(end) != ('"' : UInt16) {
+          end = end + 1
+        }
+        let result = value[quoted_start:end].to_owned()
+        pos = if end < length { end + 1 } else { end }
+        Some(result)
+      } else {
+        let value_start = pos
+        while pos < length && value.unsafe_get(pos) != (';' : UInt16) {
+          pos = pos + 1
+        }
+        Some(trim_ascii_space(value[value_start:pos]).to_owned())
+      }
+      if attribute.equal_ignore_ascii_case("name".view()) {
+        if name is None {
+          name = parsed
+        }
+      } else if attribute.equal_ignore_ascii_case("filename".view()) {
+        if filename is None {
+          filename = parsed
+        }
+      } else if attribute.equal_ignore_ascii_case("filename*".view()) {
+        if filename_ext is None {
+          filename_ext = parsed
+        }
+      }
+    }
+    while pos < length && value.unsafe_get(pos) != (';' : UInt16) {
+      pos = pos + 1
+    }
+  }
+  let plain_filename = match filename {
+    Some(value) => value
+    None => ""
+  }
+  let resolved_filename = match filename_ext {
+    Some(raw) => {
+      let raw_view = raw.view()
+      match raw_view.find("'") {
+        Some(first) =>
+          if raw_view[:first].equal_ignore_ascii_case("utf-8".view()) {
+            let rest = raw_view[first + 1:]
+            match rest.find("'") {
+              Some(second) => decode_url_path(rest[second + 1:])
+              None => plain_filename
+            }
+          } else {
+            plain_filename
+          }
+        None => plain_filename
+      }
+    }
+    None => plain_filename
+  }
+  {
+    name: match name {
+      Some(value) => value
+      None => ""
+    },
+    filename: resolved_filename,
+  }
+}
+
+///|
 /// Whether the request body is `multipart/form-data`.
 pub fn Context::is_multipart(self : Context) -> Bool {
   self.content_type() == "multipart/form-data"
@@ -4083,9 +4310,10 @@ fn find_terminated_delimiter(
 
 ///|
 /// Find the earliest position where either the CRLF-prefixed or the LF-prefixed
-/// part delimiter starts and is properly terminated. The two prefixed needles
-/// begin with different code units, so the earliest match of each can be
-/// searched independently and the smaller index picked.
+/// part delimiter starts and is properly terminated. Both needles are matched
+/// in a single forward pass; because the CRLF prefix is one byte longer, a CRLF
+/// match ending no later than an LF match also starts no later than it, so the
+/// first terminated completion in scan order is the earliest match.
 fn find_part_delimiter(
   view : StringView,
   crlf_delimiter : StringView,
@@ -4094,17 +4322,46 @@ fn find_part_delimiter(
   lf_table : Array[Int],
   start : Int32,
 ) -> Int32? {
-  let lf = find_terminated_delimiter(view, lf_delimiter, lf_table, start)
-  let crlf = find_terminated_delimiter(view, crlf_delimiter, crlf_table, start)
-  match lf {
-    Some(lf_index) =>
-      match crlf {
-        Some(crlf_index) =>
-          Some(if crlf_index < lf_index { crlf_index } else { lf_index })
-        None => Some(lf_index)
-      }
-    None => crlf
+  let lf_length = lf_delimiter.length()
+  if lf_length == 0 {
+    return Some(start)
   }
+  let crlf_length = crlf_delimiter.length()
+  let length = view.length()
+  let mut lf_matched = 0
+  let mut crlf_matched = 0
+  let mut index = start
+  while index < length {
+    let code = view.unsafe_get(index)
+    while crlf_matched > 0 && code != crlf_delimiter.unsafe_get(crlf_matched) {
+      crlf_matched = crlf_table[crlf_matched - 1]
+    }
+    if code == crlf_delimiter.unsafe_get(crlf_matched) {
+      crlf_matched = crlf_matched + 1
+    }
+    if crlf_matched == crlf_length {
+      let match_start = index + 1 - crlf_length
+      if delimiter_is_terminated(view, index + 1) {
+        return Some(match_start)
+      }
+      crlf_matched = crlf_table[crlf_matched - 1]
+    }
+    while lf_matched > 0 && code != lf_delimiter.unsafe_get(lf_matched) {
+      lf_matched = lf_table[lf_matched - 1]
+    }
+    if code == lf_delimiter.unsafe_get(lf_matched) {
+      lf_matched = lf_matched + 1
+    }
+    if lf_matched == lf_length {
+      let match_start = index + 1 - lf_length
+      if delimiter_is_terminated(view, index + 1) {
+        return Some(match_start)
+      }
+      lf_matched = lf_table[lf_matched - 1]
+    }
+    index = index + 1
+  }
+  None
 }
 
 ///|
@@ -4261,7 +4518,21 @@ fn header_ext_parameter(value : StringView, name : String) -> String? {
 }
 
 ///|
+/// Most recently parsed `Content-Type` value and the boundary it resolved to.
+/// A single client reuses one content type across multipart requests, so the
+/// repeated parameter parse is worth memoizing.
+let last_boundary_content_type : Ref[String?] = Ref(None)
+let last_boundary_value : Ref[String?] = Ref(None)
+
+///|
 pub fn multipart_boundary(content_type : String) -> String? {
+  match last_boundary_content_type.val {
+    Some(cached) =>
+      if physical_equal(cached, content_type) {
+        return last_boundary_value.val
+      }
+    None => ()
+  }
   let view = content_type.view()
   let length = view.length()
   let mut pos = 0
@@ -4269,11 +4540,14 @@ pub fn multipart_boundary(content_type : String) -> String? {
     pos = pos + 1
   }
   let media_type = trim_ascii_space(view[:pos])
-  if media_type.equal_ignore_ascii_case("multipart/form-data".view()) {
+  let result = if media_type.equal_ignore_ascii_case("multipart/form-data".view()) {
     header_parameter(view, "boundary")
   } else {
     None
   }
+  last_boundary_content_type.val = Some(content_type)
+  last_boundary_value.val = result
+  result
 }
 
 ///|
@@ -4723,17 +4997,12 @@ pub fn parse_multipart(
     } else {
       get_header_ignore_case(headers, "Content-Disposition")
     }
-    let name = match disposition {
-      Some(disposition) => header_parameter(disposition.view(), "name").unwrap_or("")
-      None => ""
-    }
-    let filename = match disposition {
-      Some(disposition) =>
-        match header_ext_parameter(disposition.view(), "filename") {
-          Some(filename) => filename
-          None => header_parameter(disposition.view(), "filename").unwrap_or("")
-        }
-      None => ""
+    let (name, filename) = match disposition {
+      Some(disposition) => {
+        let names = disposition_names(disposition.view())
+        (names.name, names.filename)
+      }
+      None => ("", "")
     }
     let part_content_type = if content_type_matches == 1 {
       tracked_content_type.unwrap_or("")
