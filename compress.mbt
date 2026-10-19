@@ -90,17 +90,22 @@ fn content_type_is_compressible(content_type : StringView) -> Bool {
   if starts_with_ignore_ascii_case(value, "text/".view()) {
     return true
   }
-  let lower = if has_ascii_upper(value) {
-    value.to_lower().view()
+  if has_ascii_upper(value) {
+    let lower = value.to_lower().view()
+    lower == ("application/json" : StringView) ||
+    lower == ("application/javascript" : StringView) ||
+    lower == ("application/xml" : StringView) ||
+    lower == ("application/x-www-form-urlencoded" : StringView) ||
+    lower.has_suffix("+json") ||
+    lower.has_suffix("+xml")
   } else {
-    value
+    value == ("application/json" : StringView) ||
+    value == ("application/javascript" : StringView) ||
+    value == ("application/xml" : StringView) ||
+    value == ("application/x-www-form-urlencoded" : StringView) ||
+    value.has_suffix("+json") ||
+    value.has_suffix("+xml")
   }
-  lower == ("application/json" : StringView) ||
-  lower == ("application/javascript" : StringView) ||
-  lower == ("application/xml" : StringView) ||
-  lower == ("application/x-www-form-urlencoded" : StringView) ||
-  lower.has_suffix("+json") ||
-  lower.has_suffix("+xml")
 }
 
 let header_accept_encoding : @http.CaseInsensitiveString = @http.CaseInsensitiveString(

@@ -3233,7 +3233,8 @@ pub fn mime_type_for(path : String) -> String {
   if dot >= 0 {
     let extension = view[dot + 1:]
     if has_ascii_upper(extension) {
-      mime_for_extension(extension.to_lower().view())
+      let lower = extension.to_lower().view()
+      mime_for_extension(lower)
     } else {
       mime_for_extension(extension)
     }

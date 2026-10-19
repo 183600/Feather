@@ -15,11 +15,26 @@ pub fn App::etag(self : App) -> App {
 /// Append the FNV-1a hash of `data` to `builder` as 16 lowercase hex digits.
 fn write_fnv1a_hex(builder : StringBuilder, data : Bytes) -> Unit {
   let mut hash = 14695981039346656037UL
-  for byte in data {
-    hash = (hash ^ byte.to_uint64()) * 1099511628211UL
+  let len = data.length()
+  let mut i = 0
+  while i + 8 <= len {
+    let v = ((data[i].to_uint64()) << 56) |
+      ((data[i + 1].to_uint64()) << 48) |
+      ((data[i + 2].to_uint64()) << 40) |
+      ((data[i + 3].to_uint64()) << 32) |
+      ((data[i + 4].to_uint64()) << 24) |
+      ((data[i + 5].to_uint64()) << 16) |
+      ((data[i + 6].to_uint64()) << 8) |
+      (data[i + 7].to_uint64())
+    hash = (hash ^ v) * 1099511628211UL
+    i = i + 8
   }
-  for i = 0; i < 16; i = i + 1 {
-    let nibble = ((hash >> ((15 - i) * 4)) & 15UL).to_int()
+  while i < len {
+    hash = (hash ^ data[i].to_uint64()) * 1099511628211UL
+    i = i + 1
+  }
+  for j = 0; j < 16; j = j + 1 {
+    let nibble = ((hash >> ((15 - j) * 4)) & 15UL).to_int()
     builder.write_char(
       (if nibble < 10 {
         b'0'.to_int() + nibble
