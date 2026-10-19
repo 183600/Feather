@@ -713,26 +713,43 @@ async fn send_context_response(
 }
 
 ///|
-/// Run a middleware chain before an asynchronous endpoint starts.
+/// Terminal of every asynchronous middleware chain: records in the request
+/// state that the chain called through to the endpoint. It is a plain function
+/// so it can be shared by chains composed once instead of per request.
+fn async_chain_terminal(ctx : Context) -> Unit raise {
+  ctx.state.set(ASYNC_CHAIN_PASS_KEY, "1")
+}
+
+///|
+/// The application-level asynchronous middleware chain, composed once and
+/// cached, like the ordinary request chain in `App::handle`.
+fn App::async_middleware_chain(self : App) -> Handler {
+  match self.async_chain {
+    Some(chain) => chain
+    None => {
+      let chain = if self.middlewares.length() == 0 {
+        async_chain_terminal
+      } else {
+        apply_middleware(self.middlewares, async_chain_terminal)
+      }
+      self.async_chain = Some(chain)
+      chain
+    }
+  }
+}
+
+///|
+/// Run an already-composed middleware chain before an asynchronous endpoint
+/// starts.
 ///
 /// Middleware that short-circuits (for example an authenticator) answers the
 /// request instead of letting the endpoint start. Middleware that calls through
 /// lets the endpoint proceed; headers and cookies it added to the response are
 /// carried into SSE and streaming responses.
-fn run_async_middleware_chain(
-  middlewares : Array[Middleware],
-  ctx : Context,
-) -> Bool {
-  if middlewares.length() == 0 {
-    return true
-  }
+fn run_async_middleware_chain(chain : Handler, ctx : Context) -> Bool {
   // A previous chain (the application-level one) may have left its pass marker
   // behind; clear it so only a call-through in this chain counts.
   ctx.state.remove(ASYNC_CHAIN_PASS_KEY)
-  let terminal : Handler = fn(ctx) {
-    ctx.state.set(ASYNC_CHAIN_PASS_KEY, "1")
-  }
-  let chain = apply_middleware(middlewares, terminal)
   chain(ctx) catch {
     HttpError(status, message) => error_response(ctx, status, message)
     HttpErrorPayload(status, message, payload) =>
@@ -745,16 +762,17 @@ fn run_async_middleware_chain(
 ///|
 /// Run the application middleware chain, then any middleware attached to the
 /// matched asynchronous route (such as the mounted application's middleware).
-/// Returns `true` when both chains called through.
+/// Both chains were composed when the application or route was built. Returns
+/// `true` when both chains called through.
 fn App::run_async_middleware(
   self : App,
   ctx : Context,
-  route_middlewares : Array[Middleware],
+  route_chain : Handler,
 ) -> Bool {
-  if !run_async_middleware_chain(self.middlewares, ctx) {
+  if !run_async_middleware_chain(self.async_middleware_chain(), ctx) {
     return false
   }
-  run_async_middleware_chain(route_middlewares, ctx)
+  run_async_middleware_chain(route_chain, ctx)
 }
 
 ///|
@@ -1271,14 +1289,19 @@ async fn handle_static(
     match ctx.file_response() {
       Some(file) => send_file_response(conn, ctx.response, file, head, request)
       None => {
-        if !precondition_fails_early_http(request, ctx.response) {
+        let (input, allows_not_modified) = precondition_input_http(request)
+        if !precondition_fails_before_compression(
+          input,
+          allows_not_modified,
+          ctx.response,
+        ) {
           if app.compress_enabled {
             compress_response(request, ctx.response, app.compress_min_size)
           }
           if app.etag_enabled {
             apply_etag(ctx.response)
           }
-          apply_preconditions(request, ctx.response)
+          apply_preconditions_input(input, allows_not_modified, ctx.response)
         }
         send_response(conn, ctx.response, head)
       }
@@ -1304,14 +1327,19 @@ async fn build_response(
   }
   let file = ctx.file_response()
   if file is None {
-    if !precondition_fails_early_http(request, ctx.response) {
+    let (input, allows_not_modified) = precondition_input_http(request)
+    if !precondition_fails_before_compression(
+      input,
+      allows_not_modified,
+      ctx.response,
+    ) {
       if app.compress_enabled {
         compress_response(request, ctx.response, app.compress_min_size)
       }
       if app.etag_enabled {
         apply_etag(ctx.response)
       }
-      apply_preconditions(request, ctx.response)
+      apply_preconditions_input(input, allows_not_modified, ctx.response)
     }
   }
   (ctx.response, file)
@@ -1325,7 +1353,7 @@ async fn handle_websocket(
   conn : @http.ServerConnection,
   handler : WebSocketHandler,
   params : Map[String, String],
-  route_middlewares : Array[Middleware],
+  route_chain : Handler,
 ) -> Unit {
   let req = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
@@ -1347,7 +1375,7 @@ async fn handle_websocket(
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
   }
-  if !app.run_async_middleware(ctx, route_middlewares) {
+  if !app.run_async_middleware(ctx, route_chain) {
     send_context_response(conn, ctx, false, request)
     return
   }
@@ -1374,7 +1402,7 @@ async fn handle_sse(
   conn : @http.ServerConnection,
   handler : SseHandler,
   params : Map[String, String],
-  route_middlewares : Array[Middleware],
+  route_chain : Handler,
 ) -> Unit {
   let req = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
@@ -1396,7 +1424,7 @@ async fn handle_sse(
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
   }
-  if !app.run_async_middleware(ctx, route_middlewares) {
+  if !app.run_async_middleware(ctx, route_chain) {
     send_context_response(conn, ctx, false, request)
     return
   }
@@ -1450,7 +1478,7 @@ async fn handle_stream(
   conn : @http.ServerConnection,
   handler : StreamHandler,
   params : Map[String, String],
-  route_middlewares : Array[Middleware],
+  route_chain : Handler,
 ) -> Unit {
   let req = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
@@ -1472,7 +1500,7 @@ async fn handle_stream(
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
   }
-  if !app.run_async_middleware(ctx, route_middlewares) {
+  if !app.run_async_middleware(ctx, route_chain) {
     send_context_response(conn, ctx, false, request)
     return
   }

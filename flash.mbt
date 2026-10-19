@@ -81,7 +81,7 @@ fn flash_pending_bytes(pending : Map[String, Array[String]]) -> Int {
 ///|
 /// Decode the messages stored in the session under `key`.
 fn Context::flash_messages(self : Context, key : String) -> Array[String] {
-  match self.session {
+  match self.session_materialized() {
     Some(session) =>
       match session.data.get(key) {
         Some(text) => flash_decode(text)
@@ -151,7 +151,7 @@ pub fn Context::flash(
   message : String,
   category~ : String = FLASH_DEFAULT_CATEGORY,
 ) -> Bool {
-  match self.session {
+  match self.session_materialized() {
     Some(session) => {
       let pending = session.flash_pending_map()
       let messages = match pending.get(category) {
@@ -181,7 +181,7 @@ pub fn Context::flash_take(
   self : Context,
   category~ : String = FLASH_DEFAULT_CATEGORY,
 ) -> Array[String] {
-  match self.session {
+  match self.session_materialized() {
     Some(session) => {
       let key = FLASH_PREFIX + category
       let mut taken : Array[String]? = None
@@ -219,7 +219,7 @@ pub fn Context::flash_take(
 /// map is empty when there is no session or nothing was queued.
 pub fn Context::flash_take_all(self : Context) -> Map[String, Array[String]] {
   let result : Map[String, Array[String]] = Map([], capacity=4)
-  match self.session {
+  match self.session_materialized() {
     Some(session) => {
       let categories : Array[String] = []
       match session.flash_pending {
@@ -273,7 +273,7 @@ pub fn Context::flash_peek(
   self : Context,
   category~ : String = FLASH_DEFAULT_CATEGORY,
 ) -> Array[String] {
-  match self.session {
+  match self.session_materialized() {
     Some(session) =>
       match session.flash_pending {
         Some(pending) =>

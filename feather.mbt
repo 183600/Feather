@@ -110,7 +110,7 @@ pub(all) struct Router {
   trees : Map[String, RouteNode]
   named : Map[String, NamedRoute]
   dynamic_caches : Map[String, Map[String, (RouteNode, Map[String, String]?, String)]]
-  miss_caches : Map[String, Map[String, Array[String]]]
+  miss_caches : Map[String, Map[String, String]]
 }
 
 ///|
@@ -870,16 +870,18 @@ fn bind_route_params(
 ///|
 priv enum DispatchMatch {
   DispatchFound(RouteNode, Map[String, String]?, String)
-  DispatchMethods(Array[String])
+  DispatchMethods(String)
   DispatchMissing
 }
 
 ///|
+/// The cached `Allow` header value for a method/path pair that has no route.
+/// An empty string records that no method matches the path at all.
 fn Router::find_miss_cache(
   self : Router,
   meth : String,
   clean_path : StringView,
-) -> Array[String]? {
+) -> String? {
   match self.miss_caches.get(meth) {
     Some(cache) => cache.get_from_string(clean_path)
     None => None
@@ -891,12 +893,12 @@ fn Router::remember_miss(
   self : Router,
   meth : String,
   clean_path : StringView,
-  allowed : Array[String],
+  allow : String,
 ) -> Unit {
   let cache = match self.miss_caches.get(meth) {
     Some(cache) => cache
     None => {
-      let cache : Map[String, Array[String]] = Map([], capacity=16)
+      let cache : Map[String, String] = Map([], capacity=16)
       self.miss_caches.set(meth, cache)
       cache
     }
@@ -905,7 +907,7 @@ fn Router::remember_miss(
     // Same clear-and-restart policy as the dynamic dispatch caches.
     cache.clear()
   }
-  cache.set(clean_path.to_owned(), allowed)
+  cache.set(clean_path.to_owned(), allow)
 }
 
 ///|
@@ -918,9 +920,9 @@ fn Router::match_dispatch(
     Some(hit) => DispatchFound(hit.0, hit.1, hit.2)
     None =>
       match self.find_miss_cache(meth, clean_path) {
-        Some(allowed) =>
-          if allowed.length() > 0 {
-            DispatchMethods(allowed)
+        Some(allow) =>
+          if allow != "" {
+            DispatchMethods(allow)
           } else {
             DispatchMissing
           }
@@ -933,9 +935,10 @@ fn Router::match_dispatch(
           } else {
             self.allowed_methods(clean_path)
           }
-          self.remember_miss(meth, clean_path, allowed)
-          if allowed.length() > 0 {
-            DispatchMethods(allowed)
+          let allow = allow_header_value(allowed)
+          self.remember_miss(meth, clean_path, allow)
+          if allow != "" {
+            DispatchMethods(allow)
           } else {
             DispatchMissing
           }
@@ -1043,11 +1046,11 @@ pub fn Router::dispatch_with(
         None => not_found(ctx)
       }
     }
-    DispatchMethods(methods) =>
+    DispatchMethods(allow) =>
       if meth == "OPTIONS" {
-        respond_options(ctx, methods)
+        respond_options_with_allow(ctx, allow)
       } else {
-        method_not_allowed(ctx, methods)
+        method_not_allowed_with_allow(ctx, allow)
       }
     DispatchMissing =>
       match fallback {
@@ -1067,24 +1070,34 @@ pub fn not_found(ctx : Context) -> Unit {
 }
 
 ///|
-pub fn method_not_allowed(ctx : Context, allowed : Array[String]) -> Unit {
+fn method_not_allowed_with_allow(ctx : Context, allow : String) -> Unit {
   ctx.file = None
   ctx.response.status = 405
-  ctx.response.headers.set("Allow", allow_header_value(allowed))
+  ctx.response.headers.set("Allow", allow)
   ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
   ctx.response.data = None
   ctx.response.body = "405 Method Not Allowed"
 }
 
 ///|
+pub fn method_not_allowed(ctx : Context, allowed : Array[String]) -> Unit {
+  method_not_allowed_with_allow(ctx, allow_header_value(allowed))
+}
+
+///|
+fn respond_options_with_allow(ctx : Context, allow : String) -> Unit {
+  ctx.file = None
+  ctx.response.status = 204
+  ctx.response.headers.set("Allow", allow)
+  ctx.response.data = None
+  ctx.response.body = ""
+}
+
+///|
 /// Answer an `OPTIONS` request for a path that exists under other methods with
 /// `204 No Content` and an `Allow` header, without running any handler.
 pub fn respond_options(ctx : Context, allowed : Array[String]) -> Unit {
-  ctx.file = None
-  ctx.response.status = 204
-  ctx.response.headers.set("Allow", allow_header_value(allowed))
-  ctx.response.data = None
-  ctx.response.body = ""
+  respond_options_with_allow(ctx, allow_header_value(allowed))
 }
 
 ///|
@@ -1567,6 +1580,16 @@ const PARSE_CACHE_MAX_KEY : Int = 4096
 let cache_clock : Ref[Int] = Ref(0)
 
 ///|
+/// How many entries an eviction samples before dropping the oldest one seen.
+/// Sampling keeps eviction O(1) instead of scanning the whole recency map.
+const CACHE_EVICT_SAMPLE : Int = 4
+
+///|
+/// Refresh a hit entry's recency tick only once the clock has moved this far
+/// past it, so a hot key does not rewrite its tick on every access.
+const CACHE_TOUCH_INTERVAL : Int = 16
+
+///|
 /// Return a fresh tick, marking the entry that uses it as most recent.
 fn cache_advance() -> Int {
   cache_clock.val = cache_clock.val + 1
@@ -1574,17 +1597,32 @@ fn cache_advance() -> Int {
 }
 
 ///|
-/// Record `key` as the most recently used entry of a bounded cache.
+/// Record `key` as recently used, skipping the map write while its recorded
+/// tick is still close to the current clock.
 fn[K : Hash + Eq] cache_touch(ages : Map[K, Int], key : K) -> Unit {
+  let now = cache_clock.val
+  match ages.get(key) {
+    Some(tick) =>
+      if now - tick < CACHE_TOUCH_INTERVAL {
+        return
+      }
+    None => ()
+  }
   ages.set(key, cache_advance())
 }
 
 ///|
-/// Evict the least recently used entry of a bounded cache.
+/// Evict one entry, sampling a few candidates and dropping the one with the
+/// oldest tick. The victim is approximate rather than exact LRU, but the
+/// eviction cost is bounded by the sample size instead of the cache size.
 fn[K : Hash + Eq, V] cache_evict(cache : Map[K, V], ages : Map[K, Int]) -> Unit {
   let mut oldest : K? = None
   let mut oldest_tick = 0
+  let mut sampled = 0
   for key, tick in ages {
+    if sampled >= CACHE_EVICT_SAMPLE {
+      break
+    }
     let replace = match oldest {
       None => true
       Some(_) => tick < oldest_tick
@@ -1593,6 +1631,7 @@ fn[K : Hash + Eq, V] cache_evict(cache : Map[K, V], ages : Map[K, Int]) -> Unit 
       oldest = Some(key)
       oldest_tick = tick
     }
+    sampled = sampled + 1
   }
   match oldest {
     Some(key) => {
@@ -1877,12 +1916,13 @@ fn copy_multipart_part(part : MultipartPart) -> MultipartPart {
 }
 
 ///|
-/// Copy a parsed multipart result so callers get their own array and header
-/// maps.
+/// Copy a parsed multipart result so callers get their own top-level array.
+/// The parts and their header maps are shared with the parse cache and must be
+/// treated as read-only.
 fn copy_multipart_parts(parts : Array[MultipartPart]) -> Array[MultipartPart] {
   let copy : Array[MultipartPart] = Array(capacity=parts.length())
   for part in parts {
-    copy.push(copy_multipart_part(part))
+    copy.push(part)
   }
   copy
 }
@@ -1918,12 +1958,14 @@ fn multipart_parts_lookup(
 }
 
 ///|
+/// The parsed `Cookie` header, keyed by name. The result is the cached parse;
+/// treat it as read-only instead of mutating it.
 pub fn Context::cookies(self : Context) -> Map[String, String] {
   let header = self.header("Cookie")
   if header == "" {
-    return Map([], capacity=8)
+    return Map([])
   }
-  cookie_map_lookup(header).copy()
+  cookie_map_lookup(header)
 }
 
 ///|
@@ -3467,11 +3509,13 @@ pub fn Context::form_default(
 }
 
 ///|
+/// The parsed query string, keyed by name. The result is the cached parse;
+/// treat it as read-only instead of mutating it.
 pub fn Context::queries(self : Context) -> Map[String, String] {
   let path = self.request.path
   match path_query_index(path) {
-    Some(index) => query_map_lookup(path, index).copy()
-    None => Map([], capacity=0)
+    Some(index) => query_map_lookup(path, index)
+    None => Map([])
   }
 }
 
@@ -3512,7 +3556,8 @@ fn collect_values(source : StringView, name : String) -> Array[String] {
 
 ///|
 /// Collect every value of a possibly repeated query parameter, in the order
-/// they appear in the query string.
+/// they appear in the query string. The result is the cached parse; treat it
+/// as read-only instead of mutating it.
 pub fn Context::query_values(self : Context, name : String) -> Array[String] {
   match path_query_index(self.request.path) {
     Some(index) =>
@@ -3520,7 +3565,7 @@ pub fn Context::query_values(self : Context, name : String) -> Array[String] {
         collect_values(self.request.path[index + 1:].view(), name)
       } else {
         match query_multi_lookup(self.request.path, index).get(name) {
-          Some(values) => values.copy()
+          Some(values) => values
           None => []
         }
       }
@@ -3533,7 +3578,8 @@ pub fn Context::query_values(self : Context, name : String) -> Array[String] {
 /// order they appear in the request body.
 ///
 /// Returns an empty array when the body is not
-/// `application/x-www-form-urlencoded`.
+/// `application/x-www-form-urlencoded`. The result is the cached parse; treat
+/// it as read-only instead of mutating it.
 pub fn Context::form_values(self : Context, name : String) -> Array[String] {
   if !self.is_form() {
     return []
@@ -3542,18 +3588,20 @@ pub fn Context::form_values(self : Context, name : String) -> Array[String] {
     collect_values(self.request.body.view(), name)
   } else {
     match form_values_lookup(self.request.body).get(name) {
-      Some(values) => values.copy()
+      Some(values) => values
       None => []
     }
   }
 }
 
 ///|
+/// The parsed url-encoded form body, keyed by name. The result is the cached
+/// parse; treat it as read-only instead of mutating it.
 pub fn Context::form_map(self : Context) -> Map[String, String] {
   if !self.is_form() {
-    return Map([], capacity=0)
+    return Map([])
   }
-  form_map_lookup(self.request.body).copy()
+  form_map_lookup(self.request.body)
 }
 
 ///|
@@ -3722,27 +3770,37 @@ fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
 }
 
 ///|
-/// Whether `needle` starts at `index` in `view`. The caller guarantees
-/// `index + needle.length() <= view.length()`.
-fn view_matches_at(view : StringView, needle : StringView, index : Int) -> Bool {
+/// Prefix-function table for the linear-time delimiter scans below: entry `i`
+/// is the length of the longest proper prefix of `needle[:i+1]` that is also a
+/// suffix of it. Building the table costs O(needle.length()).
+fn delimiter_match_table(needle : StringView) -> Array[Int] {
   let length = needle.length()
-  let mut i = 0
-  while i < length {
-    if view.unsafe_get(index + i) != needle.unsafe_get(i) {
-      return false
+  let table : Array[Int] = Array::make(length, 0)
+  let mut matched = 0
+  let mut index = 1
+  while index < length {
+    while matched > 0 && needle.unsafe_get(index) != needle.unsafe_get(matched) {
+      matched = table[matched - 1]
     }
-    i = i + 1
+    if needle.unsafe_get(index) == needle.unsafe_get(matched) {
+      matched = matched + 1
+    }
+    table[index] = matched
+    index = index + 1
   }
-  true
+  table
 }
 
 ///|
 /// First index at or after `start` where `needle` appears and is terminated by
-/// whitespace, a line break or `--`. A single forward scan visits each position
-/// at most once.
+/// whitespace, a line break or `--`. The precomputed prefix-function `table`
+/// lets a single forward scan skip over failed prefixes, so the total cost
+/// stays O(view.length()) even when the body and the needle share long
+/// repeated prefixes (e.g. attacker-chosen multipart boundaries).
 fn find_terminated_delimiter(
   view : StringView,
   needle : StringView,
+  table : Array[Int],
   start : Int32,
 ) -> Int32? {
   let needle_length = needle.length()
@@ -3750,53 +3808,52 @@ fn find_terminated_delimiter(
     return Some(start)
   }
   let length = view.length()
-  let last = length - needle_length
-  if start > last {
-    return None
-  }
-  let first = needle.unsafe_get(0)
-  let mut i = start
-  while i <= last {
-    if view.unsafe_get(i) == first &&
-      view_matches_at(view, needle, i) &&
-      delimiter_is_terminated(view, i + needle_length) {
-      return Some(i)
+  let mut matched = 0
+  let mut index = start
+  while index < length {
+    let code = view.unsafe_get(index)
+    while matched > 0 && code != needle.unsafe_get(matched) {
+      matched = table[matched - 1]
     }
-    i = i + 1
+    if code == needle.unsafe_get(matched) {
+      matched = matched + 1
+    }
+    if matched == needle_length {
+      let match_start = index + 1 - needle_length
+      if delimiter_is_terminated(view, index + 1) {
+        return Some(match_start)
+      }
+      matched = table[matched - 1]
+    }
+    index = index + 1
   }
   None
 }
 
 ///|
 /// Find the earliest position where either the CRLF-prefixed or the LF-prefixed
-/// part delimiter starts and is properly terminated. A single forward scan
-/// serves both needles.
+/// part delimiter starts and is properly terminated. The two prefixed needles
+/// begin with different code units, so the earliest match of each can be
+/// searched independently in linear time and the smaller index picked.
 fn find_part_delimiter(
   view : StringView,
   crlf_delimiter : StringView,
   lf_delimiter : StringView,
+  crlf_table : Array[Int],
+  lf_table : Array[Int],
   start : Int32,
 ) -> Int32? {
-  let crlf_length = crlf_delimiter.length()
-  let lf_length = lf_delimiter.length()
-  let length = view.length()
-  let last = length - (if crlf_length < lf_length { crlf_length } else { lf_length })
-  let mut i = start
-  while i <= last {
-    let code = view.unsafe_get(i)
-    if code == ('\n' : UInt16) && i + lf_length <= length &&
-      view_matches_at(view, lf_delimiter, i) &&
-      delimiter_is_terminated(view, i + lf_length) {
-      return Some(i)
-    }
-    if code == ('\r' : UInt16) && i + crlf_length <= length &&
-      view_matches_at(view, crlf_delimiter, i) &&
-      delimiter_is_terminated(view, i + crlf_length) {
-      return Some(i)
-    }
-    i = i + 1
+  let lf = find_terminated_delimiter(view, lf_delimiter, lf_table, start)
+  let crlf = find_terminated_delimiter(view, crlf_delimiter, crlf_table, start)
+  match lf {
+    Some(lf_index) =>
+      match crlf {
+        Some(crlf_index) =>
+          Some(if crlf_index < lf_index { crlf_index } else { lf_index })
+        None => Some(lf_index)
+      }
+    None => crlf
   }
-  None
 }
 
 ///|
@@ -3994,13 +4051,17 @@ fn header_name_lower(name : String) -> String {
 }
 
 ///|
-fn header_index_for(headers : Map[String, String]) -> Map[String, String] {
+/// The lower-cased name index for `headers`, plus whether it was built during
+/// this call (in which case it reflects the map's current contents exactly).
+fn header_index_for(
+  headers : Map[String, String],
+) -> (Map[String, String], Bool) {
   match last_header_index_map.val {
     Some(cached) =>
       if physical_equal(cached, headers) &&
         last_header_index_size.val == headers.length() {
         match last_header_index.val {
-          Some(index) => return index
+          Some(index) => return (index, false)
           None => ()
         }
       }
@@ -4016,7 +4077,7 @@ fn header_index_for(headers : Map[String, String]) -> Map[String, String] {
   last_header_index_map.val = Some(headers)
   last_header_index_size.val = headers.length()
   last_header_index.val = Some(index)
-  index
+  (index, true)
 }
 
 ///|
@@ -4028,7 +4089,7 @@ fn get_header_ignore_case(
     Some(value) => return Some(value)
     None => ()
   }
-  let index = header_index_for(headers)
+  let (index, fresh) = header_index_for(headers)
   let lower = header_name_lower(name)
   match index.get(lower) {
     Some(actual) =>
@@ -4036,10 +4097,17 @@ fn get_header_ignore_case(
         Some(value) => return Some(value)
         None => ()
       }
-    None => ()
+    None =>
+      // The index was built from the current contents, so a miss there means
+      // no spelling of `name` is present.
+      if fresh {
+        return None
+      }
   }
+  // `cached_header_spelling` ends with the same linear scan this function used
+  // to repeat, so a `None` from it already proves the header is absent.
   match cached_header_spelling(headers, name) {
-    Some(actual) => {
+    Some(actual) =>
       match headers.get(actual) {
         Some(value) => {
           index.set(lower, actual)
@@ -4047,17 +4115,7 @@ fn get_header_ignore_case(
         }
         None => ()
       }
-    }
-    None => ()
-  }
-  let target = name.view()
-  let target_length = target.length()
-  for key, value in headers {
-    if key.length() == target_length &&
-      key.view().equal_ignore_ascii_case(target) {
-      index.set(lower, key)
-      return Some(value)
-    }
+    None => return None
   }
   None
 }
@@ -4234,8 +4292,12 @@ pub fn parse_multipart(
   let crlf_delimiter_view = crlf_delimiter.view()
   let lf_delimiter = "\n" + delimiter
   let lf_delimiter_view = lf_delimiter.view()
+  let delimiter_table = delimiter_match_table(delimiter_view)
+  let crlf_delimiter_table = delimiter_match_table(crlf_delimiter_view)
+  let lf_delimiter_table = delimiter_match_table(lf_delimiter_view)
   let view = body.view()
-  let mut pos = match find_terminated_delimiter(view, delimiter_view, 0) {
+  let mut pos = match
+    find_terminated_delimiter(view, delimiter_view, delimiter_table, 0) {
     Some(index) => index + delimiter_length
     None => return Some([])
   }
@@ -4254,6 +4316,8 @@ pub fn parse_multipart(
       view,
       crlf_delimiter_view,
       lf_delimiter_view,
+      crlf_delimiter_table,
+      lf_delimiter_table,
       pos,
     ) {
       Some(index) => index
@@ -4329,6 +4393,9 @@ pub fn parse_multipart(
 }
 
 ///|
+/// The parsed multipart body. The result array is a copy, but its parts and
+/// their header maps are shared with the parse cache and must be treated as
+/// read-only.
 pub fn Context::multipart(self : Context) -> Array[MultipartPart] {
   if !self.is_multipart() {
     return []
@@ -5378,21 +5445,24 @@ pub struct App {
   mut timeout : Int32
   mut chain : Handler?
   mut static_chain : Handler?
+  mut async_chain : Handler?
   static_mounts : Array[StaticMount]
   mut no_route_handler : Handler?
   ws_router : Router
   ws_handlers : Map[String, WebSocketHandler]
-  ws_middlewares : Map[String, Array[Middleware]]
+  ws_middlewares : Map[String, Handler]
   sse_router : Router
   sse_handlers : Map[String, SseHandler]
-  sse_middlewares : Map[String, Array[Middleware]]
+  sse_middlewares : Map[String, Handler]
   stream_router : Router
   stream_handlers : Map[String, StreamHandler]
-  stream_middlewares : Map[String, Array[Middleware]]
+  stream_middlewares : Map[String, Handler]
   mut compress_enabled : Bool
   mut compress_min_size : Int32
   mut etag_enabled : Bool
   static_lookup_cache : Map[String, (String, String, Bool)?]
+  static_lookup_negative : Array[String]
+  mut static_lookup_negative_head : Int
 }
 
 ///|
@@ -5406,6 +5476,7 @@ fn App::fresh(timeout : Int32) -> App {
     timeout,
     chain: None,
     static_chain: None,
+    async_chain: None,
     static_mounts: [],
     no_route_handler: None,
     ws_router: create_router(),
@@ -5421,6 +5492,8 @@ fn App::fresh(timeout : Int32) -> App {
     compress_min_size: 1024,
     etag_enabled: false,
     static_lookup_cache: Map([]),
+    static_lookup_negative: [],
+    static_lookup_negative_head: 0,
   }
 }
 
@@ -5434,6 +5507,7 @@ pub fn App::use(self : App, middleware : Middleware) -> App {
   self.middlewares.push(middleware)
   self.chain = None
   self.static_chain = None
+  self.async_chain = None
   self
 }
 
@@ -5512,7 +5586,7 @@ pub fn App::websocket(
   let clean_path = clean_route_path(path)
   self.ws_router.add_route("GET", clean_path, fn(_ctx) { () })
   self.ws_handlers.set(clean_path, handler)
-  self.ws_middlewares.set(clean_path, [])
+  self.ws_middlewares.set(clean_path, async_chain_terminal)
   self
 }
 
@@ -5540,7 +5614,7 @@ pub fn App::sse(self : App, path : String, handler : SseHandler) -> App {
   let clean_path = clean_route_path(path)
   self.sse_router.add_route("GET", clean_path, fn(_ctx) { () })
   self.sse_handlers.set(clean_path, handler)
-  self.sse_middlewares.set(clean_path, [])
+  self.sse_middlewares.set(clean_path, async_chain_terminal)
   self
 }
 
@@ -5567,7 +5641,7 @@ pub fn App::resolve_sse(
 fn App::resolve_sse_full(
   self : App,
   path : String,
-) -> (SseHandler, Map[String, String], Array[Middleware])? {
+) -> (SseHandler, Map[String, String], Handler)? {
   if self.sse_handlers.is_empty() {
     return None
   }
@@ -5584,8 +5658,8 @@ fn App::resolve_sse_full(
               None => Map([], capacity=0)
             },
             match self.sse_middlewares.get(node.route_path) {
-              Some(middlewares) => middlewares
-              None => []
+              Some(chain) => chain
+              None => async_chain_terminal
             },
           ))
         None => None
@@ -5609,7 +5683,7 @@ pub fn App::resolve_websocket(
 fn App::resolve_websocket_full(
   self : App,
   path : String,
-) -> (WebSocketHandler, Map[String, String], Array[Middleware])? {
+) -> (WebSocketHandler, Map[String, String], Handler)? {
   if self.ws_handlers.is_empty() {
     return None
   }
@@ -5624,8 +5698,8 @@ fn App::resolve_websocket_full(
               None => Map([], capacity=0)
             },
             match self.ws_middlewares.get(node.route_path) {
-              Some(middlewares) => middlewares
-              None => []
+              Some(chain) => chain
+              None => async_chain_terminal
             },
           ))
         None => None
@@ -5655,7 +5729,7 @@ pub fn App::stream(self : App, path : String, handler : StreamHandler) -> App {
   let clean_path = clean_route_path(path)
   self.stream_router.add_route("GET", clean_path, fn(_ctx) { () })
   self.stream_handlers.set(clean_path, handler)
-  self.stream_middlewares.set(clean_path, [])
+  self.stream_middlewares.set(clean_path, async_chain_terminal)
   self
 }
 
@@ -5682,7 +5756,7 @@ pub fn App::resolve_stream(
 fn App::resolve_stream_full(
   self : App,
   path : String,
-) -> (StreamHandler, Map[String, String], Array[Middleware])? {
+) -> (StreamHandler, Map[String, String], Handler)? {
   if self.stream_handlers.is_empty() {
     return None
   }
@@ -5697,8 +5771,8 @@ fn App::resolve_stream_full(
               None => Map([], capacity=0)
             },
             match self.stream_middlewares.get(node.route_path) {
-              Some(middlewares) => middlewares
-              None => []
+              Some(chain) => chain
+              None => async_chain_terminal
             },
           ))
         None => None
@@ -5826,6 +5900,8 @@ pub fn App::static_files(
     precompressed,
   })
   self.static_lookup_cache.clear()
+  self.static_lookup_negative.clear()
+  self.static_lookup_negative_head = 0
   self
 }
 
@@ -5860,23 +5936,19 @@ fn collect_route_nodes(
 }
 
 ///|
-/// Snapshot the middleware chain an asynchronous route needs after being
-/// mounted: the child application's own middleware first, then any middleware
-/// that was attached to the route when the child itself mounted another app.
-fn mounted_middlewares(
+/// Wrap an asynchronous route's pre-composed middleware chain with the
+/// middlewares of the application being mounted, once at mount time. The child
+/// application's own middlewares run outermost, matching the order a directly
+/// registered route would see.
+fn mounted_route_chain(
   outer : Array[Middleware],
-  per_route : Map[String, Array[Middleware]],
-  path : String,
-) -> Array[Middleware] {
-  let combined = outer.copy()
-  match per_route.get(path) {
-    Some(middlewares) =>
-      for middleware in middlewares {
-        combined.push(middleware)
-      }
-    None => ()
+  route_chain : Handler,
+) -> Handler {
+  if outer.length() == 0 {
+    route_chain
+  } else {
+    apply_middleware(outer, route_chain)
   }
-  combined
 }
 
 ///|
@@ -5918,13 +5990,18 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
     })
   }
   self.static_lookup_cache.clear()
+  self.static_lookup_negative.clear()
+  self.static_lookup_negative_head = 0
   for path, handler in child.ws_handlers {
     let mounted = join_paths(base, path)
     self.ws_router.add_route("GET", mounted, fn(_ctx) { () })
     self.ws_handlers.set(mounted, handler)
     self.ws_middlewares.set(
       mounted,
-      mounted_middlewares(child.middlewares, child.ws_middlewares, path),
+      mounted_route_chain(
+        child.middlewares,
+        child.ws_middlewares.get(path).unwrap_or(async_chain_terminal),
+      ),
     )
   }
   for path, handler in child.sse_handlers {
@@ -5933,7 +6010,10 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
     self.sse_handlers.set(mounted, handler)
     self.sse_middlewares.set(
       mounted,
-      mounted_middlewares(child.middlewares, child.sse_middlewares, path),
+      mounted_route_chain(
+        child.middlewares,
+        child.sse_middlewares.get(path).unwrap_or(async_chain_terminal),
+      ),
     )
   }
   for path, handler in child.stream_handlers {
@@ -5942,7 +6022,10 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
     self.stream_handlers.set(mounted, handler)
     self.stream_middlewares.set(
       mounted,
-      mounted_middlewares(child.middlewares, child.stream_middlewares, path),
+      mounted_route_chain(
+        child.middlewares,
+        child.stream_middlewares.get(path).unwrap_or(async_chain_terminal),
+      ),
     )
   }
   self.chain = None
@@ -5998,24 +6081,51 @@ fn App::best_static_mount(
 const STATIC_LOOKUP_CACHE_LIMIT : Int = 256
 
 ///|
-/// Drop one entry from `static_lookup_cache`, preferring negative entries so
-/// repeated misses for files that do not exist cannot flush the hot hits.
+/// Drop one entry from `static_lookup_cache`. Keys still cached as negative
+/// results are drained from the FIFO first, so repeated misses for files that
+/// do not exist cannot flush the hot hits; the FIFO is keyed independently and
+/// stale keys are skipped. Falls back to evicting an arbitrary entry.
 fn App::static_lookup_evict(self : App) -> Unit {
-  let mut stale : String? = None
-  for key, value in self.static_lookup_cache {
-    if value is None {
-      stale = Some(key)
-      break
+  let queued = self.static_lookup_negative
+  let mut head = self.static_lookup_negative_head
+  while head < queued.length() {
+    let key = queued[head]
+    head = head + 1
+    match self.static_lookup_cache.get(key) {
+      Some(None) => {
+        ignore(self.static_lookup_cache.remove(key))
+        self.static_lookup_negative_head = head
+        if head == queued.length() {
+          queued.clear()
+          self.static_lookup_negative_head = 0
+        }
+        return
+      }
+      _ => ()
     }
   }
-  match stale {
-    Some(key) => ignore(self.static_lookup_cache.remove(key))
-    None =>
-      match self.static_lookup_cache.keys().next() {
-        Some(oldest) => ignore(self.static_lookup_cache.remove(oldest))
-        None => ()
-      }
+  queued.clear()
+  self.static_lookup_negative_head = 0
+  match self.static_lookup_cache.keys().next() {
+    Some(oldest) => ignore(self.static_lookup_cache.remove(oldest))
+    None => ()
   }
+}
+
+///|
+fn App::static_lookup_remember(
+  self : App,
+  clean : StringView,
+  result : (String, String, Bool)?,
+) -> Unit {
+  if self.static_lookup_cache.length() >= STATIC_LOOKUP_CACHE_LIMIT {
+    self.static_lookup_evict()
+  }
+  let key = clean.to_owned()
+  if result is None {
+    self.static_lookup_negative.push(key)
+  }
+  self.static_lookup_cache.set(key, result)
 }
 
 ///|
@@ -6040,10 +6150,7 @@ fn App::static_lookup(
       // negative result would only evict useful static entries.
       if clean.length() <= PARSE_CACHE_MAX_KEY &&
         (result is Some(_) || mount is Some(_)) {
-        if self.static_lookup_cache.length() >= STATIC_LOOKUP_CACHE_LIMIT {
-          self.static_lookup_evict()
-        }
-        self.static_lookup_cache.set(clean.to_owned(), result)
+        self.static_lookup_remember(clean, result)
       }
       result
     }
@@ -6142,12 +6249,18 @@ pub fn App::respond(self : App, request : Request) -> Response {
       error_response_with_payload(ctx, status, message, payload)
     err => internal_error(ctx, "\{err}")
   }
-  if ctx.file_response() is None &&
-    !precondition_fails_early_facade(ctx.request, ctx.response) {
-    if self.etag_enabled {
-      apply_etag(ctx.response)
+  if ctx.file_response() is None {
+    let (input, allows_not_modified) = precondition_input_facade(ctx.request)
+    if !precondition_fails_before_compression(
+      input,
+      allows_not_modified,
+      ctx.response,
+    ) {
+      if self.etag_enabled {
+        apply_etag(ctx.response)
+      }
+      apply_preconditions_input(input, allows_not_modified, ctx.response)
     }
-    apply_preconditions_facade(ctx.request, ctx.response)
   }
   ctx.response
 }

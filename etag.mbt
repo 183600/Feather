@@ -167,24 +167,28 @@ fn apply_preconditions_input(
 }
 
 ///|
-/// Apply the preconditions of a server request.
-fn apply_preconditions(request : @http.Request, response : Response) -> Unit {
-  apply_preconditions_input(
+/// Parse the precondition headers of a server request once, together with
+/// whether the request method allows a `304 Not Modified` answer.
+fn precondition_input_http(
+  request : @http.Request,
+) -> (PreconditionInput, Bool) {
+  (
     precondition_input_from_http(request),
     request.meth is @http.Get || request.meth is @http.Head,
-    response,
   )
 }
 
 ///|
-/// Apply the preconditions of a facade request (the offline `App::respond`
-/// path), reading the headers directly from the request map.
-fn apply_preconditions_facade(request : Request, response : Response) -> Unit {
+/// Parse the precondition headers of a facade request (the offline
+/// `App::respond` path) once, together with whether the method allows a
+/// `304 Not Modified` answer.
+fn precondition_input_facade(
+  request : Request,
+) -> (PreconditionInput, Bool) {
   let method = request.method.to_upper()
-  apply_preconditions_input(
+  (
     precondition_input_from_map(request.headers),
     method == "GET" || method == "HEAD",
-    response,
   )
 }
 
@@ -250,28 +254,6 @@ fn precondition_fails_before_compression(
     }
     _ => false
   }
-}
-
-///|
-fn precondition_fails_early_http(
-  request : @http.Request,
-  response : Response,
-) -> Bool {
-  precondition_fails_before_compression(
-    precondition_input_from_http(request),
-    request.meth is @http.Get || request.meth is @http.Head,
-    response,
-  )
-}
-
-///|
-fn precondition_fails_early_facade(request : Request, response : Response) -> Bool {
-  let method = request.method.to_upper()
-  precondition_fails_before_compression(
-    precondition_input_from_map(request.headers),
-    method == "GET" || method == "HEAD",
-    response,
-  )
 }
 
 ///|

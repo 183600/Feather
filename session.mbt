@@ -155,6 +155,49 @@ fn session_detached(ttl : Int64) -> Session {
 }
 
 ///|
+/// State key under which `middleware_session` records the store TTL for a
+/// request whose anonymous session has not been materialized yet.
+const SESSION_LAZY_KEY : String = "__feather_session_ttl"
+
+///|
+/// Parse the TTL text recorded under `SESSION_LAZY_KEY`, falling back to the
+/// default lifetime for malformed values.
+fn session_ttl_from_text(text : String) -> Int64 {
+  let mut value = 0L
+  for i = 0; i < text.length(); i = i + 1 {
+    let code = text[i].to_int()
+    if code < 48 || code > 57 {
+      return DEFAULT_SESSION_TTL
+    }
+    value = value * 10L + (code - 48).to_int64()
+  }
+  if value <= 0L {
+    DEFAULT_SESSION_TTL
+  } else {
+    value
+  }
+}
+
+///|
+/// The request's session, materializing the detached session that
+/// `middleware_session` set up lazily on first access. Requests that never
+/// touch session data keep `session` as `None` and allocate no session.
+fn Context::session_materialized(self : Context) -> Session? {
+  match self.session {
+    Some(session) => Some(session)
+    None =>
+      match self.state.get(SESSION_LAZY_KEY) {
+        Some(ttl_text) => {
+          let session = session_detached(session_ttl_from_text(ttl_text))
+          self.session = Some(session)
+          Some(session)
+        }
+        None => None
+      }
+  }
+}
+
+///|
 /// Give a detached session its random id.
 fn session_ensure_id(session : Session) -> Unit {
   if session.id == "" {
@@ -242,15 +285,16 @@ fn SessionStore::maybe_sweep(self : SessionStore) -> Unit {
 
 ///|
 /// The session attached to this request by `middleware_session`, if any.
+/// Sessions that were not materialized yet are created on first access.
 pub fn Context::session(self : Context) -> Session? {
-  self.session
+  self.session_materialized()
 }
 
 ///|
 /// Id of the session attached to this request, if any. Detached sessions are
 /// given their random id on first access.
 pub fn Context::session_id(self : Context) -> String? {
-  match self.session {
+  match self.session_materialized() {
     Some(session) => {
       session_ensure_id(session)
       Some(session.id)
@@ -263,7 +307,7 @@ pub fn Context::session_id(self : Context) -> String? {
 /// Read a value from the session. Returns `""` when there is no session or the
 /// key is absent.
 pub fn Context::session_get(self : Context, key : String) -> String {
-  match self.session {
+  match self.session_materialized() {
     Some(session) =>
       match session.data.get(key) {
         Some(value) => value
@@ -282,7 +326,7 @@ pub fn Context::session_set(
   key : String,
   value : String,
 ) -> Bool {
-  match self.session {
+  match self.session_materialized() {
     Some(session) => {
       session.data.set(key, value)
       session.modified = true
@@ -317,7 +361,7 @@ pub fn Context::session_set_json(
 /// Returns `None` when there is no session, the key is absent, or the stored
 /// text is not valid JSON.
 pub fn Context::session_get_json(self : Context, key : String) -> Json? {
-  match self.session {
+  match self.session_materialized() {
     Some(session) =>
       match session.data.get(key) {
         Some(text) =>
@@ -354,7 +398,7 @@ fn session_parse_json_into_cache(
 ///|
 /// Remove a key from the session. Returns whether the key was present.
 pub fn Context::session_remove(self : Context, key : String) -> Bool {
-  match self.session {
+  match self.session_materialized() {
     Some(session) =>
       match session.data.remove_and_get(key) {
         Some(_) => {
@@ -373,7 +417,7 @@ pub fn Context::session_remove(self : Context, key : String) -> Bool {
 /// cleared when the response is sent. Returns `false` when the request has no
 /// session.
 pub fn Context::session_destroy(self : Context) -> Bool {
-  match self.session {
+  match self.session_materialized() {
     Some(session) => {
       session.destroyed = true
       session.modified = true
@@ -392,7 +436,7 @@ pub fn Context::session_destroy(self : Context) -> Bool {
 /// successful login to prevent session fixation. Returns `false` when the
 /// request has no session.
 pub fn Context::session_regenerate(self : Context) -> Bool {
-  match self.session {
+  match self.session_materialized() {
     Some(session) => {
       session.regenerate = true
       true
@@ -500,6 +544,7 @@ pub fn middleware_session(
       None
     },
   }
+  let lazy_ttl_text = store.ttl().to_string()
   fn(next) {
     fn(ctx) raise {
       let cookie_id = ctx.cookie(config.name)
@@ -509,12 +554,13 @@ pub fn middleware_session(
       }
       let is_new = existing is None
       let had_cookie = cookie_id is Some(_)
-      let session = match existing {
-        Some(session) => session
-        None => session_detached(store.ttl())
+      match existing {
+        Some(session) => {
+          session.modified = false
+          ctx.session = Some(session)
+        }
+        None => ctx.state.set(SESSION_LAZY_KEY, lazy_ttl_text)
       }
-      session.modified = false
-      ctx.session = Some(session)
       errdefer session_persist(ctx, store, config, had_cookie, is_new)
       next(ctx)
       session_persist(ctx, store, config, had_cookie, is_new)
