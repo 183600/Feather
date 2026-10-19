@@ -1,0 +1,10 @@
+import {
+  "cto-new/feather",
+  "moonbitlang/async",
+  "moonbitlang/async/socket",
+  "moonbitlang/async/websocket",
+}
+
+supported_targets = "+native"
+
+pkgtype(kind: "executable")
