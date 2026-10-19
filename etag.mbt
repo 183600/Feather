@@ -202,44 +202,52 @@ fn has_precondition_headers(input : PreconditionInput) -> Bool {
 }
 
 ///|
-/// Whether the request's preconditions already fail against the response's own
-/// validators. Compression only weakens tags, which cannot turn a strong
-/// mismatch into a match, so a failure detected here is the same one the
-/// post-compression evaluation would report. Only handler-supplied validators
-/// are consulted, so this never fires for responses whose validator would be
-/// generated later.
-fn precondition_fails_before_compression(
+/// Check the request's preconditions against the validators the handler
+/// supplied, before compression and ETag generation.
+///
+/// Returns whether a precondition already failed (turning the response into
+/// `412 Precondition Failed`) together with the input that still has to be
+/// evaluated after the response has been compressed and any generated ETag
+/// added.
+///
+/// `If-Match` is only decided here when the response already carries an ETag;
+/// otherwise a tag may be generated from the body later, so the condition is
+/// deferred. A satisfied `If-Match` (and the `If-Unmodified-Since` it
+/// suppresses) is removed from the returned input because compression weakens
+/// the tag, and re-checking the weakened form would turn the earlier strong
+/// match into a spurious failure.
+fn precheck_preconditions(
   input : PreconditionInput,
   allows_not_modified : Bool,
   response : Response,
-) -> Bool {
+) -> (Bool, PreconditionInput) {
   if response.status < 200 ||
     response.status >= 300 ||
     response.status == 204 ||
     response.status == 205 ||
     response.status == 206 {
-    return false
+    return (false, input)
   }
   match get_header_ignore_case(response.headers, "Cache-Control") {
     Some(control) =>
       if contains_ignore_ascii_case(control.view(), "no-store".view()) {
-        return false
+        return (false, input)
       }
     None => ()
   }
   if !has_precondition_headers(input) {
-    return false
+    return (false, input)
   }
-  let etag = match get_header_ignore_case(response.headers, "ETag") {
+  let response_etag = get_header_ignore_case(response.headers, "ETag")
+  let response_mtime = get_header_ignore_case(response.headers, "Last-Modified")
+  if response_etag is None && response_mtime is None {
+    return (false, input)
+  }
+  let etag = match response_etag {
     Some(value) => value
-    None =>
-      if get_header_ignore_case(response.headers, "Last-Modified") is None {
-        return false
-      } else {
-        ""
-      }
+    None => ""
   }
-  let mtime_secs = match get_header_ignore_case(response.headers, "Last-Modified") {
+  let mtime_secs = match response_mtime {
     Some(value) =>
       match parse_http_date(value) {
         Some(seconds) => seconds
@@ -247,12 +255,43 @@ fn precondition_fails_before_compression(
       }
     None => 0L
   }
-  match evaluate_preconditions_input(input, etag, mtime_secs, allows_not_modified) {
-    PreconditionFailed => {
-      apply_preconditions_input(input, allows_not_modified, response)
-      true
+  // Without a handler ETag the `If-Match` outcome is not final: generation may
+  // produce a matching tag. `If-Match` also suppresses `If-Unmodified-Since`,
+  // so only the conditions that do not depend on the missing tag are checked.
+  let early_input = if response_etag is None && input.if_match is Some(_) {
+    {
+      if_match: None,
+      if_none_match: input.if_none_match,
+      if_modified_since: input.if_modified_since,
+      if_unmodified_since: None,
     }
-    _ => false
+  } else {
+    input
+  }
+  match evaluate_preconditions_input(
+    early_input,
+    etag,
+    mtime_secs,
+    allows_not_modified,
+  ) {
+    PreconditionFailed => {
+      apply_preconditions_input(early_input, allows_not_modified, response)
+      (true, input)
+    }
+    _ =>
+      if response_etag is Some(_) && input.if_match is Some(_) {
+        (
+          false,
+          {
+            if_match: None,
+            if_none_match: input.if_none_match,
+            if_modified_since: input.if_modified_since,
+            if_unmodified_since: None,
+          },
+        )
+      } else {
+        (false, input)
+      }
   }
 }
 

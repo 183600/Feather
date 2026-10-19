@@ -1290,18 +1290,23 @@ async fn handle_static(
       Some(file) => send_file_response(conn, ctx.response, file, head, request)
       None => {
         let (input, allows_not_modified) = precondition_input_http(request)
-        if !precondition_fails_before_compression(
+        let (failed, remaining) = precheck_preconditions(
           input,
           allows_not_modified,
           ctx.response,
-        ) {
+        )
+        if !failed {
           if app.compress_enabled {
             compress_response(request, ctx.response, app.compress_min_size)
           }
           if app.etag_enabled {
             apply_etag(ctx.response)
           }
-          apply_preconditions_input(input, allows_not_modified, ctx.response)
+          apply_preconditions_input(
+            remaining,
+            allows_not_modified,
+            ctx.response,
+          )
         }
         send_response(conn, ctx.response, head)
       }
@@ -1328,18 +1333,19 @@ async fn build_response(
   let file = ctx.file_response()
   if file is None {
     let (input, allows_not_modified) = precondition_input_http(request)
-    if !precondition_fails_before_compression(
+    let (failed, remaining) = precheck_preconditions(
       input,
       allows_not_modified,
       ctx.response,
-    ) {
+    )
+    if !failed {
       if app.compress_enabled {
         compress_response(request, ctx.response, app.compress_min_size)
       }
       if app.etag_enabled {
         apply_etag(ctx.response)
       }
-      apply_preconditions_input(input, allows_not_modified, ctx.response)
+      apply_preconditions_input(remaining, allows_not_modified, ctx.response)
     }
   }
   (ctx.response, file)

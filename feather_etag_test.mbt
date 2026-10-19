@@ -228,3 +228,61 @@ async test "empty if-none-match elements never match an absent validator" {
     ignore(client.read_all())
   })
 }
+
+///|
+async test "generated etag satisfies if-match next to last-modified" {
+  let if_match_key : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+    "If-Match",
+  )
+  let app = @feather.App::new()
+    .etag()
+    .get("/lm", fn(ctx) {
+      ctx.set_header("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
+      ctx.text(200, "hello world")
+    })
+  with_server(app, client => {
+    let first = client.get("/lm")
+    let etag = first.headers.get(etag_key).unwrap()
+    assert_eq(client.read_all().text(), "hello world")
+    let matched = client.get(
+      "/lm",
+      extra_headers=Map([(if_match_key, etag)]),
+    )
+    assert_eq(matched.code, 200)
+    assert_eq(client.read_all().text(), "hello world")
+    let stale = client.get(
+      "/lm",
+      extra_headers=Map([(if_match_key, "\"stale\"")]),
+    )
+    assert_eq(stale.code, 412)
+    assert_eq(client.read_all().text(), "412 Precondition Failed")
+  })
+}
+
+///|
+async test "strong if-match survives compression weakening" {
+  let if_match_key : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+    "If-Match",
+  )
+  let payload = "feather compression payload ".repeat(64)
+  let app = @feather.App::new()
+    .etag()
+    .compress(min_size=16)
+    .get("/strong", fn(ctx) {
+      ctx.set_header("ETag", "\"handler\"")
+      ctx.text(200, payload)
+    })
+  with_server(app, client => {
+    let response = client.get(
+      "/strong",
+      extra_headers=Map([
+        (etag_accept_encoding_key, "gzip"),
+        (if_match_key, "\"handler\""),
+      ]),
+    )
+    assert_eq(response.code, 200)
+    assert_eq(response.headers.get(etag_key), Some("W/\"handler\""))
+    assert_eq(response.headers.get(etag_content_encoding_key), Some("gzip"))
+    ignore(client.read_all())
+  })
+}

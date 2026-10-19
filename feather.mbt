@@ -6251,15 +6251,16 @@ pub fn App::respond(self : App, request : Request) -> Response {
   }
   if ctx.file_response() is None {
     let (input, allows_not_modified) = precondition_input_facade(ctx.request)
-    if !precondition_fails_before_compression(
+    let (failed, remaining) = precheck_preconditions(
       input,
       allows_not_modified,
       ctx.response,
-    ) {
+    )
+    if !failed {
       if self.etag_enabled {
         apply_etag(ctx.response)
       }
-      apply_preconditions_input(input, allows_not_modified, ctx.response)
+      apply_preconditions_input(remaining, allows_not_modified, ctx.response)
     }
   }
   ctx.response
