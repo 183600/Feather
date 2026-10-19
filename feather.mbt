@@ -1504,13 +1504,149 @@ pub fn Context::host(self : Context) -> String {
 }
 
 ///|
-/// The URL scheme of the request, honoring `X-Forwarded-Proto` when present.
+/// Unescape an RFC 7239 parameter value enclosed in double quotes. Values
+/// that are not quoted are returned unchanged; anything after the closing
+/// quote is ignored.
+fn unquote_forwarded_value(raw : StringView) -> String {
+  if raw.length() < 2 || raw.unsafe_get(0) != ('"' : UInt16) {
+    return raw.to_owned()
+  }
+  let length = raw.length()
+  let builder = StringBuilder(size_hint=length)
+  let mut i = 1
+  while i < length {
+    let unit = raw.unsafe_get(i)
+    if unit == ('\\' : UInt16) && i + 1 < length {
+      builder.write_char(raw.unsafe_get(i + 1).to_int().unsafe_to_char())
+      i = i + 2
+    } else if unit == ('"' : UInt16) {
+      break
+    } else {
+      builder.write_char(unit.to_int().unsafe_to_char())
+      i = i + 1
+    }
+  }
+  builder.to_string()
+}
+
+///|
+/// Value of parameter `name` in the first element of an RFC 7239 `Forwarded`
+/// header, for example `host` in `for=192.0.2.60;host="example.com:8443"`.
+///
+/// Parameter names are matched case-insensitively and quoted values are
+/// unescaped. Later elements describe further proxies, so only the first
+/// element is inspected. Returns `None` when the parameter is absent or
+/// empty.
+fn forwarded_first_param(header : StringView, name : StringView) -> String? {
+  let length = header.length()
+  let mut element_end = length
+  let mut i = 0
+  let mut in_quotes = false
+  while i < length {
+    let unit = header.unsafe_get(i)
+    if in_quotes && unit == ('\\' : UInt16) {
+      i = i + 2
+      continue
+    }
+    if unit == ('"' : UInt16) {
+      in_quotes = !in_quotes
+    } else if unit == (',' : UInt16) && !in_quotes {
+      element_end = i
+      break
+    }
+    i = i + 1
+  }
+  let mut pos = 0
+  while pos < element_end {
+    let mut end = pos
+    let mut quoted = false
+    while end < element_end {
+      let unit = header.unsafe_get(end)
+      if quoted && unit == ('\\' : UInt16) {
+        end = end + 2
+        continue
+      }
+      if unit == ('"' : UInt16) {
+        quoted = !quoted
+      } else if unit == (';' : UInt16) && !quoted {
+        break
+      }
+      end = end + 1
+    }
+    let mut eq = pos
+    while eq < end && header.unsafe_get(eq) != ('=' : UInt16) {
+      eq = eq + 1
+    }
+    if eq < end {
+      let key = trim_ascii_space(header[pos:eq])
+      if key.equal_ignore_ascii_case(name) {
+        let unquoted = unquote_forwarded_value(
+          trim_ascii_space(header[eq + 1:end]),
+        )
+        let value = trim_ascii_space(unquoted.view())
+        if value.is_empty() {
+          return None
+        }
+        return Some(value.to_owned())
+      }
+    }
+    pos = end + 1
+  }
+  None
+}
+
+///|
+/// Normalize an RFC 7239 `for=` node identifier to a client address: an
+/// optional port is dropped and IPv6 literals keep their brackets, matching
+/// `Context::ip`. Obfuscated (`_...`) and `unknown` nodes carry no address,
+/// so they report `None`.
+fn normalize_forwarded_for(value : StringView) -> String? {
+  if value.is_empty() ||
+    value.equal_ignore_ascii_case("unknown".view()) ||
+    value.unsafe_get(0) == ('_' : UInt16) {
+    return None
+  }
+  if value.unsafe_get(0) == ('[' : UInt16) {
+    return match value.find("]") {
+      Some(index) => Some(value[:index + 1].to_owned())
+      None => Some(value.to_owned())
+    }
+  }
+  let length = value.length()
+  let mut i = 0
+  let mut colons = 0
+  let mut last_colon = -1
+  while i < length {
+    if value.unsafe_get(i) == (':' : UInt16) {
+      colons = colons + 1
+      last_colon = i
+    }
+    i = i + 1
+  }
+  // A single colon separates an IPv4 address from its port; several colons
+  // mean a bare IPv6 address, which has no port to strip.
+  if colons == 1 && last_colon > 0 {
+    return Some(value[:last_colon].to_owned())
+  }
+  Some(value.to_owned())
+}
+
+///|
+/// The URL scheme of the request, honoring the RFC 7239 `Forwarded` `proto=`
+/// parameter first, then `X-Forwarded-Proto`, and defaulting to `"http"`.
 pub fn Context::protocol(self : Context) -> String {
-  let forwarded = trim_ascii_space(self.header("X-Forwarded-Proto").view())
+  let forwarded = self.header("Forwarded")
   if forwarded != "" {
-    let value = match forwarded.find(",") {
-      Some(index) => trim_ascii_space(forwarded[:index])
-      None => forwarded
+    match forwarded_first_param(forwarded.view(), "proto".view()) {
+      Some(value) => return value
+      None => ()
+    }
+  }
+  let proto = trim_ascii_space(self.header("X-Forwarded-Proto").view())
+  if proto != "" {
+    let value = match proto.find(",") {
+      Some(index) => trim_ascii_space(proto[:index])
+      None => proto
     }
     if !value.is_empty() {
       return value.to_owned()
@@ -1522,22 +1658,40 @@ pub fn Context::protocol(self : Context) -> String {
 ///|
 /// Whether the request is considered to arrive over HTTPS.
 pub fn Context::is_secure(self : Context) -> Bool {
-  let forwarded = self.header("X-Forwarded-Proto")
-  let view = trim_ascii_space(forwarded.view())
-  let value = match view.find(",") {
-    Some(index) => trim_ascii_space(view[:index])
-    None => view
+  self.protocol().view().equal_ignore_ascii_case("https".view())
+}
+
+///|
+/// The authority (host and optional port) to use in absolute URLs, honoring
+/// the RFC 7239 `Forwarded` `host=` parameter first, then the first value of
+/// `X-Forwarded-Host`, then the `Host` header. Returns `""` when none is
+/// present. Use `Context::host` for the port-less host name.
+pub fn Context::forwarded_authority(self : Context) -> String {
+  let forwarded = self.header("Forwarded")
+  if forwarded != "" {
+    match forwarded_first_param(forwarded.view(), "host".view()) {
+      Some(value) => return value
+      None => ()
+    }
   }
-  if value.is_empty() {
-    return false
+  let xfh = trim_ascii_space(self.header("X-Forwarded-Host").view())
+  if xfh != "" {
+    return match xfh.find(",") {
+      Some(index) => trim_ascii_space(xfh[:index]).to_owned()
+      None => xfh.to_owned()
+    }
   }
-  value.equal_ignore_ascii_case("https".view())
+  trim_ascii_space(self.header("Host").view()).to_owned()
 }
 
 ///|
 /// The full URL of the request, for example `https://example.com/users/1?q=x`.
+///
+/// Honors `Forwarded`/`X-Forwarded-Proto` and
+/// `Forwarded`/`X-Forwarded-Host` when building the URL, so links stay
+/// correct behind a reverse proxy.
 pub fn Context::full_url(self : Context) -> String {
-  let authority = trim_ascii_space(self.header("Host").view())
+  let authority = self.forwarded_authority()
   if authority.is_empty() {
     return self.request.path
   }
@@ -1548,7 +1702,7 @@ pub fn Context::full_url(self : Context) -> String {
   )
   builder.write_string(scheme)
   builder.write_string("://")
-  builder.write_stringview(authority)
+  builder.write_string(authority)
   builder.write_string(path)
   builder.to_string()
 }
@@ -1566,12 +1720,30 @@ pub fn Context::ip(self : Context) -> String {
 }
 
 ///|
+/// The client address, honoring the RFC 7239 `Forwarded` `for=` parameter
+/// first, then the first value of `X-Forwarded-For`, then `X-Real-IP`, and
+/// finally the peer address. Obfuscated or unknown `for=` nodes are skipped.
 pub fn Context::forwarded_ip(self : Context) -> String {
-  let forwarded = self.header("X-Forwarded-For")
+  let forwarded = self.header("Forwarded")
   if forwarded != "" {
-    return match forwarded.find(",") {
-      Some(index) => trim_ascii_space(forwarded[:index]).to_owned()
-      None => trim_ascii_space(forwarded).to_owned()
+    match forwarded_first_param(forwarded.view(), "for".view()) {
+      Some(value) => {
+        match normalize_forwarded_for(value.view()) {
+          Some(ip) => return ip
+          None => ()
+        }
+      }
+      None => ()
+    }
+  }
+  let chain = self.header("X-Forwarded-For")
+  if chain != "" {
+    let first = match chain.find(",") {
+      Some(index) => trim_ascii_space(chain[:index])
+      None => trim_ascii_space(chain.view())
+    }
+    if !first.is_empty() {
+      return first.to_owned()
     }
   }
   let real_ip = self.header("X-Real-IP")
