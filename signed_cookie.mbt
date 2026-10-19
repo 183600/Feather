@@ -65,9 +65,8 @@ fn read_uint32_be(data : Bytes, offset : Int) -> UInt {
 }
 
 ///|
-/// Reusable message schedule for `sha256_compress`. The async runtime is
-/// single threaded and compression never yields, so a shared scratch buffer is
-/// safe.
+/// Message schedule for `sha256_compress`. The async runtime is single threaded
+/// and compression never yields, so a shared scratch buffer is safe.
 let sha256_schedule : FixedArray[UInt] = FixedArray::make(64, 0U)
 
 ///|
@@ -117,25 +116,24 @@ fn sha256_compress(state : FixedArray[UInt], block : Bytes, offset : Int) -> Uni
 }
 
 ///|
-/// Reusable padding buffer for the final one or two blocks of `sha256`.
+/// Padding buffer for the final one or two blocks of `sha256`.
 let sha256_tail_bytes : FixedArray[Byte] = FixedArray::make(128, b'\x00')
 
 ///|
-/// Reusable hash state for `sha256` / `hmac_sha256`. Compression never yields
-/// and the async runtime is single threaded, matching the shared
-/// `sha256_schedule` scratch above.
+/// Hash state for `sha256` / `hmac_sha256`. Compression never yields and the
+/// async runtime is single threaded, matching the shared `sha256_schedule`
+/// scratch above.
 let sha256_work_state : FixedArray[UInt] = FixedArray::make(8, 0U)
 
 ///|
-/// Reusable inner/outer key blocks for `hmac_sha256`, memoized together with
-/// the normalized key they were derived from so repeated verifications with the
-/// same secret skip rebuilding them.
+/// Inner/outer key blocks for `hmac_sha256`, kept alongside the normalized key
+/// they were derived from.
 let hmac_cached_key : Ref[Bytes?] = Ref(None)
 let hmac_inner_block : FixedArray[Byte] = FixedArray::make(64, b'\x00')
 let hmac_outer_block : FixedArray[Byte] = FixedArray::make(64, b'\x00')
 
 ///|
-/// Reusable inner-digest scratch for `hmac_sha256`.
+/// Inner-digest scratch for `hmac_sha256`.
 let sha256_hmac_inner_digest : FixedArray[Byte] = FixedArray::make(32, b'\x00')
 
 ///|
@@ -169,8 +167,6 @@ fn sha256_finish_into(
   let remainder = length - full_blocks * 64
   let tail_length = if remainder < 56 { 64 } else { 128 }
   let tail = sha256_tail_bytes
-  // Only the padding gap has to be cleared: the message bytes are overwritten
-  // below and the length field is written after it.
   for i = remainder; i < tail_length - 8; i = i + 1 {
     tail[i] = b'\x00'
   }
@@ -215,7 +211,7 @@ pub fn sha256(data : Bytes) -> Bytes {
 /// HMAC-SHA256 as specified by RFC 2104 and RFC 4231.
 ///
 /// The inner and outer hashes are streamed into the shared `sha256_update` /
-/// `sha256_finish_into` helpers, so only the returned digest is allocated.
+/// `sha256_finish_into` helpers.
 ///|
 /// Fill `hmac_inner_block`/`hmac_outer_block` for `normalized` unless they
 /// already correspond to it.
@@ -323,8 +319,7 @@ fn base64url_encode(data : Bytes) -> String {
 
 ///|
 /// Character code (0-255) to 6-bit value for URL-safe base64; `-`/`+` encode
-/// 62 and `_`/`/` encode 63, other characters are `-1`. Kept as a flat table so
-/// token verification has no per-character branch chain.
+/// 62 and `_`/`/` encode 63, other characters are `-1`.
 let base64url_lookup : FixedArray[Int] = {
   let table = FixedArray::make(256, -1)
   for i = 0; i < 26; i = i + 1 {
@@ -365,7 +360,7 @@ fn base64url_decode_view(view : StringView) -> Bytes? {
 ///|
 /// `base64url_decode` for text containing non-ASCII characters: the characters
 /// are first narrowed to bytes (which may spell out multi-byte UTF-8 that the
-/// lossy decode then replaces), matching the historical decoding path.
+/// lossy decode then replaces).
 fn base64url_decode_slow(view : StringView) -> Bytes? {
   let translated = FixedArray::make(view.length(), b'\x00')
   for i = 0; i < view.length(); i = i + 1 {
@@ -382,10 +377,9 @@ fn base64url_decode_slow(view : StringView) -> Bytes? {
 }
 
 ///|
-/// UTF-8 encoding of the most recent HMAC secret, so repeated sign/verify calls
-/// with the same secret string skip re-encoding it on every request. Strings
-/// are immutable and the async runtime is single threaded, so keying the cached
-/// bytes on string identity is sound: a different secret can only miss.
+/// UTF-8 encoding of the most recent HMAC secret. Strings are immutable and the
+/// async runtime is single threaded, so keying the cached bytes on string
+/// identity is sound: a different secret can only miss.
 let last_secret_text : Ref[String?] = Ref(None)
 
 ///|
@@ -393,9 +387,7 @@ let last_secret_text : Ref[String?] = Ref(None)
 let last_secret_bytes : Ref[Bytes?] = Ref(None)
 
 ///|
-/// UTF-8 bytes of `secret`, reusing the previous encoding when the caller
-/// passes the same string object again (the common case for a configured
-/// secret).
+/// UTF-8 bytes of `secret`.
 fn secret_utf8(secret : String) -> Bytes {
   match last_secret_text.val {
     Some(cached) =>
@@ -436,7 +428,6 @@ fn signed_cookie_signing_input(
   encoded_value : StringView,
   expires_at : Int64,
 ) -> Bytes {
-  // Assemble the text once and UTF-8 encode it in a single pass.
   let expiry = expires_at.to_string()
   let builder = StringBuilder(
     size_hint=name.length() + encoded_value.length() + expiry.length() + 2,

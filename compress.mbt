@@ -129,8 +129,7 @@ fn add_vary_accept_encoding(response : Response) -> Unit {
 }
 
 ///|
-/// A `@io.Writer` that collects every written chunk in one growable buffer, so
-/// the compressed result is assembled from a single buffer.
+/// A `@io.Writer` that collects every written chunk in one growable buffer.
 priv struct ChunkSink {
   buffer : @buffer.Buffer
 }
@@ -154,16 +153,11 @@ fn ChunkSink::to_bytes(self : ChunkSink) -> Bytes {
 }
 
 ///|
-/// Input chunk size fed to the gzip encoder between scheduler yields. A large
-/// response is compressed in several chunks so other tasks on the single
-/// threaded runtime can run while it is being produced.
+/// Input chunk size fed to the gzip encoder between scheduler yields.
 const GZIP_CHUNK_SIZE : Int = 65536
 
 ///|
 async fn gzip_compress(data : Bytes) -> Bytes {
-  // Start near the typical compressed size (a fraction of the input), but cap
-  // the up-front hint so a pathological body cannot force a huge allocation
-  // before a single byte is emitted.
   let length = data.length()
   let hint = if length < 2048 {
     1024

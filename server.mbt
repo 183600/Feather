@@ -151,9 +151,7 @@ async fn read_body_bytes(reader : &@io.Reader, limit : Int32) -> Bytes {
   if total > limit {
     raise PayloadTooLarge
   }
-  // Pre-size from the chunk already read (bounded by the limit) instead of the
-  // limit itself, so a small body under a large `max_body_size` does not
-  // allocate a fixed 64 KiB up front.
+  // Size the buffer hint from the first chunk, capped by the limit.
   let limit_int = limit
   let first_length = first.length()
   let hint : Int = if first_length < limit_int { first_length } else { limit_int }
@@ -508,8 +506,7 @@ async fn send_file_response(
 }
 
 ///|
-/// Bounded cache of formatted peer hosts, keyed by peer address. Keep-alive
-/// connections reuse the same address across requests.
+/// Bounded cache of formatted peer hosts, keyed by peer address.
 let peer_host_cache : Map[@socket.Addr, String] = Map([])
 
 ///|
@@ -586,8 +583,7 @@ fn utf8_byte_length(view : StringView) -> Int {
 }
 
 ///|
-/// Bounded cache of `CaseInsensitiveString` header keys, reused across
-/// responses.
+/// Bounded cache of `CaseInsensitiveString` header keys.
 let header_name_cache : Map[String, @http.CaseInsensitiveString] = Map([])
 
 ///|
@@ -599,9 +595,7 @@ let header_name_cache_ages : Map[String, Int] = Map([])
 const HEADER_NAME_CACHE_LIMIT : Int = 128
 
 ///|
-/// Request header name spellings, keyed case-insensitively. The parser hands
-/// each header name over as a fresh `CaseInsensitiveString`; looking it up here
-/// avoids copying the same name into a new `String` on every request.
+/// Request header name spellings, keyed case-insensitively.
 let request_header_name_cache : Map[@http.CaseInsensitiveString, String] = Map(
   [],
 )
@@ -751,15 +745,13 @@ async fn send_context_response(
 
 ///|
 /// Terminal of every asynchronous middleware chain: records in the request
-/// state that the chain called through to the endpoint. It is a plain function
-/// so it can be shared by chains composed once instead of per request.
+/// state that the chain called through to the endpoint.
 fn async_chain_terminal(ctx : Context) -> Unit raise {
   ctx.state.set(ASYNC_CHAIN_PASS_KEY, "1")
 }
 
 ///|
-/// The application-level asynchronous middleware chain, composed once and
-/// cached, like the ordinary request chain in `App::handle`.
+/// The application-level asynchronous middleware chain.
 fn App::async_middleware_chain(self : App) -> Handler {
   match self.async_chain {
     Some(chain) => chain
@@ -871,17 +863,16 @@ fn append_trailing_slash(path : String) -> String {
 }
 
 ///|
-/// Recycled read buffers for `write_file_range`, so range requests do not
-/// allocate and zero-fill a fresh 64 KB buffer each time. The async runtime is
-/// single threaded, so a plain array is safe.
+/// Read buffers used by `write_file_range`. The async runtime is single
+/// threaded, so a plain array is safe.
 let file_range_buffers : Array[FixedArray[Byte]] = []
 
 ///|
-/// Maximum number of recycled range buffers retained.
+/// Maximum number of range buffers retained.
 const FILE_RANGE_POOL_LIMIT : Int = 4
 
 ///|
-/// Size of the recycled range buffers.
+/// Size of the range buffers.
 const FILE_RANGE_CHUNK_SIZE : Int = 65536
 
 ///|
@@ -1271,8 +1262,8 @@ async fn serve_static_file(
 }
 
 ///|
-/// Context state key the cached static middleware chain sets when the request
-/// falls through to the file, standing in for a per-request terminal closure.
+/// Context state key the static middleware chain sets when the request falls
+/// through to the file.
 const STATIC_CHAIN_PASS_KEY : String = "__feather_static_pass"
 
 ///|
@@ -1661,11 +1652,10 @@ async fn handle_request(
         }
     }
   }
-  // Dynamic routes take precedence over static mounts, so check them first
-  // and skip the static lookup (and cache bookkeeping) entirely when the
-  // request is handled elsewhere. A failed GET resolve above already proves
-  // there is no websocket, SSE or stream route for the path, so only the
-  // ordinary route table still needs checking.
+  // Dynamic routes take precedence over static mounts, so check them first.
+  // A failed GET resolve above already proves there is no websocket, SSE or
+  // stream route for the path, so only the ordinary route table still needs
+  // checking.
   let static_eligible = if request.meth is @http.Get {
     !app.static_mounts.is_empty() && !app.has_route("GET", request.path)
   } else if head {

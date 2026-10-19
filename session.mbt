@@ -140,9 +140,8 @@ pub fn SessionStore::create(self : SessionStore) -> Session {
 }
 
 ///|
-/// Create a detached session lazily: the id and store slot are only allocated
-/// once the request actually writes to the session, so anonymous read-only
-/// traffic does not pay for random id generation or a store entry.
+/// Create a detached session. Its id and store slot are assigned when the
+/// request first writes to the session.
 fn session_detached(ttl : Int64) -> Session {
   {
     id: "",
@@ -182,9 +181,8 @@ fn session_ttl_from_text(text : String) -> Int64 {
 }
 
 ///|
-/// The request's session, materializing the detached session that
-/// `middleware_session` set up lazily on first access. Requests that never
-/// touch session data keep `session` as `None` and allocate no session.
+/// The request's session. A detached session is materialized on first access;
+/// requests that never touch session data keep `session` as `None`.
 fn Context::session_materialized(self : Context) -> Session? {
   match self.session {
     Some(session) => Some(session)
@@ -238,7 +236,7 @@ pub fn SessionStore::save(self : SessionStore, session : Session) -> Unit {
 
 ///|
 /// Drop one arbitrary session, keeping the store under its cap when nothing has
-/// expired yet. The store is a bounded cache, so any victim is acceptable.
+/// expired yet.
 fn SessionStore::evict_one(self : SessionStore) -> Unit {
   match self.sessions.keys().next() {
     Some(id) => ignore(self.sessions.remove(id))
@@ -384,8 +382,7 @@ pub fn Context::session_get_json(self : Context, key : String) -> Json? {
 }
 
 ///|
-/// Parse `text` and remember it under `key` so repeated reads of an unchanged
-/// session value skip parsing.
+/// Parse `text` and remember the result under `key`.
 fn session_parse_json_into_cache(
   session : Session,
   key : String,
@@ -487,8 +484,6 @@ fn session_send_cookie(
 
 ///|
 /// Save, rotate or destroy the request's session and send or clear its cookie.
-/// Kept as a plain function so the middleware does not allocate a closure per
-/// request.
 fn session_persist(
   ctx : Context,
   store : SessionStore,

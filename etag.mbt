@@ -4,9 +4,8 @@
 /// A tag is derived from the response body (after compression, so encodings
 /// keep distinct validators) for 2xx responses with a non-empty body and no
 /// `ETag` of their own. Requests whose `If-None-Match` matches are answered
-/// with an empty `304 Not Modified`, saving bandwidth for cacheable JSON and
-/// text APIs. Responses that opt out with `Cache-Control: no-store` are left
-/// untouched.
+/// with an empty `304 Not Modified` for cacheable JSON and text APIs. Responses
+/// that opt out with `Cache-Control: no-store` are left untouched.
 pub fn App::etag(self : App) -> App {
   self.etag_enabled = true
   self
@@ -42,9 +41,8 @@ fn apply_etag(response : Response) -> Unit {
     response.status == 205 {
     return
   }
-  // Probe the cheap exact-spelling case for each guard: a response that
-  // already carries an `ETag` is by far the most common opt-out, and an exact
-  // hit avoids building the case-insensitive header index for the rest.
+  // Check the exact `ETag` spelling first; the other guards use the
+  // case-insensitive header index.
   if response.headers.get("ETag") is Some(_) {
     return
   }
@@ -234,9 +232,8 @@ fn precheck_preconditions(
     response.status == 206 {
     return (false, input)
   }
-  // Requests without any precondition header skip the case-insensitive
-  // `Cache-Control` probe (and the header index it would build) entirely; the
-  // result is `(false, input)` either way.
+  // Requests without any precondition header need no `Cache-Control` check;
+  // the result is `(false, input)` either way.
   if !has_precondition_headers(input) {
     return (false, input)
   }

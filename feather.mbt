@@ -310,9 +310,7 @@ fn match_dynamic_node(
 }
 
 ///|
-/// Extract the per-path bindings for `node`. Repeated visits of the same URL
-/// are already served from the per-method dispatch cache, so no per-node path
-/// copy is kept here.
+/// Extract the per-path bindings for `node`.
 fn RouteNode::bound_values(
   self : RouteNode,
   path : StringView,
@@ -783,8 +781,7 @@ fn Router::find_node_raw(
     }
   }
   // Dynamic trees resolve every path, static or not, through the per-method
-  // dispatch cache. Entries carry the extracted bindings too, so a repeated
-  // dynamic URL is served without re-walking the tree or re-parsing params.
+  // dispatch cache. Entries carry the extracted bindings too.
   let cache = match self.dynamic_caches.get(tree_key) {
     Some(cache) => cache
     None => {
@@ -842,7 +839,7 @@ const DYNAMIC_CACHE_LIMIT : Int = 256
 
 ///|
 /// Insert into a per-method dynamic dispatch cache, evicting the least recently
-/// used entry when the cache is full instead of dropping every entry.
+/// used entry when the cache is full.
 fn remember_dynamic_hit(
   cache : Map[String, (RouteNode, Map[String, String]?, String)],
   ages : Map[String, Int],
@@ -862,8 +859,7 @@ fn Router::find_node(
 }
 
 ///|
-/// Bindings for a dispatch hit: `None` when the node has no parameters, which
-/// lets callers return a shared empty map instead of allocating.
+/// Bindings for a dispatch hit: `None` when the node has no parameters.
 fn route_params_for(
   node : RouteNode,
   wildcard_start : Int32,
@@ -961,9 +957,8 @@ fn Router::match_dispatch(
   meth : String,
   clean_path : StringView,
 ) -> DispatchMatch {
-  // The negative cache is consulted first: a path that is known to have no
-  // route for `meth` is answered without walking the trie again. `add_route`
-  // clears both caches, so a cached miss cannot outlive its removal.
+  // The negative cache is consulted first. `add_route` clears both caches, so
+  // a cached miss cannot outlive its removal.
   match self.find_miss_cache(meth, clean_path) {
     Some(allow) =>
       if allow != "" {
@@ -1162,9 +1157,7 @@ pub fn internal_error(ctx : Context, detail : String) -> Unit {
 let error_body_cache : Map[Int32, Map[String, String]] = Map([])
 
 ///|
-/// Recency ticks for the cached error bodies, keyed by message. Messages can
-/// repeat across statuses, so one shared recency map approximates the LRU for
-/// all buckets.
+/// Recency ticks for the cached error bodies, keyed by message.
 let error_body_cache_ages : Map[String, Int] = Map([])
 
 ///|
@@ -1173,7 +1166,6 @@ fn cached_error_body(status : Int32, message : String) -> String {
     Some(by_message) => by_message
     None => {
       if error_body_cache.length() >= 32 {
-        // Statuses are few, so restarting the outer map stays rare.
         error_body_cache.clear()
       }
       let by_message : Map[String, String] = Map([], capacity=4)
@@ -1191,8 +1183,6 @@ fn cached_error_body(status : Int32, message : String) -> String {
       payload.set("status", Json::number(status.to_double()))
       payload.set("error", Json::string(message))
       let body = Json::object(payload).stringify()
-      // Long or highly variable messages are not worth remembering: they
-      // would evict the fixed messages that do repeat.
       if message.length() <= 128 {
         cache_set(by_message, error_body_cache_ages, 8, message, body)
       }
@@ -1638,12 +1628,11 @@ let cache_clock : Ref[Int] = Ref(0)
 
 ///|
 /// How many entries an eviction samples before dropping the oldest one seen.
-/// Sampling keeps eviction O(1) instead of scanning the whole recency map.
 const CACHE_EVICT_SAMPLE : Int = 4
 
 ///|
 /// Refresh a hit entry's recency tick only once the clock has moved this far
-/// past it, so a hot key does not rewrite its tick on every access.
+/// past it.
 const CACHE_TOUCH_INTERVAL : Int = 16
 
 ///|
@@ -1654,8 +1643,8 @@ fn cache_advance() -> Int {
 }
 
 ///|
-/// Record `key` as recently used, skipping the map write while its recorded
-/// tick is still close to the current clock.
+/// Record `key` as recently used unless its recorded tick is still close to the
+/// current clock.
 fn[K : Hash + Eq] cache_touch(ages : Map[K, Int], key : K) -> Unit {
   let now = cache_clock.val
   match ages.get(key) {
@@ -1670,8 +1659,7 @@ fn[K : Hash + Eq] cache_touch(ages : Map[K, Int], key : K) -> Unit {
 
 ///|
 /// Evict one entry, sampling a few candidates and dropping the one with the
-/// oldest tick. The victim is approximate rather than exact LRU, but the
-/// eviction cost is bounded by the sample size instead of the cache size.
+/// oldest tick. The victim is approximate rather than exact LRU.
 fn[K : Hash + Eq, V] cache_evict(cache : Map[K, V], ages : Map[K, Int]) -> Unit {
   let mut oldest : K? = None
   let mut oldest_tick = 0
@@ -1783,13 +1771,12 @@ fn cookie_map_lookup(header : String) -> Map[String, String] {
 }
 
 ///|
-/// Most recently scanned path and the position of its `?`, so repeated query
-/// accessors in one handler do not rescan the path each time.
+/// Most recently scanned path and the position of its `?`.
 let last_query_index_path : Ref[String?] = Ref(None)
 let last_query_index : Ref[Int] = Ref(-1)
 
 ///|
-/// Position of `?` in `path`, memoized for the most recent path.
+/// Position of `?` in `path` for the most recent path.
 fn path_query_index(path : String) -> Int? {
   match last_query_index_path.val {
     Some(cached) =>
@@ -1898,10 +1885,7 @@ fn query_multi_lookup(path : String, index : Int) -> Map[String, Array[String]] 
 }
 
 ///|
-/// Most recently resolved url-encoded form body and its parsed map. Form bodies
-/// are unique per request, so a cross-request content-keyed cache would only
-/// retain large keys and parsed copies for no hits; only the most recent parse
-/// is remembered, and only while the body is small enough to be worth keeping.
+/// Most recently resolved url-encoded form body and its parsed map.
 let last_form_body : Ref[String?] = Ref(None)
 let last_form_map : Ref[Map[String, String]?] = Ref(None)
 
@@ -1953,9 +1937,7 @@ fn form_values_lookup(body : String) -> Map[String, Array[String]] {
 
 ///|
 /// Most recently resolved multipart body, the content type it was parsed with
-/// and its parsed parts. Upload bodies are unique per request, so only the most
-/// recent parse is remembered, and only while the body is small enough that
-/// retaining it cannot double the peak memory of a large upload.
+/// and its parsed parts.
 let last_multipart_body : Ref[String?] = Ref(None)
 let last_multipart_content_type : Ref[String?] = Ref(None)
 let last_multipart_parts : Ref[Array[MultipartPart]?] = Ref(None)
@@ -2723,9 +2705,7 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
   let mut ascii_only = true
   let mut needs_decoding = false
   let mut i = 0
-  // One full scan decides the path up front: the ASCII byte loop must not do
-  // work that a later non-ASCII code unit would force it to discard in favor of
-  // the UTF-8 round trip.
+  // Scan once to choose between the ASCII and UTF-8 decoding paths.
   while i < length {
     let value = source.unsafe_get(i).to_int()
     if value > 127 {
@@ -2903,8 +2883,7 @@ let base64_alphabet : Bytes = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 
 ///|
 /// Character code (0-255) to 6-bit value for standard base64; `-1` marks every
-/// character outside the alphabet. A flat table keeps decoding free of the
-/// per-character branch chain (and of an indirect call) on hot auth paths.
+/// character outside the alphabet.
 let base64_lookup : FixedArray[Int] = {
   let table = FixedArray::make(256, -1)
   for i = 0; i < 26; i = i + 1 {
@@ -3266,8 +3245,6 @@ pub fn mime_type_for(path : String) -> String {
 ///|
 /// Estimated capacity for a url-encoded result map, based on the source length.
 fn urlencoded_capacity(source : StringView) -> Int {
-  // Pair count scales roughly with length / 8, but cap the hint so a very long
-  // source cannot make the initial map unreasonably large.
   let estimate = source.length() >> 3
   if estimate < 4 {
     4
@@ -3326,9 +3303,8 @@ fn parse_urlencoded_multi(source : StringView) -> Map[String, Array[String]] {
     [],
     capacity=urlencoded_capacity(source),
   )
-  // Decoded spelling of keys that contain `%` or `+`, so repeated escaped keys
-  // share one decoded copy per parse. Keys without either character keep their
-  // raw spelling.
+  // Decoded spelling of keys that contain `%` or `+`. Keys without either
+  // character keep their raw spelling.
   let escaped_keys : Map[StringView, String] = Map([], capacity=4)
   let length = source.length()
   let mut pos = 0
@@ -3348,8 +3324,7 @@ fn parse_urlencoded_multi(source : StringView) -> Map[String, Array[String]] {
     if end > pos {
       let raw_key = if eq >= 0 { source[pos:eq] } else { source[pos:end] }
       let value = if eq >= 0 { decode_url(source[eq + 1:end]) } else { "" }
-      // A key with neither `%` nor `+` decodes to its raw spelling, so it can
-      // be looked up without allocating a decoded copy; escaped keys must be
+      // A key with neither `%` nor `+` uses its raw spelling; escaped keys are
       // decoded before the lookup, since the map stores decoded spellings.
       if !name_needs_raw(raw_key) {
         match result.get_from_string(raw_key) {
@@ -3827,9 +3802,8 @@ fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
 }
 
 ///|
-/// Prefix-function table for the linear-time delimiter scans below: entry `i`
-/// is the length of the longest proper prefix of `needle[:i+1]` that is also a
-/// suffix of it. Building the table costs O(needle.length()).
+/// Prefix-function table for the delimiter scans below: entry `i` is the length
+/// of the longest proper prefix of `needle[:i+1]` that is also a suffix of it.
 fn delimiter_match_table(needle : StringView) -> Array[Int] {
   let length = needle.length()
   let table : Array[Int] = Array::make(length, 0)
@@ -3851,9 +3825,7 @@ fn delimiter_match_table(needle : StringView) -> Array[Int] {
 ///|
 /// First index at or after `start` where `needle` appears and is terminated by
 /// whitespace, a line break or `--`. The precomputed prefix-function `table`
-/// lets a single forward scan skip over failed prefixes, so the total cost
-/// stays O(view.length()) even when the body and the needle share long
-/// repeated prefixes (e.g. attacker-chosen multipart boundaries).
+/// guides a single forward scan.
 fn find_terminated_delimiter(
   view : StringView,
   needle : StringView,
@@ -3891,7 +3863,7 @@ fn find_terminated_delimiter(
 /// Find the earliest position where either the CRLF-prefixed or the LF-prefixed
 /// part delimiter starts and is properly terminated. The two prefixed needles
 /// begin with different code units, so the earliest match of each can be
-/// searched independently in linear time and the smaller index picked.
+/// searched independently and the smaller index picked.
 fn find_part_delimiter(
   view : StringView,
   crlf_delimiter : StringView,
@@ -4085,12 +4057,10 @@ pub fn multipart_boundary(content_type : String) -> String? {
 ///|
 /// Two most recently indexed header maps, their sizes and their lower-cased
 /// name indexes. The index maps a lower-cased header name to the spelling
-/// stored in the map. A slot is reused while the same map keeps the same number
-/// of entries. Two slots keep request and response header maps from evicting
-/// each other when their lookups alternate. Only positive entries are cached:
-/// the map can be mutated in place with its size unchanged, so a remembered
-/// absence could be stale, while a remembered spelling is always re-validated
-/// against the map before it is trusted.
+/// stored in the map. Only positive entries are cached: the map can be mutated
+/// in place with its size unchanged, so a remembered absence could be stale,
+/// while a remembered spelling is always re-validated against the map before it
+/// is trusted.
 let header_index_map0 : Ref[Map[String, String]?] = Ref(None)
 
 ///|
@@ -4113,9 +4083,7 @@ let header_index_value1 : Ref[Map[String, String]?] = Ref(None)
 let header_index_next : Ref[Int] = Ref(0)
 
 ///|
-/// Lower-cased spellings of recently seen header names. Header names repeat
-/// heavily across requests, so memoizing the `to_lower()` copy avoids
-/// re-allocating the same lower-cased name on every case-insensitive lookup.
+/// Lower-cased spellings of recently seen header names.
 let header_lower_cache : Map[String, String] = Map([])
 
 ///|
@@ -4128,8 +4096,7 @@ const HEADER_LOWER_CACHE_LIMIT : Int = 128
 
 ///|
 /// Lower-case a header name only when it contains upper-case letters. The
-/// lower-cased form is memoized in a bounded cache so repeated lookups of the
-/// same name (the overwhelming majority) do not allocate.
+/// lower-cased form is kept in a bounded cache.
 fn header_name_lower(name : String) -> String {
   if !has_ascii_upper(name.view()) {
     return name
@@ -4230,8 +4197,7 @@ fn get_header_ignore_case(
         return None
       }
   }
-  // `cached_header_spelling` ends with the same linear scan this function used
-  // to repeat, so a `None` from it already proves the header is absent.
+  // A `None` from `cached_header_spelling` proves the header is absent.
   match cached_header_spelling(headers, name) {
     Some(actual) =>
       match headers.get(actual) {
@@ -4248,8 +4214,7 @@ fn get_header_ignore_case(
 
 ///|
 /// Canonical spellings of recently encountered header names, keyed by their
-/// lower-cased form. Header maps are rebuilt per request, but the spellings
-/// are stable, so a seen spelling can be re-validated with a `contains` probe.
+/// lower-cased form.
 let header_spelling_cache : Map[String, String] = Map([])
 
 ///|
@@ -4257,9 +4222,8 @@ let header_spelling_cache : Map[String, String] = Map([])
 let header_spelling_cache_ages : Map[String, Int] = Map([])
 
 ///|
-/// Find the spelling under which `name` is stored, ignoring case. Memoizes the
-/// spelling globally and re-validates it against the map before trusting it, so
-/// in-place replacements are picked up.
+/// Find the spelling under which `name` is stored, ignoring case, and
+/// re-validate it against the map so in-place replacements are picked up.
 fn cached_header_spelling(
   headers : Map[String, String],
   name : String,
@@ -4942,16 +4906,14 @@ pub fn parse_http_date(value : String) -> Int64? {
 }
 
 ///|
-/// `parse_http_date` for a view: callers that already hold a header view avoid
-/// copying the whole date just to parse it.
+/// `parse_http_date` for a view.
 fn parse_http_date_view(view : StringView) -> Int64? {
   match parse_imf_fixdate(view) {
     Some(seconds) => return Some(seconds)
     None => ()
   }
   let length = view.length()
-  // Count tokens before allocating: RFC-850 / asctime dates with unusual
-  // whitespace are rejected here without touching the heap.
+  // Count tokens to reject RFC-850 / asctime dates with unusual whitespace.
   let mut token_count = 0
   let mut probe = 0
   while probe < length {
@@ -5168,8 +5130,7 @@ priv enum PreconditionOutcome {
 
 ///|
 /// The four precondition request headers `evaluate_preconditions` consults,
-/// extracted once so both the server and the offline `App::respond` path share
-/// the evaluation without rebuilding a header map.
+/// shared by the server and the offline `App::respond` path.
 priv struct PreconditionInput {
   if_match : String?
   if_none_match : String?
@@ -5188,10 +5149,8 @@ fn precondition_input_from_http(request : @http.Request) -> PreconditionInput {
 }
 
 ///|
-/// Find a header value by ASCII-case-insensitive name with one allocation-free
-/// pass over the map. The precondition lookup is a one-off probe against names
-/// that are almost always absent, so the shared header index (which lowercases
-/// every name it sees) would cost more than this scan.
+/// Find a header value by ASCII-case-insensitive name in a single pass over the
+/// map.
 fn find_header_value_ci(
   headers : Map[String, String],
   name : String,
@@ -5906,8 +5865,6 @@ fn App::resolve_sse_full(
   if self.sse_handlers.is_empty() {
     return None
   }
-  // One dispatch pass serves both the miss-cache path for unrelated GET
-  // requests and the parameter bindings.
   match self.sse_router.match_dispatch("GET", clean_path_view(path)) {
     DispatchFound(node, params, _) =>
       match self.sse_handlers.get(node.route_path) {
@@ -6117,8 +6074,8 @@ fn join_fs_path(root : String, relative : String) -> String {
 }
 
 ///|
-/// Normalize a decoded relative path. Takes ownership so an already-clean path
-/// is handed back without another copy.
+/// Normalize a decoded relative path, returning it unchanged when it is already
+/// clean.
 fn clean_relative_path(relative : String) -> String? {
   let view = relative.view()
   if view.contains("\u{0}") || view.contains("\\") {
@@ -6233,8 +6190,7 @@ pub fn App::static_files_with(
 
 ///|
 /// Collect every registered route endpoint below `node` into
-/// `(method, path, handler)` triples. Used by `App::mount` so routes live only
-/// in the matching trees instead of a second parallel list.
+/// `(method, path, handler)` triples. Used by `App::mount`.
 fn collect_route_nodes(
   node : RouteNode,
   method : String,
@@ -6432,10 +6388,9 @@ fn App::best_static_mount(
 const STATIC_LOOKUP_CACHE_LIMIT : Int = 256
 
 ///|
-/// Drop one entry from `static_lookup_cache`. Keys still cached as negative
-/// results are drained from the FIFO first, so repeated misses for files that
-/// do not exist cannot flush the hot hits; the FIFO is keyed independently and
-/// stale keys are skipped. Falls back to evicting an arbitrary entry.
+/// Drop one entry from `static_lookup_cache`. Negative results are drained from
+/// the FIFO first; the FIFO is keyed independently and stale keys are skipped.
+/// Falls back to evicting an arbitrary entry.
 fn App::static_lookup_evict(self : App) -> Unit {
   let queued = self.static_lookup_negative
   let mut head = self.static_lookup_negative_head
@@ -6490,15 +6445,14 @@ fn App::static_lookup(
   match self.static_lookup_cache.get_from_string(clean) {
     Some(cached) => cached
     None => {
-      // Resolve the mount once: `static_lookup_uncached` uses it for the file
-      // path and the negative-cache decision below reuses it.
+      // Resolve the mount before looking up the file.
       let mount = self.best_static_mount(clean)
       let result = match mount {
         Some(mount) => self.static_lookup_uncached(clean, mount)
         None => None
       }
-      // Paths that match no mount at all are dynamic routes; caching their
-      // negative result would only evict useful static entries.
+      // Paths that match no mount at all are dynamic routes, so they are not
+      // cached as static misses.
       if clean.length() <= PARSE_CACHE_MAX_KEY &&
         (result is Some(_) || mount is Some(_)) {
         self.static_lookup_remember(clean, result)
@@ -6510,7 +6464,7 @@ fn App::static_lookup(
 
 ///|
 /// Resolve a static file request to its filesystem path, `Cache-Control` value
-/// and precompressed-serving flag in one pass over the configured mounts.
+/// and precompressed-serving flag.
 fn App::static_lookup_uncached(
   self : App,
   path_view : StringView,

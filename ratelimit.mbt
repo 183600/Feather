@@ -168,9 +168,7 @@ pub fn RateLimiter::sweep(self : RateLimiter) -> Unit {
 
 ///|
 /// Drop one arbitrary bucket, keeping the limiter under `RATE_LIMIT_MAX_BUCKETS`
-/// when no bucket has expired yet. The map is a bounded cache of windows, so
-/// dropping an arbitrary entry is enough; scanning for the oldest one would let
-/// key-rotating traffic turn every request into a full scan.
+/// when no bucket has expired yet. The map is a bounded cache of windows.
 fn RateLimiter::evict_one(self : RateLimiter) -> Unit {
   match self.buckets.keys().next() {
     Some(key) => ignore(self.buckets.remove(key))

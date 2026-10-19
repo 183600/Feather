@@ -170,9 +170,8 @@ let last_accept_header : Ref[String?] = Ref(None)
 let last_accept_entries : Ref[Array[AcceptEntry]?] = Ref(None)
 
 ///|
-/// Parsed `Accept` headers keyed by content, so repeated headers from different
-/// requests (the common case, since request header strings are rebuilt) can
-/// still reuse a parse. The stored key owns the text the entry views point at.
+/// Parsed `Accept` headers keyed by content. The stored key owns the text the
+/// entry views point at.
 let accept_entries_cache : Map[String, Array[AcceptEntry]] = Map([])
 
 ///|
@@ -211,7 +210,7 @@ fn accept_entries_cached(header : String) -> Array[AcceptEntry] {
 
 ///|
 /// Parsed spellings of media types passed to `Context::accepts`, keyed by
-/// content. Handlers typically test several constant media types per request.
+/// content.
 let media_type_parts_cache : Map[String, (String, String)] = Map([])
 
 ///|
@@ -401,8 +400,7 @@ let last_encoding_header : Ref[String?] = Ref(None)
 let last_encoding_entries : Ref[Array[EncodingEntry]?] = Ref(None)
 
 ///|
-/// Parsed `Accept-Encoding` headers keyed by content; compression negotiation
-/// reads the same header a few times per request.
+/// Parsed `Accept-Encoding` headers keyed by content.
 let encoding_entries_cache : Map[String, Array[EncodingEntry]] = Map([])
 
 ///|

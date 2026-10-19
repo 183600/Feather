@@ -104,8 +104,7 @@ fn sanitize_sse_field(value : String) -> String {
 }
 
 ///|
-/// Cleaned spelling of a single-line field, memoized so a stream that reuses
-/// the same `event` name on every event does not re-sanitize it each time.
+/// Cleaned spelling of a single-line field.
 fn Sse::cleaned_event(self : Sse, name : String) -> String {
   match self.last_event {
     Some(cached) =>
