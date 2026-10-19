@@ -231,3 +231,44 @@ async test "sse data keeps a trailing line break" {
     assert_eq(client.read_all().text(), "data: line\ndata: \n\n")
   })
 }
+
+///|
+async test "sse routes run application middleware and merge its headers" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        ctx.set_header("X-Middleware", "yes")
+        ctx.set_cookie("probe", "1")
+        if ctx.header("X-Token") == "secret" {
+          next(ctx)
+        } else {
+          ctx.text(401, "unauthorized")
+        }
+      }
+    })
+    .sse("/events", async fn(_ctx, sse) {
+      sse.send("live")
+    })
+  with_sse_server(app, client => {
+    let rejected = client.get("/events")
+    assert_eq(rejected.code, 401)
+    assert_eq(client.read_all().text(), "unauthorized")
+    let response = client.get(
+      "/events",
+      extra_headers=Map([(@http.CaseInsensitiveString("X-Token"), "secret")]),
+    )
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-Middleware")),
+      Some("yes"),
+    )
+    assert_eq(response.cookies.length(), 1)
+    assert_eq(response.cookies[0].name, "probe")
+    assert_eq(response.cookies[0].value, "1")
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Type")),
+      Some("text/event-stream; charset=utf-8"),
+    )
+    assert_eq(client.read_all().text(), "data: live\n\n")
+  })
+}

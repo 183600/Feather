@@ -244,6 +244,44 @@ async test "unknown stream path falls back to the router" {
 }
 
 ///|
+async test "stream routes run application middleware and inherit its response" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        ctx.set_header("X-Middleware", "yes")
+        ctx.status(201)
+        if ctx.header("X-Token") == "secret" {
+          next(ctx)
+        } else {
+          ctx.text(401, "unauthorized")
+        }
+      }
+    })
+    .stream("/feed", async fn(_ctx, stream) {
+      stream.write("live")
+    })
+  with_stream_server(app, client => {
+    let rejected = client.get("/feed")
+    assert_eq(rejected.code, 401)
+    assert_eq(client.read_all().text(), "unauthorized")
+    let response = client.get(
+      "/feed",
+      extra_headers=Map([(@http.CaseInsensitiveString("X-Token"), "secret")]),
+    )
+    assert_eq(response.code, 201)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-Middleware")),
+      Some("yes"),
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Type")),
+      Some("text/plain; charset=utf-8"),
+    )
+    assert_eq(client.read_all().text(), "live")
+  })
+}
+
+///|
 test "Feather stream registers a resolvable stream route" {
   let app = @feather.create_feather(
     { host: "127.0.0.1", port: 0, timeout: 0 },

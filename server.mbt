@@ -695,6 +695,96 @@ async fn send_error_and_close(
 }
 
 ///|
+/// Context state key marking that the middleware chain called through to an
+/// asynchronous endpoint (WebSocket, SSE or streaming response).
+const ASYNC_CHAIN_PASS_KEY : String = "__feather_async_pass"
+
+///|
+/// Send the response a short-circuiting middleware produced for an
+/// asynchronous endpoint, supporting both ordinary bodies and file responses.
+async fn send_context_response(
+  conn : @http.ServerConnection,
+  ctx : Context,
+  head : Bool,
+  request : @http.Request,
+) -> Unit {
+  match ctx.file_response() {
+    Some(file) => send_file_response(conn, ctx.response, file, head, request)
+    None => send_response(conn, ctx.response, head)
+  }
+}
+
+///|
+/// Run a middleware chain before an asynchronous endpoint starts.
+///
+/// Middleware that short-circuits (for example an authenticator) answers the
+/// request instead of letting the endpoint start. Middleware that calls through
+/// lets the endpoint proceed; headers and cookies it added to the response are
+/// carried into SSE and streaming responses.
+fn run_async_middleware_chain(
+  middlewares : Array[Middleware],
+  ctx : Context,
+) -> Bool {
+  if middlewares.length() == 0 {
+    return true
+  }
+  // A previous chain (the application-level one) may have left its pass marker
+  // behind; clear it so only a call-through in this chain counts.
+  ctx.state.remove(ASYNC_CHAIN_PASS_KEY)
+  let terminal : Handler = fn(ctx) {
+    ctx.state.set(ASYNC_CHAIN_PASS_KEY, "1")
+  }
+  let chain = apply_middleware(middlewares, terminal)
+  chain(ctx) catch {
+    HttpError(status, message) => error_response(ctx, status, message)
+    HttpErrorPayload(status, message, payload) =>
+      error_response_with_payload(ctx, status, message, payload)
+    err => internal_error(ctx, "\{err}")
+  }
+  ctx.state.get(ASYNC_CHAIN_PASS_KEY) is Some(_)
+}
+
+///|
+/// Run the application middleware chain, then any middleware attached to the
+/// matched asynchronous route (such as the mounted application's middleware).
+/// Returns `true` when both chains called through.
+fn App::run_async_middleware(
+  self : App,
+  ctx : Context,
+  route_middlewares : Array[Middleware],
+) -> Bool {
+  if !run_async_middleware_chain(self.middlewares, ctx) {
+    return false
+  }
+  run_async_middleware_chain(route_middlewares, ctx)
+}
+
+///|
+/// Whether a response header must not be carried into a streaming response,
+/// because the runtime computes it from the chunked body instead.
+fn is_stream_reserved_header(name : String) -> Bool {
+  name.view().equal_ignore_ascii_case("content-length".view()) ||
+  name.view().equal_ignore_ascii_case("transfer-encoding".view()) ||
+  name.view().equal_ignore_ascii_case("connection".view())
+}
+
+///|
+/// Copy the headers a middleware chain accumulated into a map suitable for a
+/// `Stream`, dropping the framing headers the runtime owns.
+fn stream_seed_headers(response : Response) -> Map[String, String] {
+  let headers : Map[String, String] = Map(
+    [],
+    capacity=response.headers.length(),
+  )
+  for name, value in response.headers {
+    if !is_stream_reserved_header(name) {
+      headers.set(name, value)
+    }
+  }
+  headers
+}
+
+///|
 /// Answer an `Expect: 100-continue` handshake with the interim `100 Continue`
 /// response (RFC 9110 §10.1.1), so clients that wait for it before uploading
 /// a body are not left blocked until they time out. The final response is sent
@@ -1241,6 +1331,7 @@ async fn handle_websocket(
   conn : @http.ServerConnection,
   handler : WebSocketHandler,
   params : Map[String, String],
+  route_middlewares : Array[Middleware],
 ) -> Unit {
   let req = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
@@ -1256,17 +1347,21 @@ async fn handle_websocket(
       return
     }
   }
-  let socket = @websocket.from_http_server(request, conn) catch {
-    _ => return
-  }
-  defer conn.close()
-  defer socket.close()
   let ctx = Context::new(req)
   defer ctx.run_cleanups()
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
   }
+  if !app.run_async_middleware(ctx, route_middlewares) {
+    send_context_response(conn, ctx, false, request)
+    return
+  }
+  let socket = @websocket.from_http_server(request, conn) catch {
+    _ => return
+  }
+  defer conn.close()
+  defer socket.close()
   handler(ctx, socket) catch {
     _ => ()
   }
@@ -1285,6 +1380,7 @@ async fn handle_sse(
   conn : @http.ServerConnection,
   handler : SseHandler,
   params : Map[String, String],
+  route_middlewares : Array[Middleware],
 ) -> Unit {
   let req = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
@@ -1300,23 +1396,42 @@ async fn handle_sse(
       return
     }
   }
-  let headers : @http.Headers = Map([
-    (header_content_type, "text/event-stream; charset=utf-8"),
-    (header_cache_control, "no-cache"),
-    (header_x_accel_buffering, "no"),
-  ])
-  send_with_date(conn, 200, "OK", headers)
-  conn.flush() catch {
-    _ => {
-      conn.close()
-      return
-    }
-  }
   let ctx = Context::new(req)
   defer ctx.run_cleanups()
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
+  }
+  if !app.run_async_middleware(ctx, route_middlewares) {
+    send_context_response(conn, ctx, false, request)
+    return
+  }
+  let headers : @http.Headers = Map(
+    [],
+    capacity=ctx.response.headers.length() + 3,
+  )
+  for name, value in ctx.response.headers {
+    if !is_stream_reserved_header(name) &&
+      !name.view().equal_ignore_ascii_case("content-type".view()) {
+      headers.set(header_key(name), value)
+    }
+  }
+  headers.set(header_content_type, "text/event-stream; charset=utf-8")
+  if !headers.contains(header_cache_control) {
+    headers.set(header_cache_control, "no-cache")
+  }
+  if !headers.contains(header_x_accel_buffering) {
+    headers.set(header_x_accel_buffering, "no")
+  }
+  if ctx.response.cookies.length() > 0 {
+    headers.remove(header_set_cookie)
+  }
+  send_with_date(conn, 200, "OK", headers, cookies=ctx.response.cookies)
+  conn.flush() catch {
+    _ => {
+      conn.close()
+      return
+    }
   }
   let sse = Sse::new(conn)
   handler(ctx, sse) catch {
@@ -1341,6 +1456,7 @@ async fn handle_stream(
   conn : @http.ServerConnection,
   handler : StreamHandler,
   params : Map[String, String],
+  route_middlewares : Array[Middleware],
 ) -> Unit {
   let req = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
@@ -1362,7 +1478,16 @@ async fn handle_stream(
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
   }
-  let stream = Stream::new(conn)
+  if !app.run_async_middleware(ctx, route_middlewares) {
+    send_context_response(conn, ctx, false, request)
+    return
+  }
+  let stream = Stream::new(
+    conn,
+    status=ctx.response.status,
+    headers=stream_seed_headers(ctx.response),
+    cookies=ctx.response.cookies,
+  )
   let mut failed = false
   handler(ctx, stream) catch {
     _ => failed = true
@@ -1396,21 +1521,29 @@ async fn handle_request(
   send_continue_if_expected(request, conn)
   let head = request.meth is @http.Head
   if request.meth is @http.Get {
-    match app.resolve_websocket(request.path) {
-      Some((handler, params)) => {
-        handle_websocket(app, request, body, conn, handler, params)
+    match app.resolve_websocket_full(request.path) {
+      Some((handler, params, middlewares)) => {
+        handle_websocket(app, request, body, conn, handler, params, middlewares)
         return
       }
       None =>
-        match app.resolve_sse(request.path) {
-          Some((handler, params)) => {
-            handle_sse(app, request, body, conn, handler, params)
+        match app.resolve_sse_full(request.path) {
+          Some((handler, params, middlewares)) => {
+            handle_sse(app, request, body, conn, handler, params, middlewares)
             return
           }
           None =>
-            match app.resolve_stream(request.path) {
-              Some((handler, params)) => {
-                handle_stream(app, request, body, conn, handler, params)
+            match app.resolve_stream_full(request.path) {
+              Some((handler, params, middlewares)) => {
+                handle_stream(
+                  app,
+                  request,
+                  body,
+                  conn,
+                  handler,
+                  params,
+                  middlewares,
+                )
                 return
               }
               None => ()

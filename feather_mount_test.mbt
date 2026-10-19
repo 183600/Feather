@@ -187,6 +187,77 @@ test "mount at the root keeps child paths" {
 }
 
 ///|
+async test "mount applies child middleware to async endpoints" {
+  let auth : @feather.Middleware = fn(next) {
+    fn(ctx) raise {
+      ctx.set_header("X-Child", "yes")
+      if ctx.header("X-Token") == "secret" {
+        next(ctx)
+      } else {
+        ctx.text(401, "unauthorized")
+      }
+    }
+  }
+  let child = @feather.App::new()
+    .use(auth)
+    .websocket("/ws", fn(_ctx, ws) {
+      ws.send_text("ws")
+      ws.send_close()
+    })
+    .sse("/events", async fn(_ctx, sse) { sse.send("sse") })
+    .stream("/feed", async fn(_ctx, stream) { stream.write("stream") })
+  let app = @feather.App::new()
+    .use(tag_header("X-Parent", "on"))
+    .mount("/api", child)
+  with_server(app, client => {
+    for path in ["/api/ws", "/api/events", "/api/feed"] {
+      let response = client.get(path)
+      assert_eq(response.code, 401)
+      assert_eq(
+        response.headers.get(@http.CaseInsensitiveString("X-Parent")),
+        Some("on"),
+      )
+      assert_eq(
+        response.headers.get(@http.CaseInsensitiveString("X-Child")),
+        Some("yes"),
+      )
+      assert_eq(client.read_all().text(), "unauthorized")
+    }
+  })
+  with_ws_server(app, base => {
+    let ws = @websocket.connect(
+      base + "/api/ws",
+      headers=Map([(@http.CaseInsensitiveString("X-Token"), "secret")]),
+    )
+    defer ws.close()
+    assert_eq(ws.recv().read_all().text(), "ws")
+    ws.send_close()
+  })
+  with_sse_server(app, client => {
+    let response = client.get(
+      "/api/events",
+      extra_headers=Map([(@http.CaseInsensitiveString("X-Token"), "secret")]),
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-Child")),
+      Some("yes"),
+    )
+    assert_eq(client.read_all().text(), "data: sse\n\n")
+  })
+  with_stream_server(app, client => {
+    let response = client.get(
+      "/api/feed",
+      extra_headers=Map([(@http.CaseInsensitiveString("X-Token"), "secret")]),
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-Child")),
+      Some("yes"),
+    )
+    assert_eq(client.read_all().text(), "stream")
+  })
+}
+
+///|
 test "feather facade mounts applications" {
   let child = @feather.create_feather({
     host: "127.0.0.1",

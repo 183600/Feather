@@ -5394,10 +5394,13 @@ pub struct App {
   mut no_route_handler : Handler?
   ws_router : Router
   ws_handlers : Map[String, WebSocketHandler]
+  ws_middlewares : Map[String, Array[Middleware]]
   sse_router : Router
   sse_handlers : Map[String, SseHandler]
+  sse_middlewares : Map[String, Array[Middleware]]
   stream_router : Router
   stream_handlers : Map[String, StreamHandler]
+  stream_middlewares : Map[String, Array[Middleware]]
   mut compress_enabled : Bool
   mut compress_min_size : Int32
   mut etag_enabled : Bool
@@ -5419,10 +5422,13 @@ fn App::fresh(timeout : Int32) -> App {
     no_route_handler: None,
     ws_router: create_router(),
     ws_handlers: Map([]),
+    ws_middlewares: Map([]),
     sse_router: create_router(),
     sse_handlers: Map([]),
+    sse_middlewares: Map([]),
     stream_router: create_router(),
     stream_handlers: Map([]),
+    stream_middlewares: Map([]),
     compress_enabled: false,
     compress_min_size: 1024,
     etag_enabled: false,
@@ -5518,6 +5524,7 @@ pub fn App::websocket(
   let clean_path = clean_route_path(path)
   self.ws_router.add_route("GET", clean_path, fn(_ctx) { () })
   self.ws_handlers.set(clean_path, handler)
+  self.ws_middlewares.set(clean_path, [])
   self
 }
 
@@ -5535,13 +5542,17 @@ pub fn App::has_websocket(self : App, path : String) -> Bool {
 /// The handler receives a `Sse` writer after the `200 OK` header
 /// (`Content-Type: text/event-stream`) has been sent and keeps the response
 /// open until it returns or calls `Sse::close`. Event streams are long-lived,
-/// so they are not subject to `App::request_timeout`, and application
-/// middleware registered with `App::use` does not run for them, mirroring
-/// `App::websocket`. Path parameters are available through `Context::param`.
+/// so they are not subject to `App::request_timeout`. Application middleware
+/// registered with `App::use` runs before the event stream starts, so it can
+/// reject the request or add response headers/cookies; headers it sets are
+/// carried into the stream and a middleware that answers without calling
+/// through replaces the stream entirely. Path parameters are available through
+/// `Context::param`.
 pub fn App::sse(self : App, path : String, handler : SseHandler) -> App {
   let clean_path = clean_route_path(path)
   self.sse_router.add_route("GET", clean_path, fn(_ctx) { () })
   self.sse_handlers.set(clean_path, handler)
+  self.sse_middlewares.set(clean_path, [])
   self
 }
 
@@ -5558,6 +5569,17 @@ pub fn App::resolve_sse(
   self : App,
   path : String,
 ) -> (SseHandler, Map[String, String])? {
+  match self.resolve_sse_full(path) {
+    Some((handler, params, _)) => Some((handler, params))
+    None => None
+  }
+}
+
+///|
+fn App::resolve_sse_full(
+  self : App,
+  path : String,
+) -> (SseHandler, Map[String, String], Array[Middleware])? {
   if self.sse_handlers.is_empty() {
     return None
   }
@@ -5568,10 +5590,17 @@ pub fn App::resolve_sse(
     DispatchFound(node, params, _) =>
       match self.sse_handlers.get(node.route_path) {
         Some(handler) =>
-          Some((handler, match params {
-            Some(params) => params.copy()
-            None => Map([], capacity=0)
-          }))
+          Some((
+            handler,
+            match params {
+              Some(params) => params.copy()
+              None => Map([], capacity=0)
+            },
+            match self.sse_middlewares.get(node.route_path) {
+              Some(middlewares) => middlewares
+              None => []
+            },
+          ))
         None => None
       }
     _ => None
@@ -5583,6 +5612,17 @@ pub fn App::resolve_websocket(
   self : App,
   path : String,
 ) -> (WebSocketHandler, Map[String, String])? {
+  match self.resolve_websocket_full(path) {
+    Some((handler, params, _)) => Some((handler, params))
+    None => None
+  }
+}
+
+///|
+fn App::resolve_websocket_full(
+  self : App,
+  path : String,
+) -> (WebSocketHandler, Map[String, String], Array[Middleware])? {
   if self.ws_handlers.is_empty() {
     return None
   }
@@ -5590,10 +5630,17 @@ pub fn App::resolve_websocket(
     DispatchFound(node, params, _) =>
       match self.ws_handlers.get(node.route_path) {
         Some(handler) =>
-          Some((handler, match params {
-            Some(params) => params.copy()
-            None => Map([], capacity=0)
-          }))
+          Some((
+            handler,
+            match params {
+              Some(params) => params.copy()
+              None => Map([], capacity=0)
+            },
+            match self.ws_middlewares.get(node.route_path) {
+              Some(middlewares) => middlewares
+              None => []
+            },
+          ))
         None => None
       }
     _ => None
@@ -5611,14 +5658,17 @@ pub fn App::resolve_websocket(
 /// fit for one-way event feeds (`App::sse`); streaming is the general escape
 /// hatch, for example for generated downloads or proxying.
 ///
-/// Streams are long-lived, so they are not subject to `App::request_timeout`,
-/// and application middleware registered with `App::use` does not run for
-/// them, mirroring `App::websocket` and `App::sse`. Path parameters are
-/// available through `Context::param`.
+/// Streams are long-lived, so they are not subject to `App::request_timeout`.
+/// Application middleware registered with `App::use` runs before the first
+/// chunk is written, so it can reject the request, choose the response status
+/// or add headers/cookies; a middleware that answers without calling through
+/// replaces the stream entirely. Path parameters are available through
+/// `Context::param`.
 pub fn App::stream(self : App, path : String, handler : StreamHandler) -> App {
   let clean_path = clean_route_path(path)
   self.stream_router.add_route("GET", clean_path, fn(_ctx) { () })
   self.stream_handlers.set(clean_path, handler)
+  self.stream_middlewares.set(clean_path, [])
   self
 }
 
@@ -5635,6 +5685,17 @@ pub fn App::resolve_stream(
   self : App,
   path : String,
 ) -> (StreamHandler, Map[String, String])? {
+  match self.resolve_stream_full(path) {
+    Some((handler, params, _)) => Some((handler, params))
+    None => None
+  }
+}
+
+///|
+fn App::resolve_stream_full(
+  self : App,
+  path : String,
+) -> (StreamHandler, Map[String, String], Array[Middleware])? {
   if self.stream_handlers.is_empty() {
     return None
   }
@@ -5642,10 +5703,17 @@ pub fn App::resolve_stream(
     DispatchFound(node, params, _) =>
       match self.stream_handlers.get(node.route_path) {
         Some(handler) =>
-          Some((handler, match params {
-            Some(params) => params.copy()
-            None => Map([], capacity=0)
-          }))
+          Some((
+            handler,
+            match params {
+              Some(params) => params.copy()
+              None => Map([], capacity=0)
+            },
+            match self.stream_middlewares.get(node.route_path) {
+              Some(middlewares) => middlewares
+              None => []
+            },
+          ))
         None => None
       }
     _ => None
@@ -5805,6 +5873,26 @@ fn collect_route_nodes(
 }
 
 ///|
+/// Snapshot the middleware chain an asynchronous route needs after being
+/// mounted: the child application's own middleware first, then any middleware
+/// that was attached to the route when the child itself mounted another app.
+fn mounted_middlewares(
+  outer : Array[Middleware],
+  per_route : Map[String, Array[Middleware]],
+  path : String,
+) -> Array[Middleware] {
+  let combined = outer.copy()
+  match per_route.get(path) {
+    Some(middlewares) =>
+      for middleware in middlewares {
+        combined.push(middleware)
+      }
+    None => ()
+  }
+  combined
+}
+
+///|
 /// Mount another application under `prefix`, keeping its routes, middleware,
 /// static mounts, named routes, websocket, server-sent events and streaming
 /// handlers.
@@ -5847,16 +5935,28 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
     let mounted = join_paths(base, path)
     self.ws_router.add_route("GET", mounted, fn(_ctx) { () })
     self.ws_handlers.set(mounted, handler)
+    self.ws_middlewares.set(
+      mounted,
+      mounted_middlewares(child.middlewares, child.ws_middlewares, path),
+    )
   }
   for path, handler in child.sse_handlers {
     let mounted = join_paths(base, path)
     self.sse_router.add_route("GET", mounted, fn(_ctx) { () })
     self.sse_handlers.set(mounted, handler)
+    self.sse_middlewares.set(
+      mounted,
+      mounted_middlewares(child.middlewares, child.sse_middlewares, path),
+    )
   }
   for path, handler in child.stream_handlers {
     let mounted = join_paths(base, path)
     self.stream_router.add_route("GET", mounted, fn(_ctx) { () })
     self.stream_handlers.set(mounted, handler)
+    self.stream_middlewares.set(
+      mounted,
+      mounted_middlewares(child.middlewares, child.stream_middlewares, path),
+    )
   }
   self.chain = None
   self.static_chain = None

@@ -15,11 +15,24 @@ pub struct Stream {
   mut started : Bool
   mut status : Int32
   headers : Map[String, String]
+  priv cookies : Array[@http.Cookie]
 }
 
 ///|
-fn Stream::new(conn : @http.ServerConnection) -> Stream {
-  { conn, closed: false, started: false, status: 200, headers: Map([]) }
+fn Stream::new(
+  conn : @http.ServerConnection,
+  status~ : Int32 = 200,
+  headers~ : Map[String, String] = Map([]),
+  cookies~ : Array[@http.Cookie] = [],
+) -> Stream {
+  {
+    conn,
+    closed: false,
+    started: false,
+    status,
+    headers,
+    cookies,
+  }
 }
 
 ///|
@@ -72,7 +85,16 @@ async fn Stream::start(self : Stream) -> Unit {
   if !headers.contains(header_content_type) {
     headers.set(header_content_type, "text/plain; charset=utf-8")
   }
-  send_with_date(self.conn, self.status, status_text(self.status), headers)
+  if self.cookies.length() > 0 {
+    headers.remove(header_set_cookie)
+  }
+  send_with_date(
+    self.conn,
+    self.status,
+    status_text(self.status),
+    headers,
+    cookies=self.cookies,
+  )
 }
 
 ///|

@@ -346,6 +346,48 @@ async test "non GET requests on websocket paths fall through to router" {
 }
 
 ///|
+async test "websocket routes run application middleware" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        match ctx.header("X-Token") {
+          "secret" => next(ctx)
+          "boom" => raise @feather.HttpError(403, "forbidden")
+          _ => ctx.text(401, "unauthorized")
+        }
+      }
+    })
+    .websocket("/ws/secure", fn(_ctx, ws) {
+      ws.send_text("welcome")
+      ws.send_close()
+    })
+  with_server(app, client => {
+    let response = client.get("/ws/secure")
+    assert_eq(response.code, 401)
+    assert_eq(client.read_all().text(), "unauthorized")
+    let raised = client.get(
+      "/ws/secure",
+      extra_headers=Map([(@http.CaseInsensitiveString("X-Token"), "boom")]),
+    )
+    assert_eq(raised.code, 403)
+    assert_eq(
+      client.read_all().text(),
+      "{\"status\":403,\"error\":\"forbidden\"}",
+    )
+  })
+  with_ws_server(app, base => {
+    let ws = @websocket.connect(
+      base + "/ws/secure",
+      headers=Map([(@http.CaseInsensitiveString("X-Token"), "secret")]),
+    )
+    defer ws.close()
+    let msg = ws.recv()
+    assert_eq(msg.read_all().text(), "welcome")
+    ws.send_close()
+  })
+}
+
+///|
 test "Context cookies parse request header" {
   let ctx = @feather.Context::new({
     method: "GET",

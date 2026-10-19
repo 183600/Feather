@@ -125,10 +125,13 @@ pub struct App {
   mut no_route_handler : ((Context) -> Unit raise)?
   ws_router : Router
   ws_handlers : Map[String, async (Context, @websocket.Conn) -> Unit]
+  ws_middlewares : Map[String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise]]
   sse_router : Router
   sse_handlers : Map[String, async (Context, Sse) -> Unit]
+  sse_middlewares : Map[String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise]]
   stream_router : Router
   stream_handlers : Map[String, async (Context, Stream) -> Unit]
+  stream_middlewares : Map[String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise]]
   mut compress_enabled : Bool
   mut compress_min_size : Int
   mut etag_enabled : Bool
@@ -498,6 +501,7 @@ pub struct Stream {
   mut started : Bool
   mut status : Int
   headers : Map[String, String]
+  // private fields
 }
 pub async fn Stream::close(Self) -> Unit
 pub async fn Stream::flush(Self) -> Unit
