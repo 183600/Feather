@@ -204,6 +204,16 @@ async fn compress_response(
     response.status == 206 {
     return
   }
+  // Without a compressible `Content-Type` there is nothing else to decide;
+  // checking it first avoids building the case-insensitive header index for
+  // responses that opt out simply by carrying no content type.
+  let content_type = match get_header_ignore_case(response.headers, "Content-Type") {
+    Some(value) => value.view()
+    None => return
+  }
+  if !content_type_is_compressible(content_type) {
+    return
+  }
   if get_header_ignore_case(response.headers, "Content-Encoding") is Some(_) {
     return
   }
@@ -216,13 +226,6 @@ async fn compress_response(
         return
       }
     None => ()
-  }
-  let content_type = match get_header_ignore_case(response.headers, "Content-Type") {
-    Some(value) => value.view()
-    None => return
-  }
-  if !content_type_is_compressible(content_type) {
-    return
   }
   add_vary_accept_encoding(response)
   let accept_encoding = match request.headers.get(header_accept_encoding) {

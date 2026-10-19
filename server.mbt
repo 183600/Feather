@@ -142,8 +142,60 @@ async fn send_with_date(
 }
 
 ///|
-async fn read_body_bytes(reader : &@io.Reader, limit : Int32) -> Bytes {
-  let first = match reader.read_some(max_len=8192) {
+/// Size of the chunks read from a request body. Larger reads reduce the number
+/// of async round trips for uploads while staying cache friendly.
+const BODY_READ_CHUNK_SIZE : Int = 65536
+
+///|
+/// Upper bound on the buffer pre-sized from `Content-Length`. A client can
+/// declare more than it sends, so the hint stays modest and the buffer grows
+/// only as bytes actually arrive.
+const BODY_SIZE_HINT_LIMIT : Int = 1048576
+
+///|
+/// `Content-Length` clamped to the body limit and the pre-size cap, or `0` when
+/// the header is absent or malformed. Only used as an allocation hint; the body
+/// limit is still enforced on the bytes actually read.
+fn body_size_hint(request : @http.Request, limit : Int32) -> Int {
+  let limit_int = limit
+  let cap : Int = if limit_int < BODY_SIZE_HINT_LIMIT {
+    limit_int
+  } else {
+    BODY_SIZE_HINT_LIMIT
+  }
+  if cap <= 0 {
+    return 0
+  }
+  let view = match request.headers.get(header_content_length) {
+    Some(value) => trim_ascii_space(value.view())
+    None => return 0
+  }
+  let mut total = 0
+  let mut i = 0
+  while i < view.length() {
+    let digit = view.unsafe_get(i).to_int() - 48
+    if digit < 0 || digit > 9 {
+      return 0
+    }
+    if total > cap / 10 {
+      return cap
+    }
+    total = total * 10 + digit
+    if total > cap {
+      return cap
+    }
+    i = i + 1
+  }
+  total
+}
+
+///|
+async fn read_body_bytes(
+  reader : &@io.Reader,
+  limit : Int32,
+  size_hint~ : Int = 0,
+) -> Bytes {
+  let first = match reader.read_some(max_len=BODY_READ_CHUNK_SIZE) {
     None => return b""
     Some(chunk) => chunk
   }
@@ -151,15 +203,20 @@ async fn read_body_bytes(reader : &@io.Reader, limit : Int32) -> Bytes {
   if total > limit {
     raise PayloadTooLarge
   }
-  // Size the buffer hint from the first chunk, capped by the limit.
   let limit_int = limit
   let first_length = first.length()
-  let hint : Int = if first_length < limit_int { first_length } else { limit_int }
+  let hint : Int = if size_hint > first_length {
+    if size_hint < limit_int { size_hint } else { limit_int }
+  } else if first_length < limit_int {
+    first_length
+  } else {
+    limit_int
+  }
   let buffer = @buffer.Buffer::Buffer(size_hint=hint)
   buffer.write_bytes(first)
   let mut done = false
   while !done {
-    match reader.read_some(max_len=8192) {
+    match reader.read_some(max_len=BODY_READ_CHUNK_SIZE) {
       None => done = true
       Some(chunk) => {
         total = total + chunk.length()
@@ -174,8 +231,12 @@ async fn read_body_bytes(reader : &@io.Reader, limit : Int32) -> Bytes {
 }
 
 ///|
-async fn read_body(reader : &@io.Reader, limit : Int32) -> String {
-  @utf8.decode_lossy(read_body_bytes(reader, limit))
+async fn read_body(
+  reader : &@io.Reader,
+  limit : Int32,
+  size_hint~ : Int = 0,
+) -> String {
+  @utf8.decode_lossy(read_body_bytes(reader, limit, size_hint~))
 }
 
 ///|
@@ -200,7 +261,7 @@ async fn decode_gzip_body(data : Bytes, limit : Int32) -> Bytes {
   let mut total = 0
   let mut done = false
   while !done {
-    let chunk = decoder.read_some(max_len=8192) catch {
+    let chunk = decoder.read_some(max_len=BODY_READ_CHUNK_SIZE) catch {
       _ => raise MalformedRequestBody
     }
     match chunk {
@@ -269,12 +330,16 @@ async fn request_from_http(
       headers.set(text, value)
     }
   }
+  let body_hint = body_size_hint(request, max_body_size)
   let body_text = if gzip_encoded {
     @utf8.decode_lossy(
-      decode_gzip_body(read_body_bytes(body, max_body_size), max_body_size),
+      decode_gzip_body(
+        read_body_bytes(body, max_body_size, size_hint=body_hint),
+        max_body_size,
+      ),
     )
   } else {
-    read_body(body, max_body_size)
+    read_body(body, max_body_size, size_hint=body_hint)
   }
   {
     method: request_method_to_string(request.meth),
@@ -285,10 +350,11 @@ async fn request_from_http(
 }
 
 ///|
-/// Bounded cache of the most recently built validators, keyed by file path.
-/// Each entry records the `(size, mtime)` it was built from, so a changed
-/// file replaces its stale validators on the next request. The `Content-Type`
-/// derived from the path is cached alongside them.
+/// Bounded caches of the most recently built validators, keyed by file path.
+/// Each entry records the `(size, mtime)` it was built from, so a changed file
+/// replaces its stale validators on the next request. The precompressed
+/// representation has its own cache because it has different size and mtime
+/// but keeps the `Content-Type` derived from the original path.
 let validators_cache : Map[
   String,
   (Int64, Int64, Int, (String, String), String),
@@ -299,7 +365,18 @@ let validators_cache : Map[
 let validators_cache_ages : Map[String, Int] = Map([])
 
 ///|
-/// Maximum number of files tracked by `validators_cache`.
+/// Validators for precompressed representations, keyed by the source path.
+let gzip_validators_cache : Map[
+  String,
+  (Int64, Int64, Int, (String, String), String),
+] = Map([])
+
+///|
+/// Recency ticks for `gzip_validators_cache`.
+let gzip_validators_cache_ages : Map[String, Int] = Map([])
+
+///|
+/// Maximum number of files tracked by each validators cache.
 const VALIDATORS_CACHE_LIMIT : Int = 64
 
 ///|
@@ -310,13 +387,17 @@ fn file_validators(
   size : Int64,
   mtime_secs : Int64,
   mtime_nanos : Int,
+  cache_key~ : String,
+  gzip~ : Bool = false,
 ) -> (String, String, String) {
-  match validators_cache.get(path) {
+  let cache = if gzip { gzip_validators_cache } else { validators_cache }
+  let ages = if gzip { gzip_validators_cache_ages } else { validators_cache_ages }
+  match cache.get(cache_key) {
     Some((cached_size, cached_secs, cached_nanos, value, content_type)) =>
       if cached_size == size &&
         cached_secs == mtime_secs &&
         cached_nanos == mtime_nanos {
-        cache_touch(validators_cache_ages, path)
+        cache_touch(ages, cache_key)
         return (value.0, value.1, content_type)
       }
     None => ()
@@ -331,10 +412,10 @@ fn file_validators(
   let value = (etag, format_http_date(mtime_secs))
   let content_type = mime_type_for(path)
   cache_set(
-    validators_cache,
-    validators_cache_ages,
+    cache,
+    ages,
     VALIDATORS_CACHE_LIMIT,
-    path,
+    cache_key,
     (size, mtime_secs, mtime_nanos, value, content_type),
   )
   (etag, value.1, content_type)
@@ -393,6 +474,7 @@ async fn send_file_response(
     size,
     mtime_secs,
     mtime_nanos,
+    cache_key=file.path,
   )
   let headers : @http.Headers = Map([], capacity=response.headers.length() + 4)
   for name, value in response.headers {
@@ -606,6 +688,34 @@ let request_header_name_ages : Map[@http.CaseInsensitiveString, Int] = Map([])
 
 ///|
 fn header_key(name : String) -> @http.CaseInsensitiveString {
+  // Responses overwhelmingly use a small set of canonical spellings; mapping
+  // those directly avoids two cache-map probes (and the recency bookkeeping)
+  // for every header sent.
+  if name == "Content-Type" {
+    return header_content_type
+  } else if name == "Content-Length" {
+    return header_content_length
+  } else if name == "ETag" {
+    return header_etag
+  } else if name == "Last-Modified" {
+    return header_last_modified
+  } else if name == "Cache-Control" {
+    return header_cache_control
+  } else if name == "Set-Cookie" {
+    return header_set_cookie
+  } else if name == "Vary" {
+    return header_vary
+  } else if name == "Content-Encoding" {
+    return header_content_encoding
+  } else if name == "Content-Range" {
+    return header_content_range
+  } else if name == "Accept-Ranges" {
+    return header_accept_ranges
+  } else if name == "Location" {
+    return header_location
+  } else if name == "Date" {
+    return header_date
+  }
   match header_name_cache.get(name) {
     Some(key) => {
       cache_touch(header_name_cache_ages, name)
@@ -1165,6 +1275,8 @@ async fn serve_static_file(
     size,
     mtime_secs,
     mtime_nanos,
+    cache_key=file_path,
+    gzip=serving_gzip,
   )
   let etag_key = header_etag
   let last_modified_key = header_last_modified

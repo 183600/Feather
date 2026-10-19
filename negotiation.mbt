@@ -281,7 +281,16 @@ pub fn Context::preferred_type(
   self : Context,
   offers : ArrayView[String],
 ) -> String? {
-  let entries = accept_entries_cached(self.header("Accept"))
+  let header = self.header("Accept")
+  if trim_ascii_space(header.view()).is_empty() {
+    for offer in offers {
+      if media_type_parts_cached(offer) is Some(_) {
+        return Some(offer)
+      }
+    }
+    return None
+  }
+  let entries = accept_entries_cached(header)
   let mut best : String? = None
   let mut best_q = 0
   for offer in offers {
@@ -660,11 +669,11 @@ fn language_quality_from(
 /// matched language, and a language that matches no range and is not covered
 /// by `*` is not acceptable.
 pub fn Context::accepts_language(self : Context, language : String) -> Bool {
-  language_quality_from(
-    language_entries_cached(self.header("Accept-Language")),
-    language.view(),
-  ) >
-  0
+  let header = self.header("Accept-Language")
+  if trim_ascii_space(header.view()).is_empty() {
+    return true
+  }
+  language_quality_from(language_entries_cached(header), language.view()) > 0
 }
 
 ///|
@@ -677,7 +686,14 @@ pub fn Context::preferred_language(
   self : Context,
   offers : ArrayView[String],
 ) -> String? {
-  let entries = language_entries_cached(self.header("Accept-Language"))
+  let header = self.header("Accept-Language")
+  if trim_ascii_space(header.view()).is_empty() {
+    if offers.length() > 0 {
+      return Some(offers[0])
+    }
+    return None
+  }
+  let entries = language_entries_cached(header)
   let mut best : String? = None
   let mut best_q = 0
   for offer in offers {

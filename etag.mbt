@@ -15,11 +15,25 @@ pub fn App::etag(self : App) -> App {
 /// Append the FNV-1a hash of `data` to `builder` as 16 lowercase hex digits.
 fn write_fnv1a_hex(builder : StringBuilder, data : Bytes) -> Unit {
   let mut hash = 14695981039346656037UL
-  for byte in data {
-    hash = (hash ^ byte.to_uint64()) * 1099511628211UL
+  let length = data.length()
+  let mut i = 0
+  while i + 8 <= length {
+    hash = (hash ^ data[i].to_uint64()) * 1099511628211UL
+    hash = (hash ^ data[i + 1].to_uint64()) * 1099511628211UL
+    hash = (hash ^ data[i + 2].to_uint64()) * 1099511628211UL
+    hash = (hash ^ data[i + 3].to_uint64()) * 1099511628211UL
+    hash = (hash ^ data[i + 4].to_uint64()) * 1099511628211UL
+    hash = (hash ^ data[i + 5].to_uint64()) * 1099511628211UL
+    hash = (hash ^ data[i + 6].to_uint64()) * 1099511628211UL
+    hash = (hash ^ data[i + 7].to_uint64()) * 1099511628211UL
+    i = i + 8
   }
-  for i = 0; i < 16; i = i + 1 {
-    let nibble = ((hash >> ((15 - i) * 4)) & 15UL).to_int()
+  while i < length {
+    hash = (hash ^ data[i].to_uint64()) * 1099511628211UL
+    i = i + 1
+  }
+  for j = 0; j < 16; j = j + 1 {
+    let nibble = ((hash >> ((15 - j) * 4)) & 15UL).to_int()
     builder.write_char(
       (if nibble < 10 {
         b'0'.to_int() + nibble
@@ -39,6 +53,13 @@ fn apply_etag(response : Response) -> Unit {
     response.status >= 300 ||
     response.status == 204 ||
     response.status == 205 {
+    return
+  }
+  let has_representation = match response.data {
+    Some(data) => data.length() > 0
+    None => !response.body.is_empty()
+  }
+  if !has_representation {
     return
   }
   // Check the exact `ETag` spelling first; the other guards use the

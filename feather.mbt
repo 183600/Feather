@@ -201,7 +201,7 @@ pub fn apply_middleware(
 
 ///|
 fn clean_path_view(path : String) -> StringView {
-  match path.find("?") {
+  match path_query_index(path) {
     Some(index) => path[:index]
     None => path.view()
   }
@@ -882,10 +882,10 @@ fn bind_route_params(
   match params {
     Some(params) => {
       let names = node.param_names
+      let keys = node.param_keys
       for i = 0; i < names.length(); i = i + 1 {
-        let name = names[i]
-        match params.get(name) {
-          Some(value) => ctx.state.set(param_state_key(name), value)
+        match params.get(names[i]) {
+          Some(value) => ctx.state.set(keys[i], value)
           None => ()
         }
       }
@@ -1465,22 +1465,42 @@ pub fn Context::header(self : Context, key : String) -> String {
 }
 
 ///|
+/// Parsed host names keyed by the trimmed `Host` header value.
+let host_cache : Map[StringView, String] = Map([])
+
+///|
+/// Recency ticks for `host_cache`.
+let host_cache_ages : Map[StringView, Int] = Map([])
+
+///|
 /// The host name from the `Host` header, without the port.
 pub fn Context::host(self : Context) -> String {
   let authority = trim_ascii_space(self.header("Host").view())
   if authority == "" {
     return ""
   }
-  if authority.unsafe_get(0) == ('[' : UInt16) {
+  match host_cache.get(authority) {
+    Some(cached) => {
+      cache_touch(host_cache_ages, authority)
+      return cached
+    }
+    None => ()
+  }
+  let host = if authority.unsafe_get(0) == ('[' : UInt16) {
     match authority.find("]") {
-      Some(index) => return authority[:index + 1].to_owned()
-      None => return authority.to_owned()
+      Some(index) => authority[:index + 1].to_owned()
+      None => authority.to_owned()
+    }
+  } else {
+    match authority.find(":") {
+      Some(index) => authority[:index].to_owned()
+      None => authority.to_owned()
     }
   }
-  match authority.find(":") {
-    Some(index) => authority[:index].to_owned()
-    None => authority.to_owned()
+  if authority.length() <= PARSE_CACHE_MAX_KEY {
+    parse_cache_set(host_cache, host_cache_ages, authority, host)
   }
+  host
 }
 
 ///|
@@ -1502,7 +1522,16 @@ pub fn Context::protocol(self : Context) -> String {
 ///|
 /// Whether the request is considered to arrive over HTTPS.
 pub fn Context::is_secure(self : Context) -> Bool {
-  self.protocol().view().equal_ignore_ascii_case("https".view())
+  let forwarded = self.header("X-Forwarded-Proto")
+  let view = trim_ascii_space(forwarded.view())
+  let value = match view.find(",") {
+    Some(index) => trim_ascii_space(view[:index])
+    None => view
+  }
+  if value.is_empty() {
+    return false
+  }
+  value.equal_ignore_ascii_case("https".view())
 }
 
 ///|
@@ -3595,7 +3624,7 @@ pub fn Context::query_values(self : Context, name : String) -> Array[String] {
   match path_query_index(self.request.path) {
     Some(index) =>
       if name_needs_raw(name.view()) {
-        collect_values(self.request.path[index + 1:].view(), name)
+        collect_values(self.request.path.view()[index + 1:], name)
       } else {
         match query_multi_lookup(self.request.path, index).get(name) {
           Some(values) => values
@@ -3643,12 +3672,29 @@ let last_content_type_header : Ref[String?] = Ref(None)
 let last_content_type_value : Ref[String] = Ref("")
 
 ///|
+/// Normalized media types keyed by their raw `Content-Type` header value.
+let content_type_cache : Map[String, String] = Map([])
+
+///|
+/// Recency ticks for `content_type_cache`.
+let content_type_cache_ages : Map[String, Int] = Map([])
+
+///|
 fn parsed_content_type(header : String) -> String {
   match last_content_type_header.val {
     Some(cached_header) =>
       if physical_equal(cached_header, header) {
         return last_content_type_value.val
       }
+    None => ()
+  }
+  match content_type_cache.get(header) {
+    Some(cached) => {
+      cache_touch(content_type_cache_ages, header)
+      last_content_type_header.val = Some(header)
+      last_content_type_value.val = cached
+      return cached
+    }
     None => ()
   }
   let view = header.view()
@@ -3661,6 +3707,9 @@ fn parsed_content_type(header : String) -> String {
     value.to_lower().to_owned()
   } else {
     value.to_owned()
+  }
+  if header.length() <= PARSE_CACHE_MAX_KEY {
+    parse_cache_set(content_type_cache, content_type_cache_ages, header, result)
   }
   last_content_type_header.val = Some(header)
   last_content_type_value.val = result
@@ -4492,14 +4541,22 @@ pub fn parse_multipart(
 }
 
 ///|
+/// Cached parts of a multipart request, or `None` when the body is not
+/// multipart. Reads and normalizes the `Content-Type` header once.
+fn Context::multipart_entries(self : Context) -> Array[MultipartPart]? {
+  let header = self.header("Content-Type")
+  if parsed_content_type(header) != "multipart/form-data" {
+    return None
+  }
+  multipart_parts_lookup(self.request.body, header)
+}
+
+///|
 /// The parsed multipart body. The result array is a copy, but its parts and
 /// their header maps are shared with the parse cache and must be treated as
 /// read-only.
 pub fn Context::multipart(self : Context) -> Array[MultipartPart] {
-  if !self.is_multipart() {
-    return []
-  }
-  match multipart_parts_lookup(self.request.body, self.header("Content-Type")) {
+  match self.multipart_entries() {
     Some(parts) => copy_multipart_parts(parts)
     None => []
   }
@@ -4507,10 +4564,7 @@ pub fn Context::multipart(self : Context) -> Array[MultipartPart] {
 
 ///|
 pub fn Context::multipart_value(self : Context, name : String) -> String {
-  if !self.is_multipart() {
-    return ""
-  }
-  match multipart_parts_lookup(self.request.body, self.header("Content-Type")) {
+  match self.multipart_entries() {
     Some(parts) => {
       for part in parts {
         if part.filename == "" && part.name == name {
@@ -4525,10 +4579,7 @@ pub fn Context::multipart_value(self : Context, name : String) -> String {
 
 ///|
 pub fn Context::multipart_file(self : Context, name : String) -> MultipartPart? {
-  if !self.is_multipart() {
-    return None
-  }
-  match multipart_parts_lookup(self.request.body, self.header("Content-Type")) {
+  match self.multipart_entries() {
     Some(parts) => {
       for part in parts {
         if part.name == name && part.filename != "" {
@@ -6835,7 +6886,15 @@ pub fn middleware_cors(
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
-      let request_origin = ctx.header("Origin")
+      let is_options = ctx.request.method == "OPTIONS"
+      // The default response (`*`, no credentials) does not depend on the
+      // request's `Origin`, so only read that header when it can affect the
+      // result.
+      let request_origin = if allow_credentials || is_options {
+        ctx.header("Origin")
+      } else {
+        ""
+      }
       let echo_origin = allow_origin != "*" ||
         (allow_credentials && request_origin != "")
       if echo_origin {
@@ -6848,7 +6907,7 @@ pub fn middleware_cors(
       if allow_credentials {
         ctx.response.headers.set("Access-Control-Allow-Credentials", "true")
       }
-      if ctx.request.method == "OPTIONS" {
+      if is_options {
         // A real CORS preflight carries both `Origin` and
         // `Access-Control-Request-Method` and is answered here without running
         // the handler. Other OPTIONS requests (including explicit OPTIONS
