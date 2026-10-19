@@ -303,6 +303,9 @@ pub fn Context::preferred_type(
       want_type.view(),
       want_subtype.view(),
     )
+    if quality >= 1000 {
+      return Some(offer)
+    }
     if quality > best_q {
       best_q = quality
       best = Some(offer)
@@ -503,6 +506,9 @@ pub fn Context::preferred_encoding(
       let mut best_q = 0
       for offer in offers {
         let quality = encoding_quality_from(entries, offer.view())
+        if quality >= 1000 {
+          return Some(offer)
+        }
         if quality > best_q {
           best_q = quality
           best = Some(offer)
@@ -698,6 +704,9 @@ pub fn Context::preferred_language(
   let mut best_q = 0
   for offer in offers {
     let quality = language_quality_from(entries, offer.view())
+    if quality >= 1000 {
+      return Some(offer)
+    }
     if quality > best_q {
       best_q = quality
       best = Some(offer)

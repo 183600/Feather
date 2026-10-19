@@ -127,10 +127,13 @@ let sha256_work_state : FixedArray[UInt] = FixedArray::make(8, 0U)
 
 ///|
 /// Inner/outer key blocks for `hmac_sha256`, kept alongside the normalized key
-/// they were derived from.
+/// they were derived from, plus the digest state after each block was
+/// compressed. Reusing the precomputed states saves two compressions per MAC.
 let hmac_cached_key : Ref[Bytes?] = Ref(None)
 let hmac_inner_block : FixedArray[Byte] = FixedArray::make(64, b'\x00')
 let hmac_outer_block : FixedArray[Byte] = FixedArray::make(64, b'\x00')
+let hmac_inner_midstate : FixedArray[UInt] = FixedArray::make(8, 0U)
+let hmac_outer_midstate : FixedArray[UInt] = FixedArray::make(8, 0U)
 
 ///|
 /// Inner-digest scratch for `hmac_sha256`.
@@ -230,6 +233,17 @@ fn hmac_ensure_key_blocks(normalized : Bytes) -> Unit {
     hmac_inner_block[i] = byte ^ b'\x36'
     hmac_outer_block[i] = byte ^ b'\x5c'
   }
+  let state = sha256_work_state
+  sha256_state_reset(state)
+  sha256_compress(state, hmac_inner_block.unsafe_reinterpret_as_bytes(), 0)
+  for i = 0; i < 8; i = i + 1 {
+    hmac_inner_midstate[i] = state[i]
+  }
+  sha256_state_reset(state)
+  sha256_compress(state, hmac_outer_block.unsafe_reinterpret_as_bytes(), 0)
+  for i = 0; i < 8; i = i + 1 {
+    hmac_outer_midstate[i] = state[i]
+  }
   hmac_cached_key.val = Some(normalized)
 }
 
@@ -238,12 +252,14 @@ pub fn hmac_sha256(key : Bytes, message : Bytes) -> Bytes {
   let normalized = if key.length() > 64 { sha256(key) } else { key }
   hmac_ensure_key_blocks(normalized)
   let state = sha256_work_state
-  sha256_state_reset(state)
-  sha256_compress(state, hmac_inner_block.unsafe_reinterpret_as_bytes(), 0)
+  for i = 0; i < 8; i = i + 1 {
+    state[i] = hmac_inner_midstate[i]
+  }
   sha256_update(state, message)
   sha256_finish_into(state, message, 64, sha256_hmac_inner_digest)
-  sha256_state_reset(state)
-  sha256_compress(state, hmac_outer_block.unsafe_reinterpret_as_bytes(), 0)
+  for i = 0; i < 8; i = i + 1 {
+    state[i] = hmac_outer_midstate[i]
+  }
   let digest = FixedArray::make(32, b'\x00')
   sha256_finish_into(
     state,

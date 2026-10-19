@@ -4597,6 +4597,44 @@ fn skip_line_break(view : StringView, pos : Int32) -> Int32 {
 }
 
 ///|
+/// One-entry cache of the three delimiter prefix tables, keyed by the boundary
+/// they were built from. Building them costs a few hundred nanoseconds, and a
+/// client that sends several multipart requests reuses one boundary.
+let last_multipart_boundary : Ref[String?] = Ref(None)
+let last_multipart_tables : Ref[(Array[Int], Array[Int], Array[Int])?] = Ref(
+  None,
+)
+
+///|
+/// Prefix tables for the bare, CRLF-prefixed and LF-prefixed delimiters of
+/// `boundary`, reusing the cached ones when the boundary repeats.
+fn multipart_delimiter_tables(
+  boundary : String,
+  delimiter : StringView,
+  crlf_delimiter : StringView,
+  lf_delimiter : StringView,
+) -> (Array[Int], Array[Int], Array[Int]) {
+  match last_multipart_boundary.val {
+    Some(cached) =>
+      if cached == boundary {
+        match last_multipart_tables.val {
+          Some(tables) => return tables
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let tables = (
+    delimiter_match_table(delimiter),
+    delimiter_match_table(crlf_delimiter),
+    delimiter_match_table(lf_delimiter),
+  )
+  last_multipart_boundary.val = Some(boundary)
+  last_multipart_tables.val = Some(tables)
+  tables
+}
+
+///|
 pub fn parse_multipart(
   body : String,
   content_type : String,
@@ -4612,9 +4650,13 @@ pub fn parse_multipart(
   let crlf_delimiter_view = crlf_delimiter.view()
   let lf_delimiter = "\n" + delimiter
   let lf_delimiter_view = lf_delimiter.view()
-  let delimiter_table = delimiter_match_table(delimiter_view)
-  let crlf_delimiter_table = delimiter_match_table(crlf_delimiter_view)
-  let lf_delimiter_table = delimiter_match_table(lf_delimiter_view)
+  let (delimiter_table, crlf_delimiter_table, lf_delimiter_table) =
+    multipart_delimiter_tables(
+      boundary,
+      delimiter_view,
+      crlf_delimiter_view,
+      lf_delimiter_view,
+    )
   let view = body.view()
   let mut pos = match
     find_terminated_delimiter(view, delimiter_view, delimiter_table, 0) {
@@ -5373,24 +5415,17 @@ fn precondition_input_from_http(request : @http.Request) -> PreconditionInput {
 }
 
 ///|
-/// Find a header value by ASCII-case-insensitive name in a single pass over the
-/// map.
-fn find_header_value_ci(
-  headers : Map[String, String],
-  name : String,
-) -> String? {
-  let target = name.view()
-  let target_length = target.length()
-  for key, value in headers {
-    if key.length() == target_length &&
-      key.view().equal_ignore_ascii_case(target) {
-      return Some(value)
-    }
-  }
-  None
-}
+/// The four precondition header names, resolved once.
+let precondition_if_match_name : StringView = "If-Match".view()
+let precondition_if_none_match_name : StringView = "If-None-Match".view()
+let precondition_if_modified_since_name : StringView = "If-Modified-Since".view()
+let precondition_if_unmodified_since_name : StringView = "If-Unmodified-Since".view()
 
 ///|
+/// Collect the precondition request headers in a single pass over the map.
+///
+/// Four separate case-insensitive lookups would rescan the header map four
+/// times; this walks it once without allocating a tuple per entry.
 fn precondition_input_from_map(
   headers : Map[String, String],
 ) -> PreconditionInput {
@@ -5402,12 +5437,39 @@ fn precondition_input_from_map(
       if_unmodified_since: None,
     }
   }
-  {
-    if_match: find_header_value_ci(headers, "If-Match"),
-    if_none_match: find_header_value_ci(headers, "If-None-Match"),
-    if_modified_since: find_header_value_ci(headers, "If-Modified-Since"),
-    if_unmodified_since: find_header_value_ci(headers, "If-Unmodified-Since"),
-  }
+  let mut if_match : String? = None
+  let mut if_none_match : String? = None
+  let mut if_modified_since : String? = None
+  let mut if_unmodified_since : String? = None
+  headers.each(fn(key, value) {
+    let key_view = key.view()
+    let length = key_view.length()
+    if length == 8 || length == 13 || length == 17 || length == 19 {
+      let first = key_view.unsafe_get(0)
+      if first == ('I' : UInt16) || first == ('i' : UInt16) {
+        if length == 8 {
+          if if_match is None &&
+            key_view.equal_ignore_ascii_case(precondition_if_match_name) {
+            if_match = Some(value)
+          }
+        } else if length == 13 {
+          if if_none_match is None &&
+            key_view.equal_ignore_ascii_case(precondition_if_none_match_name) {
+            if_none_match = Some(value)
+          }
+        } else if length == 17 {
+          if if_modified_since is None &&
+            key_view.equal_ignore_ascii_case(precondition_if_modified_since_name) {
+            if_modified_since = Some(value)
+          }
+        } else if if_unmodified_since is None &&
+          key_view.equal_ignore_ascii_case(precondition_if_unmodified_since_name) {
+          if_unmodified_since = Some(value)
+        }
+      }
+    }
+  })
+  { if_match, if_none_match, if_modified_since, if_unmodified_since }
 }
 
 ///|
