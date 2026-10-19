@@ -5634,6 +5634,8 @@ pub(all) struct StaticMount {
   index : String
   max_age : Int32
   precompressed : Bool
+  middlewares : Array[Middleware]
+  mut chain : Handler?
 }
 
 ///|
@@ -5659,7 +5661,7 @@ pub struct App {
   mut compress_enabled : Bool
   mut compress_min_size : Int32
   mut etag_enabled : Bool
-  static_lookup_cache : Map[String, (String, String, Bool)?]
+  static_lookup_cache : Map[String, (String, String, Bool, StaticMount)?]
   static_lookup_negative : Array[String]
   mut static_lookup_negative_head : Int
 }
@@ -5707,6 +5709,9 @@ pub fn App::use(self : App, middleware : Middleware) -> App {
   self.chain = None
   self.static_chain = None
   self.async_chain = None
+  for mount in self.static_mounts {
+    mount.chain = None
+  }
   self
 }
 
@@ -6188,6 +6193,8 @@ pub fn App::static_files(
     index,
     max_age,
     precompressed,
+    middlewares: [],
+    chain: None,
   })
   self.static_lookup_cache.clear()
   self.static_lookup_negative.clear()
@@ -6242,6 +6249,29 @@ fn mounted_route_chain(
 }
 
 ///|
+/// Combine the middleware a child application already attached to one of its
+/// static mounts with the child's own middleware. The child's middleware runs
+/// outside the mount-specific chain, matching how mounted dynamic routes are
+/// wrapped.
+fn mounted_static_middlewares(
+  child : Array[Middleware],
+  mount : Array[Middleware],
+) -> Array[Middleware] {
+  if child.length() == 0 {
+    return mount.copy()
+  }
+  if mount.length() == 0 {
+    return child.copy()
+  }
+  let combined : Array[Middleware] = Array(
+    capacity=child.length() + mount.length(),
+  )
+  combined.append(child)
+  combined.append(mount)
+  combined
+}
+
+///|
 /// Mount another application under `prefix`, keeping its routes, middleware,
 /// static mounts, named routes, websocket, server-sent events and streaming
 /// handlers.
@@ -6277,6 +6307,8 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
       index: mount.index,
       max_age: mount.max_age,
       precompressed: mount.precompressed,
+      middlewares: mounted_static_middlewares(child.middlewares, mount.middlewares),
+      chain: None,
     })
   }
   self.static_lookup_cache.clear()
@@ -6406,7 +6438,7 @@ fn App::static_lookup_evict(self : App) -> Unit {
 fn App::static_lookup_remember(
   self : App,
   clean : StringView,
-  result : (String, String, Bool)?,
+  result : (String, String, Bool, StaticMount)?,
 ) -> Unit {
   if self.static_lookup_cache.length() >= STATIC_LOOKUP_CACHE_LIMIT {
     self.static_lookup_evict()
@@ -6424,7 +6456,7 @@ fn App::static_lookup_remember(
 fn App::static_lookup(
   self : App,
   path : String,
-) -> (String, String, Bool)? {
+) -> (String, String, Bool, StaticMount)? {
   let clean = clean_path_view(path)
   match self.static_lookup_cache.get_from_string(clean) {
     Some(cached) => cached
@@ -6454,7 +6486,7 @@ fn App::static_lookup_uncached(
   self : App,
   path_view : StringView,
   mount : StaticMount,
-) -> (String, String, Bool)? {
+) -> (String, String, Bool, StaticMount)? {
   let prefix_view = mount.url_prefix.view()
   let prefix_length = mount.url_prefix.length()
   let relative : StringView = if prefix_length == 0 {
@@ -6480,13 +6512,13 @@ fn App::static_lookup_uncached(
   } else {
     ""
   }
-  Some((file_path, cache_control, mount.precompressed))
+  Some((file_path, cache_control, mount.precompressed, mount))
 }
 
 ///|
 pub fn App::static_file_for(self : App, path : String) -> String? {
   match self.static_lookup(path) {
-    Some((file_path, _, _)) => Some(file_path)
+    Some((file_path, _, _, _)) => Some(file_path)
     None => None
   }
 }
@@ -6494,7 +6526,7 @@ pub fn App::static_file_for(self : App, path : String) -> String? {
 ///|
 pub fn App::static_cache_control_for(self : App, path : String) -> String {
   match self.static_lookup(path) {
-    Some((_, cache_control, _)) => cache_control
+    Some((_, cache_control, _, _)) => cache_control
     None => ""
   }
 }

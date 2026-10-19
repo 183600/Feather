@@ -12,7 +12,7 @@ import {
 }
 
 // Values
-pub const DEFAULT_MAX_BODY_SIZE : Int = 1000
+pub const DEFAULT_MAX_BODY_SIZE : Int32 = 1000
 
 pub const DEFAULT_SESSION_TTL : Int64 = 86_400_000
 
@@ -34,9 +34,9 @@ pub fn create_router() -> Router
 
 pub fn create_server(Config) -> Config
 
-pub fn error_response(Context, Int, String) -> Unit
+pub fn error_response(Context, Int32, String) -> Unit
 
-pub fn error_response_with_payload(Context, Int, String, Json) -> Unit
+pub fn error_response_with_payload(Context, Int32, String, Json) -> Unit
 
 pub fn format_http_date(Int64) -> String
 
@@ -52,7 +52,7 @@ pub fn middleware_basic_auth(Map[String, String], realm? : String) -> ((Context)
 
 pub fn middleware_basic_auth_with((String, String) -> Bool, realm? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
-pub fn middleware_cors(allow_origin? : String, allow_methods? : String, allow_headers? : String, expose_headers? : String, allow_credentials? : Bool, max_age? : Int) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+pub fn middleware_cors(allow_origin? : String, allow_methods? : String, allow_headers? : String, expose_headers? : String, allow_credentials? : Bool, max_age? : Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_csrf(field? : String, header? : String, key? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
@@ -94,7 +94,7 @@ pub fn sha256(Bytes) -> Bytes
 
 pub fn signed_cookie_token(String, String, String, expires_at? : Int64) -> String
 
-pub fn status_text(Int) -> String
+pub fn status_text(Int32) -> String
 
 pub fn url_decode(String) -> String
 
@@ -104,11 +104,11 @@ pub fn verify_signed_cookie_token(String, String, String, now? : Int64) -> Strin
 
 // Errors
 pub(all) suberror HttpError {
-  HttpError(Int, String)
+  HttpError(Int32, String)
 }
 
 pub(all) suberror HttpErrorPayload {
-  HttpErrorPayload(Int, String, Json)
+  HttpErrorPayload(Int32, String, Json)
 }
 
 pub suberror PayloadTooLarge
@@ -117,28 +117,31 @@ pub suberror PayloadTooLarge
 pub struct App {
   router : Router
   middlewares : Array[((Context) -> Unit raise) -> (Context) -> Unit raise]
-  mut max_body_size : Int
-  mut timeout : Int
+  mut max_body_size : Int32
+  mut timeout : Int32
   mut chain : ((Context) -> Unit raise)?
   mut static_chain : ((Context) -> Unit raise)?
+  mut async_chain : ((Context) -> Unit raise)?
   static_mounts : Array[StaticMount]
   mut no_route_handler : ((Context) -> Unit raise)?
   ws_router : Router
   ws_handlers : Map[String, async (Context, @websocket.Conn) -> Unit]
-  ws_middlewares : Map[String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise]]
+  ws_middlewares : Map[String, (Context) -> Unit raise]
   sse_router : Router
   sse_handlers : Map[String, async (Context, Sse) -> Unit]
-  sse_middlewares : Map[String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise]]
+  sse_middlewares : Map[String, (Context) -> Unit raise]
   stream_router : Router
   stream_handlers : Map[String, async (Context, Stream) -> Unit]
-  stream_middlewares : Map[String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise]]
+  stream_middlewares : Map[String, (Context) -> Unit raise]
   mut compress_enabled : Bool
-  mut compress_min_size : Int
+  mut compress_min_size : Int32
   mut etag_enabled : Bool
-  static_lookup_cache : Map[String, (String, String, Bool)?]
+  static_lookup_cache : Map[String, (String, String, Bool, StaticMount)?]
+  static_lookup_negative : Array[String]
+  mut static_lookup_negative_head : Int32
 }
 pub fn App::all(Self, String, (Context) -> Unit raise) -> Self
-pub fn App::compress(Self, min_size? : Int) -> Self
+pub fn App::compress(Self, min_size? : Int32) -> Self
 pub fn App::delete(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::etag(Self) -> Self
 pub fn App::fallback(Self, (Context) -> Unit raise) -> Self
@@ -150,30 +153,35 @@ pub fn App::has_sse(Self, String) -> Bool
 pub fn App::has_stream(Self, String) -> Bool
 pub fn App::has_websocket(Self, String) -> Bool
 pub fn App::head(Self, String, (Context) -> Unit raise) -> Self
-pub fn App::max_body_size(Self, Int) -> Self
+pub fn App::max_body_size(Self, Int32) -> Self
 pub fn App::mount(Self, String, Self) -> Self
 pub fn App::new() -> Self
 pub fn App::options(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::patch(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::post(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::put(Self, String, (Context) -> Unit raise) -> Self
-pub fn App::request_timeout(Self, Int) -> Self
+pub fn App::request_timeout(Self, Int32) -> Self
 pub fn App::resolve_sse(Self, String) -> (async (Context, Sse) -> Unit, Map[String, String])?
 pub fn App::resolve_stream(Self, String) -> (async (Context, Stream) -> Unit, Map[String, String])?
 pub fn App::resolve_websocket(Self, String) -> (async (Context, @websocket.Conn) -> Unit, Map[String, String])?
 pub fn App::respond(Self, Request) -> Response
 pub fn App::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn App::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
+pub fn App::route_named_with(Self, String, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
+pub fn App::route_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub async fn App::serve(Self, @socket.Addr) -> Unit
-pub async fn App::serve_with(Self, @http.Server, max_connections? : Int) -> Unit
+pub async fn App::serve_with(Self, @http.Server, max_connections? : Int32) -> Unit
 pub fn App::sse(Self, String, async (Context, Sse) -> Unit) -> Self
+pub fn App::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Sse) -> Unit) -> Self
 pub fn App::static_cache_control_for(Self, String) -> String
 pub fn App::static_file_for(Self, String) -> String?
-pub fn App::static_files(Self, String, String, index? : String, max_age? : Int, precompressed? : Bool) -> Self
+pub fn App::static_files(Self, String, String, index? : String, max_age? : Int32, precompressed? : Bool) -> Self
 pub fn App::stream(Self, String, async (Context, Stream) -> Unit) -> Self
+pub fn App::stream_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Stream) -> Unit) -> Self
 pub fn App::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn App::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 pub fn App::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
+pub fn App::websocket_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, @websocket.Conn) -> Unit) -> Self
 
 pub(all) enum ByteRange {
   ByteRangeFull
@@ -183,8 +191,8 @@ pub(all) enum ByteRange {
 
 pub(all) struct Config {
   host : String
-  port : Int
-  timeout : Int
+  port : Int32
+  timeout : Int32
 }
 
 pub(all) struct Context {
@@ -203,7 +211,7 @@ pub fn Context::add_cookie(Self, String, String, path? : String, max_age? : Int6
 pub fn Context::attachment(Self, String) -> Unit
 pub fn Context::basic_auth(Self) -> (String, String)?
 pub fn Context::bearer_token(Self) -> String?
-pub fn Context::bytes(Self, Int, Bytes, content_type? : String) -> Unit
+pub fn Context::bytes(Self, Int32, Bytes, content_type? : String) -> Unit
 pub fn Context::clear_cookie(Self, String, path? : String, domain? : String) -> Unit
 pub fn Context::clear_signed_cookie(Self, String, path? : String, domain? : String) -> Unit
 pub fn Context::content_type(Self) -> String
@@ -211,9 +219,9 @@ pub fn Context::cookie(Self, String) -> String?
 pub fn Context::cookies(Self) -> Map[String, String]
 pub fn Context::csrf_token(Self, key? : String) -> String
 pub fn Context::defer_cleanup(Self, () -> Unit raise) -> Unit
-pub fn Context::fail(Self, Int, String) -> Unit raise HttpError
-pub fn Context::fail_with(Self, Int, String, Json) -> Unit raise HttpErrorPayload
-pub fn Context::file(Self, Int, String, content_type? : String, download_name? : String) -> Unit
+pub fn Context::fail(Self, Int32, String) -> Unit raise HttpError
+pub fn Context::fail_with(Self, Int32, String, Json) -> Unit raise HttpErrorPayload
+pub fn Context::file(Self, Int32, String, content_type? : String, download_name? : String) -> Unit
 pub fn Context::file_response(Self) -> FileResponse?
 pub fn Context::flash(Self, String, category? : String) -> Bool
 pub fn Context::flash_peek(Self, category? : String) -> Array[String]
@@ -232,18 +240,18 @@ pub fn Context::get_method(Self) -> String
 pub fn Context::get_path(Self) -> String
 pub fn Context::header(Self, String) -> String
 pub fn Context::host(Self) -> String
-pub fn Context::html(Self, Int, String) -> Unit
+pub fn Context::html(Self, Int32, String) -> Unit
 pub fn Context::inline(Self, String) -> Unit
 pub fn Context::ip(Self) -> String
 pub fn Context::is_form(Self) -> Bool
 pub fn Context::is_json(Self) -> Bool
 pub fn Context::is_multipart(Self) -> Bool
 pub fn Context::is_secure(Self) -> Bool
-pub fn Context::json(Self, Int, Map[String, String]) -> Unit
+pub fn Context::json(Self, Int32, Map[String, String]) -> Unit
 pub fn[T : @json.FromJson] Context::json_as(Self) -> T raise HttpError
 pub fn Context::json_body(Self) -> Json raise HttpError
-pub fn[T : ToJson] Context::json_of(Self, Int, T) -> Unit
-pub fn Context::json_value(Self, Int, Json) -> Unit
+pub fn[T : ToJson] Context::json_of(Self, Int32, T) -> Unit
+pub fn Context::json_value(Self, Int32, Json) -> Unit
 pub fn Context::multipart(Self) -> Array[MultipartPart]
 pub fn Context::multipart_file(Self, String) -> MultipartPart?
 pub fn Context::multipart_value(Self, String) -> String
@@ -253,7 +261,7 @@ pub fn Context::not_modified(Self, etag? : String, last_modified? : String) -> U
 pub fn Context::param(Self, String) -> String
 pub fn Context::param_bool(Self, String) -> Bool?
 pub fn Context::param_decoded(Self, String) -> String
-pub fn Context::param_int(Self, String) -> Int?
+pub fn Context::param_int(Self, String) -> Int32?
 pub fn Context::params(Self) -> Map[String, String]
 pub fn Context::preferred_encoding(Self, ArrayView[String]) -> String?
 pub fn Context::preferred_language(Self, ArrayView[String]) -> String?
@@ -263,9 +271,9 @@ pub fn Context::queries(Self) -> Map[String, String]
 pub fn Context::query(Self, String) -> String
 pub fn Context::query_bool(Self, String) -> Bool?
 pub fn Context::query_default(Self, String, String) -> String
-pub fn Context::query_int(Self, String) -> Int?
+pub fn Context::query_int(Self, String) -> Int32?
 pub fn Context::query_values(Self, String) -> Array[String]
-pub fn Context::redirect(Self, Int, String) -> Unit
+pub fn Context::redirect(Self, Int32, String) -> Unit
 pub fn Context::request_id(Self) -> String
 pub fn Context::run_cleanups(Self) -> Unit
 pub fn Context::session(Self) -> Session?
@@ -283,8 +291,8 @@ pub fn Context::set_header(Self, String, String) -> Unit
 pub fn Context::set_json(Self, String, Json) -> Unit
 pub fn Context::set_signed_cookie(Self, String, String, String, path? : String, max_age? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool) -> Unit
 pub fn Context::signed_cookie(Self, String, String) -> String?
-pub fn Context::status(Self, Int) -> Unit
-pub fn Context::text(Self, Int, String) -> Unit
+pub fn Context::status(Self, Int32) -> Unit
+pub fn Context::text(Self, Int32, String) -> Unit
 pub fn Context::vary(Self, String) -> Unit
 
 pub(all) struct Feather {
@@ -292,7 +300,7 @@ pub(all) struct Feather {
   app : App
 }
 pub fn Feather::all(Self, String, (Context) -> Unit raise) -> Self
-pub fn Feather::compress(Self, min_size? : Int) -> Self
+pub fn Feather::compress(Self, min_size? : Int32) -> Self
 pub fn Feather::delete(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::etag(Self) -> Self
 pub fn Feather::fallback(Self, (Context) -> Unit raise) -> Self
@@ -301,24 +309,29 @@ pub fn Feather::group(Self, String) -> RouteGroup
 pub fn Feather::handle(Self, Request) -> Response
 pub fn Feather::head(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::listen_address(Self) -> String
-pub fn Feather::max_body_size(Self, Int) -> Self
+pub fn Feather::max_body_size(Self, Int32) -> Self
 pub fn Feather::mount(Self, String, Self) -> Self
 pub fn Feather::options(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::patch(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::post(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::put(Self, String, (Context) -> Unit raise) -> Self
-pub fn Feather::request_timeout(Self, Int) -> Self
+pub fn Feather::request_timeout(Self, Int32) -> Self
 pub fn Feather::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn Feather::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
+pub fn Feather::route_named_with(Self, String, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
+pub fn Feather::route_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub async fn Feather::serve(Self) -> Unit
-pub async fn Feather::serve_with(Self, @http.Server, max_connections? : Int) -> Unit
+pub async fn Feather::serve_with(Self, @http.Server, max_connections? : Int32) -> Unit
 pub fn Feather::sse(Self, String, async (Context, Sse) -> Unit) -> Self
-pub fn Feather::static_files(Self, String, String, index? : String, max_age? : Int, precompressed? : Bool) -> Self
+pub fn Feather::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Sse) -> Unit) -> Self
+pub fn Feather::static_files(Self, String, String, index? : String, max_age? : Int32, precompressed? : Bool) -> Self
 pub fn Feather::stream(Self, String, async (Context, Stream) -> Unit) -> Self
+pub fn Feather::stream_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Stream) -> Unit) -> Self
 pub fn Feather::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn Feather::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 pub fn Feather::validate_body_size(Self, String) -> Bool
 pub fn Feather::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
+pub fn Feather::websocket_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, @websocket.Conn) -> Unit) -> Self
 
 pub(all) struct FileResponse {
   path : String
@@ -349,16 +362,16 @@ pub(all) struct NamedRoute {
 type RateBucket
 
 pub struct RateLimiter {
-  max : Int
+  max : Int32
   window : Int64
   buckets : Map[String, RateBucket]
   mut last_sweep : Int64
 }
 pub fn RateLimiter::allow(Self, String) -> Bool
-pub fn RateLimiter::count(Self) -> Int
-pub fn RateLimiter::max(Self) -> Int
-pub fn RateLimiter::new(max~ : Int, window? : Int64) -> Self
-pub fn RateLimiter::remaining(Self, String) -> Int
+pub fn RateLimiter::count(Self) -> Int32
+pub fn RateLimiter::max(Self) -> Int32
+pub fn RateLimiter::new(max~ : Int32, window? : Int64) -> Self
+pub fn RateLimiter::remaining(Self, String) -> Int32
 pub fn RateLimiter::reset(Self, String) -> Bool
 pub fn RateLimiter::retry_after(Self, String) -> Int64
 pub fn RateLimiter::sweep(Self) -> Unit
@@ -372,7 +385,7 @@ pub(all) struct Request {
 }
 
 pub(all) struct Response {
-  mut status : Int
+  mut status : Int32
   headers : Map[String, String]
   mut body : String
   mut data : Bytes?
@@ -404,6 +417,8 @@ pub fn RouteGroup::post(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::put(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::route_named_with(Self, String, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
+pub fn RouteGroup::route_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn RouteGroup::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn RouteGroup::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 
@@ -416,13 +431,10 @@ pub struct RouteNode {
   mut has_dynamic : Bool
   mut param_names : Array[String]
   mut param_keys : Array[String]
-  mut pattern_kinds : Array[Int]
+  mut pattern_kinds : Array[Int32]
   mut route_wildcard_name : String
   mut route_wildcard_key : String
   mut exact_cache : Map[String, RouteNode]?
-  mut cached_path : String
-  mut cached_values : Array[String]
-  mut cached_wildcard : String
 }
 
 pub(all) enum RouteOutcome {
@@ -435,10 +447,14 @@ pub(all) struct Router {
   trees : Map[String, RouteNode]
   named : Map[String, NamedRoute]
   dynamic_caches : Map[String, Map[String, (RouteNode, Map[String, String]?, String)]]
-  miss_caches : Map[String, Map[String, Array[String]]]
+  miss_caches : Map[String, Map[String, String]]
+  dynamic_cache_ages : Map[String, Map[String, Int32]]
+  miss_cache_ages : Map[String, Map[String, Int32]]
 }
 pub fn Router::add_named_route(Self, String, String, String, (Context) -> Unit raise) -> Unit
+pub fn Router::add_named_route_with(Self, String, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Unit
 pub fn Router::add_route(Self, String, String, (Context) -> Unit raise) -> Unit
+pub fn Router::add_route_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Unit
 pub fn Router::dispatch(Self, Context) -> Unit raise
 pub fn Router::dispatch_with(Self, Context, ((Context) -> Unit raise)?) -> Unit raise
 pub fn Router::group(Self, String) -> RouteGroup
@@ -455,6 +471,7 @@ pub(all) struct Session {
   mut destroyed : Bool
   mut regenerate : Bool
   mut flash_pending : Map[String, Array[String]]?
+  mut flash_pending_bytes : Int32
   json_cache : Map[String, (String, Json)]
 }
 
@@ -465,7 +482,7 @@ pub struct SessionStore {
   mut last_sweep : Int64
 }
 pub fn SessionStore::clear(Self) -> Unit
-pub fn SessionStore::count(Self) -> Int
+pub fn SessionStore::count(Self) -> Int32
 pub fn SessionStore::create(Self) -> Session
 pub fn SessionStore::destroy(Self, String) -> Unit
 pub fn SessionStore::get(Self, String) -> Session?
@@ -484,22 +501,24 @@ pub struct Sse {
 pub async fn Sse::close(Self) -> Unit
 pub async fn Sse::comment(Self, String) -> Unit
 pub fn Sse::is_closed(Self) -> Bool
-pub async fn Sse::send(Self, String, event? : String, id? : String, retry? : Int) -> Unit
-pub async fn[T : ToJson] Sse::send_json(Self, T, event? : String, id? : String, retry? : Int) -> Unit
+pub async fn Sse::send(Self, String, event? : String, id? : String, retry? : Int32) -> Unit
+pub async fn[T : ToJson] Sse::send_json(Self, T, event? : String, id? : String, retry? : Int32) -> Unit
 
 pub(all) struct StaticMount {
   url_prefix : String
   root : String
   index : String
-  max_age : Int
+  max_age : Int32
   precompressed : Bool
+  middlewares : Array[((Context) -> Unit raise) -> (Context) -> Unit raise]
+  mut chain : ((Context) -> Unit raise)?
 }
 
 pub struct Stream {
   conn : @http.ServerConnection
   mut closed : Bool
   mut started : Bool
-  mut status : Int
+  mut status : Int32
   headers : Map[String, String]
   // private fields
 }
@@ -508,7 +527,7 @@ pub async fn Stream::flush(Self) -> Unit
 pub fn Stream::is_closed(Self) -> Bool
 pub fn Stream::is_started(Self) -> Bool
 pub fn Stream::set_header(Self, String, String) -> Unit
-pub fn Stream::set_status(Self, Int) -> Unit
+pub fn Stream::set_status(Self, Int32) -> Unit
 pub async fn Stream::write(Self, String) -> Unit
 pub async fn Stream::write_bytes(Self, Bytes) -> Unit
 pub async fn[T : ToJson] Stream::write_json(Self, T) -> Unit

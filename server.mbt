@@ -1289,9 +1289,10 @@ async fn handle_static(
   file_path : String,
   cache_control : String,
   precompressed : Bool,
+  mount : StaticMount,
   head : Bool,
 ) -> Unit {
-  if app.middlewares.length() == 0 {
+  if app.middlewares.length() == 0 && mount.middlewares.length() == 0 {
     serve_static_file(
       conn,
       file_path,
@@ -1321,15 +1322,32 @@ async fn handle_static(
   let ctx = Context::new(req)
   defer ctx.run_cleanups()
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
-  let chain = match app.static_chain {
-    Some(chain) => chain
-    None => {
-      let terminal : Handler = fn(ctx) {
-        ctx.state.set(STATIC_CHAIN_PASS_KEY, "1")
+  let chain = if mount.middlewares.length() == 0 {
+    match app.static_chain {
+      Some(chain) => chain
+      None => {
+        let terminal : Handler = fn(ctx) {
+          ctx.state.set(STATIC_CHAIN_PASS_KEY, "1")
+        }
+        let chain = apply_middleware(app.middlewares, terminal)
+        app.static_chain = Some(chain)
+        chain
       }
-      let chain = apply_middleware(app.middlewares, terminal)
-      app.static_chain = Some(chain)
-      chain
+    }
+  } else {
+    match mount.chain {
+      Some(chain) => chain
+      None => {
+        let terminal : Handler = fn(ctx) {
+          ctx.state.set(STATIC_CHAIN_PASS_KEY, "1")
+        }
+        let chain = apply_middleware(
+          app.middlewares,
+          apply_middleware(mount.middlewares, terminal),
+        )
+        mount.chain = Some(chain)
+        chain
+      }
     }
   }
   chain(ctx) catch {
@@ -1661,7 +1679,7 @@ async fn handle_request(
   }
   if static_eligible {
     match app.static_lookup(request.path) {
-      Some((file_path, cache_control, precompressed)) => {
+      Some((file_path, cache_control, precompressed, mount)) => {
         handle_static(
           app,
           request,
@@ -1670,6 +1688,7 @@ async fn handle_request(
           file_path,
           cache_control,
           precompressed,
+          mount,
           head,
         )
         return

@@ -278,3 +278,85 @@ test "feather facade mounts applications" {
   assert_eq(response.status, 200)
   assert_eq(response.body, "ok")
 }
+
+///|
+async test "mount applies child middleware to static files" {
+  let dir = @fs.tmpdir(prefix="feather-mount-static-middleware")
+  @fs.write_file(dir + "/hello.txt", "mounted file")
+  let child = @feather.App::new()
+    .use(tag_header("X-Child", "yes"))
+    .static_files("/assets", dir)
+  let app = @feather.App::new()
+    .use(tag_header("X-Parent", "on"))
+    .mount("/api", child)
+  with_server(app, client => {
+    let response = client.get("/api/assets/hello.txt")
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-Parent")),
+      Some("on"),
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-Child")),
+      Some("yes"),
+    )
+    assert_eq(client.read_all().text(), "mounted file")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "nested mounts apply every child middleware to static files" {
+  let dir = @fs.tmpdir(prefix="feather-nested-static-middleware")
+  @fs.write_file(dir + "/hello.txt", "nested file")
+  let grandchild = @feather.App::new()
+    .use(tag_header("X-Grandchild", "deep"))
+    .static_files("/files", dir)
+  let child = @feather.App::new()
+    .use(tag_header("X-Child", "yes"))
+    .mount("/v1", grandchild)
+  let app = @feather.App::new()
+    .use(tag_header("X-Parent", "on"))
+    .mount("/api", child)
+  with_server(app, client => {
+    let response = client.get("/api/v1/files/hello.txt")
+    assert_eq(response.code, 200)
+    for name in ["X-Parent", "X-Child", "X-Grandchild"] {
+      assert_true(
+        response.headers.get(@http.CaseInsensitiveString(name)) is Some(_),
+      )
+    }
+    assert_eq(client.read_all().text(), "nested file")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "mounted static middleware can short-circuit file serving" {
+  let dir = @fs.tmpdir(prefix="feather-mount-static-auth")
+  @fs.write_file(dir + "/hidden.txt", "classified")
+  let child = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) {
+        if ctx.header("X-Token") != "secret" {
+          ctx.text(403, "forbidden")
+          return
+        }
+        next(ctx)
+      }
+    })
+    .static_files("/assets", dir)
+  let app = @feather.App::new().mount("/api", child)
+  with_server(app, client => {
+    let denied = client.get("/api/assets/hidden.txt")
+    assert_eq(denied.code, 403)
+    assert_eq(client.read_all().text(), "forbidden")
+    let allowed = client.get(
+      "/api/assets/hidden.txt",
+      extra_headers=Map([(@http.CaseInsensitiveString("X-Token"), "secret")]),
+    )
+    assert_eq(allowed.code, 200)
+    assert_eq(client.read_all().text(), "classified")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
