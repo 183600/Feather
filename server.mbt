@@ -426,12 +426,23 @@ fn if_range_allows(
   mtime_secs : Int64,
 ) -> Bool {
   match request.headers.get(header_if_range) {
-    Some(value) =>
-      trim_ascii_space(value.view()) == etag.view() ||
-      (match parse_http_date(value) {
-        Some(since) => mtime_secs > 0L && mtime_secs <= since
-        None => false
-      })
+    Some(value) => {
+      // RFC 9110 §13.1.5: entity-tags use the strong comparison function, so a
+      // weak tag never matches; HTTP-dates require an exact match.
+      let token = trim_ascii_space(value.view())
+      let etag_view = etag.view()
+      if etag != "" &&
+        !etag_view.has_prefix("W/") &&
+        !token.has_prefix("W/") &&
+        token == etag_view {
+        true
+      } else {
+        match parse_http_date(value) {
+          Some(since) => mtime_secs > 0L && mtime_secs == since
+          None => false
+        }
+      }
+    }
     None => true
   }
 }
@@ -509,11 +520,21 @@ async fn send_file_response(
   if response.cookies.length() > 0 {
     headers.remove(header_set_cookie)
   }
+  // A handler may override `ETag` / `Last-Modified`; preconditions must be
+  // evaluated against the validators the response actually advertises.
   let effective_etag = headers.get(header_etag).unwrap_or(etag)
+  let effective_mtime = match headers.get(header_last_modified) {
+    Some(value) =>
+      match parse_http_date(value) {
+        Some(seconds) => seconds
+        None => mtime_secs
+      }
+    None => mtime_secs
+  }
   match evaluate_preconditions(
     request,
     effective_etag,
-    mtime_secs,
+    effective_mtime,
     head || request.meth is @http.Get,
   ) {
     PreconditionFailed => {
@@ -548,7 +569,7 @@ async fn send_file_response(
   if response.status == 200 && request.meth is @http.Get {
     match request.headers.get(header_range) {
       Some(value) =>
-        if if_range_allows(request, effective_etag, mtime_secs) {
+        if if_range_allows(request, effective_etag, effective_mtime) {
           match parse_byte_range(value, size) {
             ByteRangeSpec(range_start, range_end) => {
               status = 206

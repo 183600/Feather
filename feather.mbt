@@ -2283,6 +2283,12 @@ pub fn Context::cookie(self : Context, name : String) -> String? {
   if name == "" {
     return None
   }
+  // `set_cookie` stores the sanitized name, so look up the same spelling to
+  // keep the write and read sides symmetric.
+  let lookup = sanitize_cookie_token(name, true)
+  if lookup == "" {
+    return None
+  }
   let header = self.header("Cookie")
   if header == "" {
     return None
@@ -2291,7 +2297,7 @@ pub fn Context::cookie(self : Context, name : String) -> String? {
     Some(cached_header) =>
       if physical_equal(cached_header, header) {
         match last_cookie_map.val {
-          Some(cached_map) => return cached_map.get(name)
+          Some(cached_map) => return cached_map.get(lookup)
           None => ()
         }
       }
@@ -2302,7 +2308,7 @@ pub fn Context::cookie(self : Context, name : String) -> String? {
       cache_touch(cookies_cache_ages, header)
       last_cookie_header.val = Some(header)
       last_cookie_map.val = Some(cached)
-      cached.get(name)
+      cached.get(lookup)
     }
     None => {
       let parsed = parse_cookie_map(header.view())
@@ -2311,7 +2317,7 @@ pub fn Context::cookie(self : Context, name : String) -> String? {
       }
       last_cookie_header.val = Some(header)
       last_cookie_map.val = Some(parsed)
-      parsed.get(name)
+      parsed.get(lookup)
     }
   }
 }
@@ -5408,6 +5414,10 @@ fn parse_imf_fixdate(view : StringView) -> Int64? {
   if weekday_end != 4 {
     return None
   }
+  // HTTP-date carries the GMT zone; anything else is not a valid date.
+  if !view[26:29].equal_ignore_ascii_case("GMT".view()) {
+    return None
+  }
   let day = imf_fixdate_two_digits(view, 5)
   let month = match month_from_name(view[8:11]) {
     Some(month) => month
@@ -5520,9 +5530,12 @@ fn parse_http_date_view(view : StringView) -> Int64? {
     } else {
       return None
     }
+    if token_count != 4 || !parts[3].equal_ignore_ascii_case("GMT".view()) {
+      return None
+    }
     time = parts[2]
   } else if parts[0].contains(",") {
-    if count < 5 {
+    if count < 6 || token_count != 6 {
       return None
     }
     day = match parse_decimal(parts[1]) {
@@ -5537,9 +5550,12 @@ fn parse_http_date_view(view : StringView) -> Int64? {
       Some(year) => year.to_int64()
       None => return None
     }
+    if !parts[5].equal_ignore_ascii_case("GMT".view()) {
+      return None
+    }
     time = parts[4]
   } else {
-    if count < 5 {
+    if count < 5 || token_count != 5 {
       return None
     }
     month = match month_from_name(parts[1]) {
@@ -7235,14 +7251,16 @@ pub fn middleware_request_id(header~ : String = "X-Request-Id") -> Middleware {
 ///|
 /// Whether a comma-separated header list such as `Vary` contains `token` as a
 /// complete entry, compared case-insensitively. Checking element boundaries
-/// keeps `Accept` from matching an existing `Accept-Encoding` entry.
+/// keeps `Accept` from matching an existing `Accept-Encoding` entry. A `*`
+/// entry covers every token (RFC 9110 §12.5.5), so it counts as a match.
 fn header_list_has_token(list : StringView, token : StringView) -> Bool {
   let length = list.length()
   let mut start = 0
   let mut i = 0
   while i <= length {
     if i == length || list.unsafe_get(i) == (',' : UInt16) {
-      if trim_ascii_space(list[start:i]).equal_ignore_ascii_case(token) {
+      let entry = trim_ascii_space(list[start:i])
+      if entry == ("*" : StringView) || entry.equal_ignore_ascii_case(token) {
         return true
       }
       start = i + 1
