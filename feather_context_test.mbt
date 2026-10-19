@@ -409,6 +409,32 @@ async test "server returns 404 for missing queued files" {
 }
 
 ///|
+async test "missing queued files keep middleware headers and cookies" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        ctx.set_header("X-Feather-Test", "kept")
+        ctx.set_cookie("sid", "abc", http_only=true)
+        next(ctx)
+      }
+    })
+    .get("/missing", fn(ctx) { ctx.file(200, "/definitely/not/here.txt") })
+  with_server(app, client => {
+    let response = client.get("/missing")
+    assert_eq(response.code, 404)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-Feather-Test")),
+      Some("kept"),
+    )
+    assert_eq(response.cookies.length(), 1)
+    assert_eq(response.cookies[0].name, "sid")
+    assert_eq(response.cookies[0].value, "abc")
+    assert_eq(response.cookies[0].http_only, true)
+    assert_eq(client.read_all().text(), "404 Not Found")
+  })
+}
+
+///|
 async test "server answers head requests for queued files" {
   let dir = @fs.tmpdir(prefix="feather-file-head")
   @fs.write_file(dir + "/data.bin", "0123456789")

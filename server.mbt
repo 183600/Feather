@@ -450,18 +450,39 @@ async fn send_file_response(
 ) -> Unit {
   let handle = @fs.open(file.path, mode=@fs.ReadOnly) catch {
     _ => {
-      send_simple(conn, 404, "404 Not Found", head)
+      send_static_error(
+        conn,
+        response.headers,
+        response.cookies,
+        head,
+        404,
+        "404 Not Found",
+      )
       return
     }
   }
   defer handle.close()
   if handle.kind() is @fs.Directory {
-    send_simple(conn, 404, "404 Not Found", head)
+    send_static_error(
+      conn,
+      response.headers,
+      response.cookies,
+      head,
+      404,
+      "404 Not Found",
+    )
     return
   }
   let size = handle.size() catch {
     _ => {
-      send_simple(conn, 500, "500 Internal Server Error", head)
+      send_static_error(
+        conn,
+        response.headers,
+        response.cookies,
+        head,
+        500,
+        "500 Internal Server Error",
+      )
       return
     }
   }
@@ -500,7 +521,14 @@ async fn send_file_response(
     head || request.meth is @http.Get,
   ) {
     PreconditionFailed => {
-      send_simple(conn, 412, "412 Precondition Failed", head)
+      send_static_error(
+        conn,
+        response.headers,
+        response.cookies,
+        head,
+        412,
+        "412 Precondition Failed",
+      )
       return
     }
     PreconditionNotModified => {
