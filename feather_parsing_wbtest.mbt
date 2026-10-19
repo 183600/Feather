@@ -38,6 +38,18 @@ test "accept encoding quality rejects fractional values above one" {
 }
 
 ///|
+test "base64 decode rejects non-latin1 characters" {
+  assert_eq(base64_decode("世界"), None)
+}
+
+///|
+test "urlencoded multi keys decode independently of stored spellings" {
+  let fields = parse_urlencoded_multi("a%2541=x&a%41=y".view())
+  assert_eq(fields.get("a%41").unwrap().join("|"), "x")
+  assert_eq(fields.get("aA").unwrap().join("|"), "y")
+}
+
+///|
 test "parse_multipart finds the earliest header terminator for lf parts" {
   let body = "--X\nContent-Disposition: form-data; name=\"a\"\n\nfoo\r\n\r\nbar\n--X--\n"
   let parts = parse_multipart(body, "multipart/form-data; boundary=X").unwrap()

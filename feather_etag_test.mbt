@@ -198,6 +198,19 @@ async test "precondition failure drops the compressed encoding" {
 }
 
 ///|
+async test "App etag applies to non-GET responses" {
+  let app = @feather.App::new()
+    .etag()
+    .post("/api", fn(ctx) { ctx.text(200, "created") })
+  with_server(app, client => {
+    let response = client.post("/api", "")
+    assert_eq(response.code, 200)
+    assert_true(response.headers.get(etag_key) is Some(_))
+    assert_eq(client.read_all().text(), "created")
+  })
+}
+
+///|
 async test "empty if-none-match elements never match an absent validator" {
   let app = @feather.App::new().get("/plain", fn(ctx) { ctx.text(200, "hi") })
   with_server(app, client => {

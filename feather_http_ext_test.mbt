@@ -344,3 +344,29 @@ async test "precompressed static files keep validators and revalidation" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+async test "precompressed static files work without a source sibling" {
+  let dir = @fs.tmpdir(prefix="feather-gz-only")
+  let plain = "only the compressed sibling exists\n".repeat(32)
+  let encoded = gzip_encode_for_test(@utf8.encode(plain))
+  @fs.write_file(dir + "/app.js.gz", encoded)
+  let app = @feather.App::new().static_files("/assets", dir, precompressed=true)
+  with_server(app, client => {
+    let response = client.get(
+      "/assets/app.js",
+      extra_headers=Map([(ext_accept_encoding, "gzip")]),
+    )
+    assert_eq(response.code, 200)
+    assert_eq(response.headers.get(ext_content_encoding), Some("gzip"))
+    let decoded = gunzip_for_test(client.read_all().binary())
+    assert_eq(@utf8.decode_lossy(decoded), plain)
+    let identity = client.get(
+      "/assets/app.js",
+      extra_headers=Map([(ext_accept_encoding, "identity")]),
+    )
+    assert_eq(identity.code, 404)
+    ignore(client.read_all())
+  })
+  @fs.rmdir(dir, recursive=true)
+}

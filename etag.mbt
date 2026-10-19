@@ -276,21 +276,6 @@ fn precondition_fails_early_facade(request : Request, response : Response) -> Bo
 }
 
 ///|
-/// Whether automatic `ETag` generation applies to this request method. Tags
-/// derived from POST/PUT bodies buy nothing (clients do not revalidate them)
-/// and cost a full encode and hash of the body.
-fn request_allows_auto_etag(request : @http.Request) -> Bool {
-  request.meth is @http.Get || request.meth is @http.Head
-}
-
-///|
-/// The facade counterpart of `request_allows_auto_etag`.
-fn method_allows_auto_etag(method : String) -> Bool {
-  let upper = method.to_upper()
-  upper == "GET" || upper == "HEAD"
-}
-
-///|
 pub fn Feather::etag(self : Feather) -> Feather {
   ignore(self.app.etag())
   self

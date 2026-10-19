@@ -150,6 +150,16 @@ test "cookies strip separators from names and attribute values" {
 }
 
 ///|
+test "cookie values keep base64 padding" {
+  let ctx = @feather.create_context()
+  ctx.set_cookie("token", "YWJjZA==", path="/")
+  assert_eq(
+    ctx.response.headers.get("Set-Cookie"),
+    Some("token=YWJjZA==; Path=/"),
+  )
+}
+
+///|
 test "cookies drop invalid same-site values and sanitize domains" {
   let ctx = @feather.create_context()
   ctx.set_cookie("sid", "v", domain="a;b=c d", same_site="lax y")

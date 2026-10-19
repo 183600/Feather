@@ -2014,7 +2014,7 @@ fn is_cookie_character_unsafe(unit : UInt16, drop_space : Bool) -> Bool {
   code == 0x7F ||
   unit == (';' : UInt16) ||
   unit == (',' : UInt16) ||
-  unit == ('=' : UInt16) ||
+  (drop_space && unit == ('=' : UInt16)) ||
   unit == ('"' : UInt16) ||
   unit == ('\\' : UInt16) ||
   (drop_space && code == 0x20)
@@ -2884,6 +2884,19 @@ pub fn base64_decode(text : String) -> Bytes? {
 }
 
 ///|
+/// Look up a character code in a base64 value table. Characters outside the
+/// table (anything past Latin-1) are not part of any base64 alphabet, so they
+/// map to `-1` instead of indexing out of bounds.
+fn base64_table_value(table : FixedArray[Int], code : UInt16) -> Int {
+  let index = code.to_int()
+  if index < table.length() {
+    table[index]
+  } else {
+    -1
+  }
+}
+
+///|
 /// `base64_decode` core: `table` maps a character code to its 6-bit value, or
 /// `-1` when the character is not in the alphabet.
 fn base64_decode_core(
@@ -2915,9 +2928,9 @@ fn base64_decode_core(
   let mut out_index = 0
   while i < length {
     let remaining = length - i
-    let first = table[view.unsafe_get(i).to_int()]
+    let first = base64_table_value(table, view.unsafe_get(i))
     let second = if remaining >= 2 {
-      table[view.unsafe_get(i + 1).to_int()]
+      base64_table_value(table, view.unsafe_get(i + 1))
     } else {
       -1
     }
@@ -2934,7 +2947,7 @@ fn base64_decode_core(
       if third_raw == ('=' : UInt16) {
         return None
       }
-      let third = table[third_raw.to_int()]
+      let third = base64_table_value(table, third_raw)
       if third < 0 {
         return None
       }
@@ -2948,7 +2961,7 @@ fn base64_decode_core(
       }
       return Some(own_bytes_prefix(out, out_index))
     }
-    let third = table[third_raw.to_int()]
+    let third = base64_table_value(table, third_raw)
     if third < 0 {
       return None
     }
@@ -2961,7 +2974,7 @@ fn base64_decode_core(
       }
       return Some(own_bytes_prefix(out, out_index))
     }
-    let fourth = table[fourth_raw.to_int()]
+    let fourth = base64_table_value(table, fourth_raw)
     if fourth < 0 {
       return None
     }
@@ -3244,25 +3257,26 @@ fn parse_urlencoded_multi(source : StringView) -> Map[String, Array[String]] {
     if end > pos {
       let raw_key = if eq >= 0 { source[pos:eq] } else { source[pos:end] }
       let value = if eq >= 0 { decode_url(source[eq + 1:end]) } else { "" }
-      match result.get_from_string(raw_key) {
-        Some(values) => values.push(value)
-        None => {
-          let key = if raw_key.contains("%") || raw_key.contains("+") {
-            match escaped_keys.get(raw_key) {
-              Some(key) => key
-              None => {
-                let key = decode_url(raw_key)
-                escaped_keys.set(raw_key, key)
-                key
-              }
-            }
-          } else {
-            decode_url(raw_key)
+      // A key with neither `%` nor `+` decodes to its raw spelling, so it can
+      // be looked up without allocating a decoded copy; escaped keys must be
+      // decoded before the lookup, since the map stores decoded spellings.
+      if !raw_key.contains("%") && !raw_key.contains("+") {
+        match result.get_from_string(raw_key) {
+          Some(values) => values.push(value)
+          None => result.set(raw_key.to_owned(), [value])
+        }
+      } else {
+        let key = match escaped_keys.get(raw_key) {
+          Some(key) => key
+          None => {
+            let key = decode_url(raw_key)
+            escaped_keys.set(raw_key, key)
+            key
           }
-          match result.get(key) {
-            Some(values) => values.push(value)
-            None => result.set(key, [value])
-          }
+        }
+        match result.get(key) {
+          Some(values) => values.push(value)
+          None => result.set(key, [value])
         }
       }
     }
@@ -6043,7 +6057,7 @@ pub fn App::respond(self : App, request : Request) -> Response {
   }
   if ctx.file_response() is None &&
     !precondition_fails_early_facade(ctx.request, ctx.response) {
-    if self.etag_enabled && method_allows_auto_etag(ctx.request.method) {
+    if self.etag_enabled {
       apply_etag(ctx.response)
     }
     apply_preconditions_facade(ctx.request, ctx.response)

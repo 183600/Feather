@@ -878,68 +878,90 @@ async fn serve_static_file(
     }
     conn.end_response()
   }
-  let base = @fs.open(file_path, mode=@fs.ReadOnly) catch {
+  let mut gzip_handle : @fs.File? = None
+  let base : @fs.File? = Some(@fs.open(file_path, mode=@fs.ReadOnly)) catch {
     _ => {
-      send_error(404, "404 Not Found")
-      return
+      // A mount may ship only the precompressed sibling of an asset, so probe
+      // it before reporting the source file as missing.
+      if precompressed {
+        match request.headers.get(header_accept_encoding) {
+          Some(value) =>
+            if accept_encoding_allows_gzip_cached(value) {
+              gzip_handle = open_precompressed_gzip(file_path)
+            }
+          None => ()
+        }
+      }
+      if gzip_handle is None {
+        send_error(404, "404 Not Found")
+        return
+      }
+      None
     }
   }
-  if base.kind() is @fs.Directory {
-    base.close()
-    let location = append_trailing_slash(request.path)
-    let headers = base_headers(1)
-    headers.set(@http.CaseInsensitiveString("Location"), location)
-    send_with_date(conn, 301, "Moved Permanently", headers, cookies~)
-    conn.end_response()
-    return
+  match base {
+    Some(handle) =>
+      if handle.kind() is @fs.Directory {
+        handle.close()
+        let location = append_trailing_slash(request.path)
+        let headers = base_headers(1)
+        headers.set(@http.CaseInsensitiveString("Location"), location)
+        send_with_date(conn, 301, "Moved Permanently", headers, cookies~)
+        conn.end_response()
+        return
+      }
+    None => ()
   }
-  let mut gzip_handle : @fs.File? = None
-  if precompressed {
-    match request.headers.get(header_accept_encoding) {
-      Some(value) =>
-        if accept_encoding_allows_gzip_cached(value) {
-          let base_size = base.size() catch {
-            _ => 0L
-          }
-          let base_mtime = base.mtime() catch {
-            _ => (0L, 0)
-          }
-          let (base_secs, base_nanos) = base_mtime
-          let mut has_gzip = false
-          let mut known = false
-          match gzip_probe_cache.get(file_path) {
-            Some((cached_size, cached_secs, cached_nanos, cached_has)) =>
-              if cached_size == base_size &&
-                cached_secs == base_secs &&
-                cached_nanos == base_nanos {
-                has_gzip = cached_has
-                known = true
-                cache_touch(gzip_probe_ages, file_path)
+  if precompressed && gzip_handle is None {
+    match base {
+      Some(base_file) =>
+        match request.headers.get(header_accept_encoding) {
+          Some(value) =>
+            if accept_encoding_allows_gzip_cached(value) {
+              let base_size = base_file.size() catch {
+                _ => 0L
               }
-            None => ()
-          }
-          if !known {
-            gzip_handle = open_precompressed_gzip(file_path)
-            has_gzip = gzip_handle is Some(_)
-            cache_set(
-              gzip_probe_cache,
-              gzip_probe_ages,
-              GZIP_PROBE_CACHE_LIMIT,
-              file_path,
-              (base_size, base_secs, base_nanos, has_gzip),
-            )
-          } else if has_gzip {
-            gzip_handle = open_precompressed_gzip(file_path)
-            if gzip_handle is None {
-              cache_set(
-                gzip_probe_cache,
-                gzip_probe_ages,
-                GZIP_PROBE_CACHE_LIMIT,
-                file_path,
-                (base_size, base_secs, base_nanos, false),
-              )
+              let base_mtime = base_file.mtime() catch {
+                _ => (0L, 0)
+              }
+              let (base_secs, base_nanos) = base_mtime
+              let mut has_gzip = false
+              let mut known = false
+              match gzip_probe_cache.get(file_path) {
+                Some((cached_size, cached_secs, cached_nanos, cached_has)) =>
+                  if cached_size == base_size &&
+                    cached_secs == base_secs &&
+                    cached_nanos == base_nanos {
+                    has_gzip = cached_has
+                    known = true
+                    cache_touch(gzip_probe_ages, file_path)
+                  }
+                None => ()
+              }
+              if !known {
+                gzip_handle = open_precompressed_gzip(file_path)
+                has_gzip = gzip_handle is Some(_)
+                cache_set(
+                  gzip_probe_cache,
+                  gzip_probe_ages,
+                  GZIP_PROBE_CACHE_LIMIT,
+                  file_path,
+                  (base_size, base_secs, base_nanos, has_gzip),
+                )
+              } else if has_gzip {
+                gzip_handle = open_precompressed_gzip(file_path)
+                if gzip_handle is None {
+                  cache_set(
+                    gzip_probe_cache,
+                    gzip_probe_ages,
+                    GZIP_PROBE_CACHE_LIMIT,
+                    file_path,
+                    (base_size, base_secs, base_nanos, false),
+                  )
+                }
+              }
             }
-          }
+          None => ()
         }
       None => ()
     }
@@ -947,10 +969,20 @@ async fn serve_static_file(
   let serving_gzip = gzip_handle is Some(_)
   let file = match gzip_handle {
     Some(handle) => {
-      base.close()
+      match base {
+        Some(base_file) => base_file.close()
+        None => ()
+      }
       handle
     }
-    None => base
+    None =>
+      match base {
+        Some(base_file) => base_file
+        None => {
+          send_error(404, "404 Not Found")
+          return
+        }
+      }
   }
   defer file.close()
   let decorate_headers = fn(headers : @http.Headers) {
@@ -1159,7 +1191,7 @@ async fn handle_static(
           if app.compress_enabled {
             compress_response(request, ctx.response, app.compress_min_size)
           }
-          if app.etag_enabled && request_allows_auto_etag(request) {
+          if app.etag_enabled {
             apply_etag(ctx.response)
           }
           apply_preconditions(request, ctx.response)
@@ -1192,7 +1224,7 @@ async fn build_response(
       if app.compress_enabled {
         compress_response(request, ctx.response, app.compress_min_size)
       }
-      if app.etag_enabled && request_allows_auto_etag(request) {
+      if app.etag_enabled {
         apply_etag(ctx.response)
       }
       apply_preconditions(request, ctx.response)
