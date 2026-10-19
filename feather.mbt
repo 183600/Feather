@@ -6183,6 +6183,35 @@ pub fn App::static_files(
   max_age~ : Int32 = 0,
   precompressed~ : Bool = false,
 ) -> App {
+  self.static_files_with(
+    url_prefix,
+    root,
+    [],
+    index~,
+    max_age~,
+    precompressed~,
+  )
+}
+
+///|
+/// Serve files from `root` under `url_prefix` through a mount-specific
+/// middleware chain.
+///
+/// The middlewares run after every application middleware (`App::use`) and
+/// only when a request resolves to a file below this mount, so they are the
+/// natural place for static-asset authentication, access logging or
+/// per-mount response headers. Registering another mount with a longer prefix
+/// keeps both chains independent. A middleware that answers without calling
+/// through replaces the file response entirely.
+pub fn App::static_files_with(
+  self : App,
+  url_prefix : String,
+  root : String,
+  middlewares : Array[Middleware],
+  index~ : String = "index.html",
+  max_age~ : Int32 = 0,
+  precompressed~ : Bool = false,
+) -> App {
   let mut clean_root = root
   while clean_root.length() > 1 && clean_root.has_suffix("/") {
     clean_root = clean_root[:clean_root.length() - 1].to_owned()
@@ -6193,7 +6222,7 @@ pub fn App::static_files(
     index,
     max_age,
     precompressed,
-    middlewares: [],
+    middlewares: middlewares.copy(),
     chain: None,
   })
   self.static_lookup_cache.clear()
@@ -7233,6 +7262,29 @@ pub fn Feather::static_files(
 ) -> Feather {
   ignore(
     self.app.static_files(url_prefix, root, index~, max_age~, precompressed~),
+  )
+  self
+}
+
+///|
+pub fn Feather::static_files_with(
+  self : Feather,
+  url_prefix : String,
+  root : String,
+  middlewares : Array[Middleware],
+  index~ : String = "index.html",
+  max_age~ : Int32 = 0,
+  precompressed~ : Bool = false,
+) -> Feather {
+  ignore(
+    self.app.static_files_with(
+      url_prefix,
+      root,
+      middlewares,
+      index~,
+      max_age~,
+      precompressed~,
+    ),
   )
   self
 }

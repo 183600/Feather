@@ -360,3 +360,57 @@ async test "mounted static middleware can short-circuit file serving" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+async test "static_files_with runs middleware for its mount only" {
+  let dir = @fs.tmpdir(prefix="feather-static-with-middleware")
+  @fs.write_file(dir + "/hello.txt", "mount middleware")
+  let app = @feather.App::new()
+    .use(tag_header("X-App", "on"))
+    .static_files_with("/assets", dir, [
+      tag_header("X-Mount", "yes"),
+    ])
+  with_server(app, client => {
+    let response = client.get("/assets/hello.txt")
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-App")),
+      Some("on"),
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-Mount")),
+      Some("yes"),
+    )
+    assert_eq(client.read_all().text(), "mount middleware")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "static_files_with middleware can short-circuit a mount" {
+  let dir = @fs.tmpdir(prefix="feather-static-with-auth")
+  @fs.write_file(dir + "/secret.txt", "classified")
+  let app = @feather.App::new().static_files_with("/private", dir, [
+    fn(next) {
+      fn(ctx) {
+        if ctx.header("X-Key") != "open" {
+          ctx.text(403, "forbidden")
+          return
+        }
+        next(ctx)
+      }
+    },
+  ])
+  with_server(app, client => {
+    let denied = client.get("/private/secret.txt")
+    assert_eq(denied.code, 403)
+    assert_eq(client.read_all().text(), "forbidden")
+    let allowed = client.get(
+      "/private/secret.txt",
+      extra_headers=Map([(@http.CaseInsensitiveString("X-Key"), "open")]),
+    )
+    assert_eq(allowed.code, 200)
+    assert_eq(client.read_all().text(), "classified")
+  })
+  @fs.rmdir(dir, recursive=true)
+}

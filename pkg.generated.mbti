@@ -176,6 +176,7 @@ pub fn App::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) 
 pub fn App::static_cache_control_for(Self, String) -> String
 pub fn App::static_file_for(Self, String) -> String?
 pub fn App::static_files(Self, String, String, index? : String, max_age? : Int32, precompressed? : Bool) -> Self
+pub fn App::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool) -> Self
 pub fn App::stream(Self, String, async (Context, Stream) -> Unit) -> Self
 pub fn App::stream_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Stream) -> Unit) -> Self
 pub fn App::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
@@ -325,6 +326,7 @@ pub async fn Feather::serve_with(Self, @http.Server, max_connections? : Int32) -
 pub fn Feather::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn Feather::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Sse) -> Unit) -> Self
 pub fn Feather::static_files(Self, String, String, index? : String, max_age? : Int32, precompressed? : Bool) -> Self
+pub fn Feather::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool) -> Self
 pub fn Feather::stream(Self, String, async (Context, Stream) -> Unit) -> Self
 pub fn Feather::stream_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Stream) -> Unit) -> Self
 pub fn Feather::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
