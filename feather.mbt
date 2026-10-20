@@ -7840,7 +7840,9 @@ fn static_lookup_uncached(
     path_view[prefix_length + 1:]
   }
   let decoded = decode_url_path(relative)
-  let decoded_ends_with_slash = decoded.has_suffix("/")
+  let decoded_ends_with_slash = decoded.has_suffix("/") ||
+    decoded == "." ||
+    decoded.has_suffix("/.")
   let clean = match clean_relative_path(decoded) {
     Some(clean) => clean
     None => return None

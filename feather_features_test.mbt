@@ -389,6 +389,19 @@ test "static_file_for ignores query strings" {
 }
 
 ///|
+test "static_file_for treats a trailing dot segment as a directory" {
+  let app = @feather.App::new().static_files("/assets", "/srv/public")
+  assert_eq(
+    app.static_file_for("/assets/nested/."),
+    Some("/srv/public/nested/index.html"),
+  )
+  assert_eq(
+    app.static_file_for("/assets/nested/%2e"),
+    Some("/srv/public/nested/index.html"),
+  )
+}
+
+///|
 test "static_files with empty prefix mounts at root" {
   let app = @feather.App::new().static_files("", "/srv/www")
   assert_eq(app.static_file_for("/app.css"), Some("/srv/www/app.css"))
