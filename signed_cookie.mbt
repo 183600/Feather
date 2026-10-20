@@ -229,8 +229,7 @@ pub fn sha256(data : Bytes) -> Bytes {
 fn hmac_ensure_key_blocks(normalized : Bytes) -> Unit {
   match hmac_cached_key.val {
     Some(cached) =>
-      if physical_equal(cached, normalized) ||
-        constant_time_bytes_equal(cached, normalized) {
+      if constant_time_bytes_equal(cached, normalized) {
         return
       }
     None => ()
@@ -252,7 +251,11 @@ fn hmac_ensure_key_blocks(normalized : Bytes) -> Unit {
   for i = 0; i < 8; i = i + 1 {
     hmac_outer_midstate[i] = state[i]
   }
-  hmac_cached_key.val = Some(normalized)
+  let snapshot = FixedArray::make(key_length, b'\x00')
+  for i = 0; i < key_length; i = i + 1 {
+    snapshot[i] = normalized[i]
+  }
+  hmac_cached_key.val = Some(snapshot.unsafe_reinterpret_as_bytes())
 }
 
 ///|
