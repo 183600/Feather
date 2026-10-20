@@ -805,9 +805,7 @@ fn render_allow_header_value(allowed : Array[String]) -> String {
 
 ///|
 /// Most recent method/path pair resolved for a router and its node/bindings.
-/// Successful lookups dominate steady-state traffic, so a one-entry cache
-/// avoids repeating the tree and per-method map lookups for the same request
-/// target. `add_route` invalidates it.
+/// `add_route` invalidates it.
 let last_route_trees : Ref[Map[String, RouteNode]?] = Ref(None)
 let last_route_method : Ref[String] = Ref("")
 let last_route_path : Ref[String] = Ref("")
@@ -818,8 +816,7 @@ let last_route_valid : Ref[Bool] = Ref(false)
 
 ///|
 /// Most recent method/path pair that did not resolve to a route, together with
-/// the allowed methods (or `None` when no method matches). Repeating misses
-/// skip the tree walk entirely.
+/// the allowed methods (or `None` when no method matches).
 let last_route_miss : Ref[
   (Map[String, RouteNode], String, String, Array[String]?)?,
 ] = Ref(None)
@@ -1177,8 +1174,7 @@ fn Router::match_route(
     Some(hit) => MatchFound(hit.0, hit.1, hit.2)
     None =>
       if meth == "HEAD" {
-        // `HEAD` falls back to the `GET` route before the negative cache: a
-        // GET match is a hit, and only a GET miss can be cached as absent.
+        // `HEAD` falls back to the `GET` route before the negative cache.
         match self.find_node("GET", clean_path) {
           Some(hit) => MatchFound(hit.0, hit.1, hit.2)
           None =>
@@ -1201,10 +1197,7 @@ fn Router::match_route(
             }
         }
       } else {
-        // A path that resolved to no route for this method is very likely to
-        // miss again, so the raw method list is cached. Checking the cache
-        // only after the node lookup keeps the common hit path free of the
-        // extra map access.
+        // Fall back to the cached method list when the node lookup misses.
         match self.find_miss_methods(meth, clean_path) {
           Some(methods) =>
             if methods.length() > 0 {
@@ -1660,8 +1653,8 @@ fn json_write_escaped(buf : StringBuilder, value : String) -> Unit {
 }
 
 ///|
-/// Serialize a flat string map as a JSON object without materializing an
-/// intermediate `Json` tree. Keys keep the map's iteration order.
+/// Serialize a flat string map as a JSON object. Keys keep the map's iteration
+/// order.
 fn json_object_text(data : Map[String, String]) -> String {
   if data.is_empty() {
     return "{}"
@@ -3325,8 +3318,7 @@ fn write_percent_to(out : FixedArray[Byte], offset : Int, value : Int) -> Unit {
 }
 
 ///|
-/// Most recently encoded source string and its result. Encoding is pure, so
-/// repeated values (route parameters, query keys) can reuse the last result.
+/// Most recently encoded source string and its result.
 let last_url_encode_source : Ref[String?] = Ref(None)
 let last_url_encode_value : Ref[String] = Ref("")
 
@@ -3497,8 +3489,7 @@ fn own_bytes_prefix(out : FixedArray[Byte], length : Int) -> Bytes {
 }
 
 ///|
-/// Most recently decoded base64 text and its result. Decoded bytes are
-/// immutable, so the result can be shared safely.
+/// Most recently decoded base64 text and its result.
 let last_base64_text : Ref[String?] = Ref(None)
 let last_base64_result : Ref[Bytes?] = Ref(None)
 let last_base64_valid : Ref[Bool] = Ref(false)
@@ -3568,8 +3559,8 @@ fn base64_decode_core(
   let out = FixedArray::make(out_len, b' ')
   let mut i = 0
   let mut out_index = 0
-  // Fast path: four alphabet characters at a time, which is the common case
-  // for well-formed base64. Invalid or padded groups fall back below.
+  // Decode four alphabet characters at a time. Invalid or padded groups fall
+  // back below.
   while i + 4 <= length {
     let first_code = view.unsafe_get(i).to_int()
     let second_code = view.unsafe_get(i + 1).to_int()
@@ -3813,9 +3804,7 @@ fn mime_for_extension(extension : StringView) -> String {
 }
 
 ///|
-/// Most recently resolved file path and its media type. Static handlers often
-/// ask for the same path repeatedly, so the physical-identity fast path avoids
-/// rescanning the path for its extension.
+/// Most recently resolved file path and its media type.
 let last_mime_path : Ref[String?] = Ref(None)
 let last_mime_value : Ref[String] = Ref("")
 
@@ -4847,8 +4836,6 @@ fn header_parameter(value : StringView, name : String) -> String? {
 
 ///|
 /// Most recently parsed `Content-Type` value and the boundary it resolved to.
-/// A single client reuses one content type across multipart requests, so the
-/// repeated parameter parse is worth memoizing.
 let last_boundary_content_type : Ref[String?] = Ref(None)
 let last_boundary_value : Ref[String?] = Ref(None)
 
@@ -5200,9 +5187,7 @@ fn skip_line_break(view : StringView, pos : Int32) -> Int32 {
 
 ///|
 /// One-entry cache of the delimiters and their prefix tables, keyed by the
-/// boundary they were built from. A client that sends several multipart
-/// requests reuses one boundary, so both the concatenated delimiter strings and
-/// the prefix tables can be reused.
+/// boundary they were built from.
 priv struct MultipartDelimiters {
   boundary : String
   delimiter : String
@@ -5217,8 +5202,7 @@ priv struct MultipartDelimiters {
 let last_multipart_delimiters : Ref[MultipartDelimiters?] = Ref(None)
 
 ///|
-/// Delimiters and prefix tables for `boundary`, reusing the cached ones when
-/// the boundary repeats.
+/// Delimiters and prefix tables for `boundary`.
 fn multipart_delimiters(boundary : String) -> MultipartDelimiters {
   match last_multipart_delimiters.val {
     Some(cached) =>
@@ -6073,12 +6057,10 @@ let precondition_if_modified_since_name : StringView = "If-Modified-Since".view(
 let precondition_if_unmodified_since_name : StringView = "If-Unmodified-Since".view()
 
 ///|
-/// Collect the precondition request headers in a single pass over the map.
+/// Collect the precondition request headers from the map.
 ///
-/// Four separate case-insensitive lookups would rescan the header map four
-/// times; this walks it once without allocating a tuple per entry. The map is
-/// mutable and can be changed in place without its length changing, so the
-/// result is not cached.
+/// The map is mutable and can be changed in place without its length changing,
+/// so the result is not cached.
 fn precondition_input_from_map(
   headers : Map[String, String],
 ) -> PreconditionInput {
@@ -7694,8 +7676,7 @@ fn App::static_lookup_remember(
 }
 
 ///|
-/// Most recent raw static request path and its result. Static mounts change
-/// rarely, so repeated asset requests can skip cleaning and the map lookup.
+/// Most recent raw static request path and its result.
 let last_static_cache : Ref[Map[String, (String, String, Bool, StaticMount)?]?] = Ref(
   None,
 )
@@ -7842,8 +7823,7 @@ pub fn App::respond(self : App, request : Request) -> Response {
     err => internal_error(ctx, "\{err}")
   }
   if ctx.file_response() is None {
-    // Without request headers there can be no precondition, so skip the
-    // header scan and validator bookkeeping entirely.
+    // Without request headers there can be no precondition.
     if ctx.request.headers.is_empty() {
       if self.etag_enabled {
         apply_etag(ctx.response)

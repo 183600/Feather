@@ -136,7 +136,7 @@ let sha256_work_state : FixedArray[UInt] = FixedArray::make(8, 0U)
 ///|
 /// Inner/outer key blocks for `hmac_sha256`, kept alongside the normalized key
 /// they were derived from, plus the digest state after each block was
-/// compressed. Reusing the precomputed states saves two compressions per MAC.
+/// compressed.
 let hmac_cached_key : Ref[Bytes?] = Ref(None)
 let hmac_inner_block : FixedArray[Byte] = FixedArray::make(64, b'\x00')
 let hmac_outer_block : FixedArray[Byte] = FixedArray::make(64, b'\x00')
@@ -401,9 +401,7 @@ fn base64url_decode_slow(view : StringView) -> Bytes? {
 }
 
 ///|
-/// UTF-8 encoding of the most recent HMAC secret. Strings are immutable and the
-/// async runtime is single threaded, so keying the cached bytes on string
-/// identity is sound: a different secret can only miss.
+/// UTF-8 encoding of the most recent HMAC secret.
 let last_secret_text : Ref[String?] = Ref(None)
 
 ///|
@@ -465,8 +463,7 @@ fn signed_cookie_signing_input(
 }
 
 ///|
-/// Most recently minted token and the inputs it was derived from. Signing is
-/// deterministic, so an identical call can reuse the previous token.
+/// Most recently minted token and the inputs it was derived from.
 let last_signed_token : Ref[(String, String, String, Int64, String)?] = Ref(
   None,
 )

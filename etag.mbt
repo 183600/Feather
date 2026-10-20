@@ -46,8 +46,7 @@ fn write_fnv1a_hex(builder : StringBuilder, data : Bytes) -> Unit {
 
 ///|
 /// Validators and opt-out headers that affect ETag generation and precondition
-/// checks, collected in one case-insensitive pass. Responses carry only a few
-/// headers, so scanning beats building the general header index.
+/// checks, collected in one case-insensitive pass.
 priv struct ResponseValidators {
   etag : String?
   cache_control : String?

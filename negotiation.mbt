@@ -218,9 +218,7 @@ let media_type_parts_cache : Map[String, (String, String)] = Map([])
 let media_type_parts_cache_ages : Map[String, Int] = Map([])
 
 ///|
-/// Most recently parsed media type and its parts. Offers are usually string
-/// literals reused across calls, so a physical-equality fast path skips the
-/// map lookups for the common case.
+/// Most recently parsed media type and its parts.
 let last_media_type_text : Ref[String?] = Ref(None)
 let last_media_type_value : Ref[(String, String)?] = Ref(None)
 let last_media_type_hit : Ref[Bool] = Ref(false)
