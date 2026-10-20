@@ -164,6 +164,12 @@ test "base64url decoding accepts padded and unpadded input" {
 }
 
 ///|
+test "base64url decoding rejects non-ascii aliases" {
+  assert_eq(base64url_decode("\u{141}"), None)
+  assert_eq(base64url_decode("A\u{141}"), None)
+}
+
+///|
 test "verify_signed_cookie_token rejects a signed but undecodable value" {
   let encoded_value = "***"
   let mac = hmac_sha256(

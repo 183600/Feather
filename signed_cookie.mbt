@@ -373,34 +373,7 @@ fn base64url_decode(text : String) -> Bytes? {
 ///|
 /// `base64url_decode` for a `StringView`.
 fn base64url_decode_view(view : StringView) -> Bytes? {
-  let length = view.length()
-  let mut i = 0
-  while i < length {
-    if view.unsafe_get(i).to_int() >= 128 {
-      return base64url_decode_slow(view)
-    }
-    i = i + 1
-  }
   base64_decode_core(view, base64url_lookup)
-}
-
-///|
-/// `base64url_decode` for text containing non-ASCII characters: the characters
-/// are first narrowed to bytes (which may spell out multi-byte UTF-8 that the
-/// lossy decode then replaces).
-fn base64url_decode_slow(view : StringView) -> Bytes? {
-  let translated = FixedArray::make(view.length(), b'\x00')
-  for i = 0; i < view.length(); i = i + 1 {
-    let code = view.unsafe_get(i).to_int()
-    if code == 45 {
-      translated[i] = b'+'
-    } else if code == 95 {
-      translated[i] = b'/'
-    } else {
-      translated[i] = code.to_byte()
-    }
-  }
-  base64_decode(@utf8.decode_lossy(translated.unsafe_reinterpret_as_bytes()))
 }
 
 ///|
