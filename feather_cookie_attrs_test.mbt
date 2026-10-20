@@ -93,3 +93,18 @@ test "session cookies can be partitioned" {
   assert_eq(cookie.extensions[0], "SameSite=None")
   assert_eq(cookie.extensions[1], "Partitioned")
 }
+
+///|
+test "set_cookie replaces a case-variant raw header" {
+  let ctx = @feather.create_context()
+  ctx.set_header("set-cookie", "forged=1")
+  ctx.set_cookie("sid", "1", path="/")
+  let mut count = 0
+  for key, _ in ctx.response.headers {
+    if key.view().equal_ignore_ascii_case("set-cookie".view()) {
+      count = count + 1
+    }
+  }
+  assert_eq(count, 1)
+  assert_eq(ctx.response.headers.get("Set-Cookie"), Some("sid=1; Path=/"))
+}

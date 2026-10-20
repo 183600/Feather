@@ -2870,7 +2870,11 @@ pub fn Context::set_cookie(
     secure,
     partitioned,
   )
-  self.response.headers.set("Set-Cookie", render_cookie(cookie))
+  set_header_ignore_case(
+    self.response.headers,
+    "Set-Cookie",
+    render_cookie(cookie),
+  )
   self.response.cookies.push(cookie)
 }
 
