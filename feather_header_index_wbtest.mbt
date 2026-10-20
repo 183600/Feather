@@ -40,3 +40,38 @@ test "Context header lookup sees headers added after a miss" {
   ctx.request.headers.set("x-token", "secret")
   assert_eq(ctx.header("X-Token"), "secret")
 }
+
+///|
+fn count_case_variant_headers(
+  headers : Map[String, String],
+  name : String,
+) -> Int {
+  let mut count = 0
+  for key, _ in headers {
+    if key.view().equal_ignore_ascii_case(name.view()) {
+      count = count + 1
+    }
+  }
+  count
+}
+
+///|
+test "set_header_ignore_case collapses every case variant" {
+  let headers : Map[String, String] = Map([
+    ("ETag", "old"),
+    ("etag", "older"),
+  ])
+  set_header_ignore_case(headers, "ETag", "new")
+  assert_eq(count_case_variant_headers(headers, "etag"), 1)
+  assert_eq(headers.get("ETag"), Some("new"))
+}
+
+///|
+test "remove_header_ignore_case removes every case variant" {
+  let headers : Map[String, String] = Map([
+    ("ETag", "old"),
+    ("etag", "older"),
+  ])
+  assert_true(remove_header_ignore_case(headers, "ETag"))
+  assert_eq(count_case_variant_headers(headers, "etag"), 0)
+}

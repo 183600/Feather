@@ -5101,13 +5101,14 @@ fn set_header_ignore_case(
   name : String,
   value : String,
 ) -> Unit {
-  let mut stale : String? = None
-  if !headers.contains(name) {
-    stale = cached_header_spelling(headers, name)
+  let stale : Array[String] = []
+  for key in headers.keys() {
+    if key.view().equal_ignore_ascii_case(name.view()) {
+      stale.push(key)
+    }
   }
-  match stale {
-    Some(key) => ignore(headers.remove(key))
-    None => ()
+  for key in stale {
+    ignore(headers.remove(key))
   }
   headers.set(name, value)
 }
@@ -5118,16 +5119,19 @@ fn remove_header_ignore_case(
   headers : Map[String, String],
   name : String,
 ) -> Bool {
-  if headers.remove_and_get(name) is Some(_) {
-    return true
-  }
-  match cached_header_spelling(headers, name) {
-    Some(key) => {
-      ignore(headers.remove(key))
-      true
+  let stale : Array[String] = []
+  for key in headers.keys() {
+    if key.view().equal_ignore_ascii_case(name.view()) {
+      stale.push(key)
     }
-    None => false
   }
+  if stale.is_empty() {
+    return false
+  }
+  for key in stale {
+    ignore(headers.remove(key))
+  }
+  true
 }
 
 ///|
