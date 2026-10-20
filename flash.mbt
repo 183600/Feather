@@ -76,6 +76,39 @@ fn flash_message_bytes(messages : Array[String]) -> Int {
 }
 
 ///|
+/// Encoded size of the messages already stored under `key`, which are not part
+/// of the current request's additions.
+fn Session::flash_stored_bytes(self : Session, key : String) -> Int {
+  match self.data.get(key) {
+    Some(text) => flash_message_bytes(flash_decode(text))
+    None => 0
+  }
+}
+
+///|
+/// Flash categories the session would retain if the current request's pending
+/// additions were flushed: the keys already in the data plus the pending
+/// categories that are new to it.
+fn Session::flash_retained_categories(self : Session) -> Int {
+  let mut categories = 0
+  for key, _ in self.data {
+    if key.has_prefix(FLASH_PREFIX) {
+      categories = categories + 1
+    }
+  }
+  match self.flash_pending {
+    Some(pending) =>
+      for category, _ in pending {
+        if !self.data.contains(FLASH_PREFIX + category) {
+          categories = categories + 1
+        }
+      }
+    None => ()
+  }
+  categories
+}
+
+///|
 /// Decode the messages stored in the session under `key`.
 fn Context::flash_messages(self : Context, key : String) -> Array[String] {
   match self.session_materialized() {
@@ -156,21 +189,17 @@ pub fn Context::flash(
         Some(messages) => messages
         None => self.flash_messages(FLASH_PREFIX + category)
       }
-      let is_new_category = !pending.contains(category)
-      if !(is_new_category && pending.length() >= FLASH_MAX_CATEGORIES) &&
+      let adds_category = !session.data.contains(FLASH_PREFIX + category)
+      if !(adds_category &&
+        session.flash_retained_categories() >= FLASH_MAX_CATEGORIES) &&
         messages.length() < FLASH_MAX_MESSAGES_PER_CATEGORY &&
         session.flash_pending_bytes + message.length() + 8 <=
         FLASH_MAX_ENCODED_BYTES {
         messages.push(message)
         pending.set(category, messages)
-        if is_new_category {
-          session.flash_pending_bytes = session.flash_pending_bytes +
-            flash_message_bytes(messages)
-        } else {
-          session.flash_pending_bytes = session.flash_pending_bytes +
-            message.length() +
-            8
-        }
+        session.flash_pending_bytes = session.flash_pending_bytes +
+          message.length() +
+          8
         session.modified = true
       }
       true
@@ -195,9 +224,11 @@ pub fn Context::flash_take(
         Some(pending) =>
           match pending.remove_and_get(category) {
             Some(messages) => {
+              let stored_bytes = session.flash_stored_bytes(key)
               ignore(session.data.remove_and_get(key))
-              session.flash_pending_bytes = session.flash_pending_bytes -
-                flash_message_bytes(messages)
+              let added = flash_message_bytes(messages) - stored_bytes
+              let remaining = session.flash_pending_bytes - added
+              session.flash_pending_bytes = if remaining < 0 { 0 } else { remaining }
               session.modified = true
               taken = Some(messages)
             }
@@ -248,9 +279,13 @@ pub fn Context::flash_take_all(self : Context) -> Map[String, Array[String]] {
           Some(pending) =>
             match pending.remove_and_get(category) {
               Some(messages) => {
+                let stored_bytes = session.flash_stored_bytes(
+                  FLASH_PREFIX + category,
+                )
                 ignore(session.data.remove_and_get(FLASH_PREFIX + category))
-                session.flash_pending_bytes = session.flash_pending_bytes -
-                  flash_message_bytes(messages)
+                let added = flash_message_bytes(messages) - stored_bytes
+                let remaining = session.flash_pending_bytes - added
+                session.flash_pending_bytes = if remaining < 0 { 0 } else { remaining }
                 taken = Some(messages)
               }
               None => ()
