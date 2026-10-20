@@ -1147,6 +1147,12 @@ fn static_base_headers(
     if is_stream_reserved_header(name) {
       continue
     }
+    // The static file, range and encoding are chosen here, so representation
+    // metadata prepared for a different body must not leak in either.
+    if name.view().equal_ignore_ascii_case("content-encoding".view()) ||
+      name.view().equal_ignore_ascii_case("content-range".view()) {
+      continue
+    }
     if cookies.length() > 0 &&
       name.view().equal_ignore_ascii_case("set-cookie".view()) {
       continue
