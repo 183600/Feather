@@ -227,7 +227,13 @@ pub fn SessionStore::save(self : SessionStore, session : Session) -> Unit {
   let now = @async.now()
   session.expires_at = now + self.ttl
   if !self.sessions.contains(session.id) {
-    self.maybe_sweep(now)
+    if self.sessions.length() >= SESSION_STORE_MAX_SESSIONS {
+      // The throttle may have skipped the sweep even though expired sessions
+      // are present, so collect them before dropping an arbitrary live one.
+      self.sweep()
+    } else {
+      self.maybe_sweep(now)
+    }
     if self.sessions.length() >= SESSION_STORE_MAX_SESSIONS {
       self.evict_one()
     }

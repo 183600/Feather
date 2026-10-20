@@ -411,3 +411,25 @@ test "session destroy clears a cookie with no live session" {
   assert_eq(response.cookies[0].value, "")
   assert_eq(response.cookies[0].max_age, Some(0L))
 }
+
+///|
+test "session store sweeps expired sessions before evicting live ones" {
+  let store = @feather.SessionStore::new(ttl=3_600_000L)
+  let live = store.create()
+  store.save(live)
+  let expired : Array[@feather.Session] = []
+  for _ in 0..<9_999 {
+    let session = store.create()
+    store.save(session)
+    expired.push(session)
+  }
+  assert_eq(store.count(), 10_000)
+  for session in expired {
+    session.expires_at = 0L
+  }
+  let fresh = store.create()
+  store.save(fresh)
+  assert_eq(store.count(), 2)
+  assert_true(store.get(live.id) is Some(_))
+  assert_true(store.get(fresh.id) is Some(_))
+}
