@@ -4392,8 +4392,7 @@ pub fn Context::is_form(self : Context) -> Bool {
 ///|
 /// The `name` and `filename` parameters of a `Content-Disposition` value,
 /// extracted in one pass. `filename` prefers a well-formed RFC 8187
-/// `filename*`, falling back to the plain parameter, matching
-/// `header_ext_parameter` followed by `header_parameter`.
+/// `filename*`, falling back to the plain parameter.
 priv struct DispositionNames {
   name : String
   filename : String
@@ -4844,37 +4843,6 @@ fn header_parameter(value : StringView, name : String) -> String? {
     }
   }
   None
-}
-
-///|
-/// Look up an extended parameter such as `filename*` (RFC 8187) in a header
-/// value and decode its `charset'language'value` form.
-///
-/// Only the `UTF-8` charset is accepted; other charsets, missing separators
-/// and malformed percent escapes yield `None` so the caller can fall back to
-/// the plain parameter.
-fn header_ext_parameter(value : StringView, name : String) -> String? {
-  if find_view_from(value, "*".view(), 0) is None {
-    return None
-  }
-  let raw = match header_parameter(value, name + "*") {
-    Some(raw) => raw
-    None => return None
-  }
-  let view = raw.view()
-  let first = match view.find("'") {
-    Some(index) => index
-    None => return None
-  }
-  if !view[:first].equal_ignore_ascii_case("utf-8".view()) {
-    return None
-  }
-  let rest = view[first + 1:]
-  let second = match rest.find("'") {
-    Some(index) => index
-    None => return None
-  }
-  Some(decode_url_path(rest[second + 1:]))
 }
 
 ///|
@@ -6760,6 +6728,8 @@ pub(all) struct StaticMount {
 pub struct App {
   router : Router
   middlewares : Array[Middleware]
+  state : Map[String, String]
+  json_state : Map[String, Json]
   mut max_body_size : Int32
   mut timeout : Int32
   mut chain : Handler?
@@ -6791,6 +6761,8 @@ fn App::fresh(timeout : Int32) -> App {
   {
     router: create_router(),
     middlewares: [],
+    state: Map([]),
+    json_state: Map([]),
     max_body_size: DEFAULT_MAX_BODY_SIZE,
     timeout,
     chain: None,
@@ -6819,6 +6791,82 @@ fn App::fresh(timeout : Int32) -> App {
 ///|
 pub fn App::new() -> App {
   App::fresh(0)
+}
+
+///|
+/// Set an application-scoped string value.
+///
+/// Application state is copied into every request context before middleware
+/// runs, so handlers and middleware can read shared configuration through the
+/// same `Context::get` / `Context::set` API they use for request-local state.
+/// Request-local writes never modify the application copy.
+pub fn App::set_state(self : App, key : String, value : String) -> App {
+  self.state.set(key, value)
+  self
+}
+
+///|
+/// Read an application-scoped string value, or `""` when it is absent.
+pub fn App::get_state(self : App, key : String) -> String {
+  match self.state.get(key) {
+    Some(value) => value
+    None => ""
+  }
+}
+
+///|
+/// Remove an application-scoped string value.
+pub fn App::remove_state(self : App, key : String) -> App {
+  ignore(self.state.remove(key))
+  self
+}
+
+///|
+/// Set an application-scoped JSON value.
+pub fn App::set_json_state(self : App, key : String, value : Json) -> App {
+  self.json_state.set(key, value)
+  self
+}
+
+///|
+/// Read an application-scoped JSON value.
+pub fn App::get_json_state(self : App, key : String) -> Json? {
+  self.json_state.get(key)
+}
+
+///|
+/// Remove an application-scoped JSON value.
+pub fn App::remove_json_state(self : App, key : String) -> App {
+  ignore(self.json_state.remove(key))
+  self
+}
+
+///|
+/// Copy application state into `ctx` without overwriting values that were
+/// already set on the request.
+fn App::merge_state(self : App, ctx : Context) -> Unit {
+  if self.state.is_empty() && self.json_state.is_empty() {
+    return
+  }
+  for key, value in self.state {
+    if !ctx.state.contains(key) {
+      ctx.state.set(key, value)
+    }
+  }
+  for key, value in self.json_state {
+    if !ctx.json_state.contains(key) {
+      ctx.json_state.set(key, value)
+    }
+  }
+}
+
+///|
+/// Build the context for an incoming request and seed it with application
+/// state.
+fn App::context_for_request(self : App, request : Request) -> Context {
+  let ctx = Context::new(request)
+  self.merge_state(ctx)
+  ctx
 }
 
 ///|
@@ -7684,7 +7732,7 @@ fn App::static_lookup(
       // Resolve the mount before looking up the file.
       let mount = self.best_static_mount(clean)
       let result = match mount {
-        Some(mount) => self.static_lookup_uncached(clean, mount)
+        Some(mount) => static_lookup_uncached(clean, mount)
         None => None
       }
       // Paths that match no mount at all are dynamic routes, so they are not
@@ -7704,8 +7752,7 @@ fn App::static_lookup(
 ///|
 /// Resolve a static file request to its filesystem path, `Cache-Control` value
 /// and precompressed-serving flag.
-fn App::static_lookup_uncached(
-  self : App,
+fn static_lookup_uncached(
   path_view : StringView,
   mount : StaticMount,
 ) -> (String, String, Bool, StaticMount)? {
@@ -7767,6 +7814,7 @@ pub fn App::request_timeout(self : App, millis : Int32) -> App {
 
 ///|
 pub fn App::handle(self : App, ctx : Context) -> Unit raise {
+  self.merge_state(ctx)
   let chain = match self.chain {
     Some(chain) => chain
     None => {
@@ -7786,7 +7834,7 @@ pub fn App::handle(self : App, ctx : Context) -> Unit raise {
 
 ///|
 pub fn App::respond(self : App, request : Request) -> Response {
-  let ctx = Context::new(request)
+  let ctx = self.context_for_request(request)
   self.handle(ctx) catch {
     HttpError(status, message) => error_response(ctx, status, message)
     HttpErrorPayload(status, message, payload) =>
@@ -8254,6 +8302,54 @@ pub fn create_feather(config : Config) -> Feather {
 ///|
 pub fn Feather::use(self : Feather, middleware : Middleware) -> Feather {
   ignore(self.app.use(middleware))
+  self
+}
+
+///|
+/// Set an application-scoped string value on the wrapped application.
+pub fn Feather::set_state(
+  self : Feather,
+  key : String,
+  value : String,
+) -> Feather {
+  ignore(self.app.set_state(key, value))
+  self
+}
+
+///|
+/// Read an application-scoped string value from the wrapped application.
+pub fn Feather::get_state(self : Feather, key : String) -> String {
+  self.app.get_state(key)
+}
+
+///|
+/// Remove an application-scoped string value from the wrapped application.
+pub fn Feather::remove_state(self : Feather, key : String) -> Feather {
+  ignore(self.app.remove_state(key))
+  self
+}
+
+///|
+/// Set an application-scoped JSON value on the wrapped application.
+pub fn Feather::set_json_state(
+  self : Feather,
+  key : String,
+  value : Json,
+) -> Feather {
+  ignore(self.app.set_json_state(key, value))
+  self
+}
+
+///|
+/// Read an application-scoped JSON value from the wrapped application.
+pub fn Feather::get_json_state(self : Feather, key : String) -> Json? {
+  self.app.get_json_state(key)
+}
+
+///|
+/// Remove an application-scoped JSON value from the wrapped application.
+pub fn Feather::remove_json_state(self : Feather, key : String) -> Feather {
+  ignore(self.app.remove_json_state(key))
   self
 }
 

@@ -351,8 +351,7 @@ pub fn Context::wants_json(self : Context) -> Bool {
 let last_preferred_type : Ref[(String, Array[String], String?)?] = Ref(None)
 
 ///|
-fn Context::preferred_type_compute(
-  self : Context,
+fn preferred_type_compute(
   header : String,
   offers : ArrayView[String],
 ) -> String? {
@@ -417,7 +416,7 @@ pub fn Context::preferred_type(
       }
     None => ()
   }
-  let result = self.preferred_type_compute(header, offers)
+  let result = preferred_type_compute(header, offers)
   let copied : Array[String] = Array(capacity=offers.length())
   for offer in offers {
     copied.push(offer)

@@ -117,6 +117,8 @@ pub suberror PayloadTooLarge
 pub struct App {
   router : Router
   middlewares : Array[((Context) -> Unit raise) -> (Context) -> Unit raise]
+  state : Map[String, String]
+  json_state : Map[String, Json]
   mut max_body_size : Int32
   mut timeout : Int32
   mut chain : ((Context) -> Unit raise)?
@@ -146,6 +148,8 @@ pub fn App::delete(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::etag(Self) -> Self
 pub fn App::fallback(Self, (Context) -> Unit raise) -> Self
 pub fn App::get(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::get_json_state(Self, String) -> Json?
+pub fn App::get_state(Self, String) -> String
 pub fn App::group(Self, String) -> RouteGroup
 pub fn App::handle(Self, Context) -> Unit raise
 pub fn App::has_route(Self, String, String) -> Bool
@@ -161,6 +165,8 @@ pub fn App::options(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::patch(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::post(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::put(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::remove_json_state(Self, String) -> Self
+pub fn App::remove_state(Self, String) -> Self
 pub fn App::request_timeout(Self, Int32) -> Self
 pub fn App::resolve_sse(Self, String) -> (async (Context, Sse) -> Unit, Map[String, String])?
 pub fn App::resolve_stream(Self, String) -> (async (Context, Stream) -> Unit, Map[String, String])?
@@ -175,6 +181,8 @@ pub async fn App::serve(Self, @socket.Addr) -> Unit
 pub async fn App::serve_until(Self, @socket.Addr, stop~ : async () -> Unit) -> Unit
 pub async fn App::serve_with(Self, @http.Server, max_connections? : Int32) -> Unit
 pub async fn App::serve_with_until(Self, @http.Server, stop~ : async () -> Unit, max_connections? : Int32) -> Unit
+pub fn App::set_json_state(Self, String, Json) -> Self
+pub fn App::set_state(Self, String, String) -> Self
 pub fn App::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn App::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Sse) -> Unit) -> Self
 pub fn App::static_cache_control_for(Self, String) -> String
@@ -312,6 +320,8 @@ pub fn Feather::delete(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::etag(Self) -> Self
 pub fn Feather::fallback(Self, (Context) -> Unit raise) -> Self
 pub fn Feather::get(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::get_json_state(Self, String) -> Json?
+pub fn Feather::get_state(Self, String) -> String
 pub fn Feather::group(Self, String) -> RouteGroup
 pub fn Feather::handle(Self, Request) -> Response
 pub fn Feather::has_route(Self, String, String) -> Bool
@@ -327,6 +337,8 @@ pub fn Feather::options(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::patch(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::post(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::put(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::remove_json_state(Self, String) -> Self
+pub fn Feather::remove_state(Self, String) -> Self
 pub fn Feather::request_timeout(Self, Int32) -> Self
 pub fn Feather::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn Feather::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
@@ -337,6 +349,8 @@ pub async fn Feather::serve(Self) -> Unit
 pub async fn Feather::serve_until(Self, stop~ : async () -> Unit) -> Unit
 pub async fn Feather::serve_with(Self, @http.Server, max_connections? : Int32) -> Unit
 pub async fn Feather::serve_with_until(Self, @http.Server, stop~ : async () -> Unit, max_connections? : Int32) -> Unit
+pub fn Feather::set_json_state(Self, String, Json) -> Self
+pub fn Feather::set_state(Self, String, String) -> Self
 pub fn Feather::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn Feather::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Sse) -> Unit) -> Self
 pub fn Feather::static_cache_control_for(Self, String) -> String

@@ -1464,7 +1464,7 @@ async fn handle_static(
       return
     }
   }
-  let ctx = Context::new(req)
+  let ctx = app.context_for_request(req)
   defer ctx.run_cleanups()
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   let chain = if mount.middlewares.length() == 0 {
@@ -1549,7 +1549,7 @@ async fn build_response(
   conn : @http.ServerConnection,
 ) -> (Response, FileResponse?) {
   let req = request_from_http(request, body, app.max_body_size)
-  let ctx = Context::new(req)
+  let ctx = app.context_for_request(req)
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   app.handle(ctx) catch {
     HttpError(status, message) => error_response(ctx, status, message)
@@ -1602,7 +1602,7 @@ async fn handle_websocket(
       return
     }
   }
-  let ctx = Context::new(req)
+  let ctx = app.context_for_request(req)
   defer ctx.run_cleanups()
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
@@ -1651,7 +1651,7 @@ async fn handle_sse(
       return
     }
   }
-  let ctx = Context::new(req)
+  let ctx = app.context_for_request(req)
   defer ctx.run_cleanups()
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
@@ -1727,7 +1727,7 @@ async fn handle_stream(
       return
     }
   }
-  let ctx = Context::new(req)
+  let ctx = app.context_for_request(req)
   defer ctx.run_cleanups()
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
