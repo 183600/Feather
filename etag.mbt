@@ -101,7 +101,7 @@ fn apply_etag(response : Response) -> Unit {
   }
   let validators = response_validators(response.headers)
   let no_store = match validators.cache_control {
-    Some(control) => contains_ignore_ascii_case(control.view(), "no-store".view())
+    Some(control) => cache_control_has_directive(control.view(), "no-store".view())
     None => false
   }
   if validators.etag is Some(_) || validators.content_range || no_store {
@@ -173,7 +173,7 @@ fn apply_preconditions_input(
     let validators = response_validators(response.headers)
     match validators.cache_control {
       Some(control) =>
-        if contains_ignore_ascii_case(control.view(), "no-store".view()) {
+        if cache_control_has_directive(control.view(), "no-store".view()) {
           return
         }
       None => ()
@@ -292,7 +292,7 @@ fn precheck_preconditions(
   let validators = response_validators(response.headers)
   match validators.cache_control {
     Some(control) =>
-      if contains_ignore_ascii_case(control.view(), "no-store".view()) {
+      if cache_control_has_directive(control.view(), "no-store".view()) {
         return (false, input)
       }
     None => ()

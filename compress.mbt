@@ -220,7 +220,7 @@ async fn compress_response(
   }
   match get_header_ignore_case(response.headers, "Cache-Control") {
     Some(control) =>
-      if contains_ignore_ascii_case(control.view(), "no-transform".view()) {
+      if cache_control_has_directive(control.view(), "no-transform".view()) {
         return
       }
     None => ()

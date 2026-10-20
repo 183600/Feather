@@ -5572,6 +5572,22 @@ let http_months : Array[String] = [
 ]
 
 ///|
+/// Whether `name` starts with one of the three-letter HTTP weekday names,
+/// which is all the grammar requires for abbreviated and full names.
+fn is_http_weekday(name : StringView) -> Bool {
+  if name.length() < 3 {
+    return false
+  }
+  let prefix = name[:3]
+  for weekday in http_weekdays {
+    if prefix.equal_ignore_ascii_case(weekday.view()) {
+      return true
+    }
+  }
+  false
+}
+
+///|
 fn write_two_digits(builder : StringBuilder, value : Int) -> Unit {
   if value >= 0 && value < 100 {
     if value < 10 {
@@ -5761,7 +5777,7 @@ fn parse_imf_fixdate(view : StringView) -> Int64? {
     view.unsafe_get(weekday_end) != (' ' : UInt16) {
     weekday_end = weekday_end + 1
   }
-  if weekday_end != 4 {
+  if weekday_end != 4 || !is_http_weekday(view[:3]) {
     return None
   }
   // HTTP-date carries the GMT zone; anything else is not a valid date.
@@ -5851,6 +5867,11 @@ fn parse_http_date_view(view : StringView) -> Int64? {
   let mut year = 0L
   let mut time = parts[0]
   if parts[1].contains("-") {
+    let weekday = parts[0]
+    if !weekday.has_suffix(",") ||
+      !is_http_weekday(weekday[:weekday.length() - 1]) {
+      return None
+    }
     let date = parts[1]
     let first_dash = match date.find("-") {
       Some(index) => index
@@ -5888,6 +5909,11 @@ fn parse_http_date_view(view : StringView) -> Int64? {
     if count < 6 || token_count != 6 {
       return None
     }
+    let weekday = parts[0]
+    if !weekday.has_suffix(",") ||
+      !is_http_weekday(weekday[:weekday.length() - 1]) {
+      return None
+    }
     day = match parse_decimal(parts[1]) {
       Some(day) => day
       None => return None
@@ -5906,6 +5932,9 @@ fn parse_http_date_view(view : StringView) -> Int64? {
     time = parts[4]
   } else {
     if count < 5 || token_count != 5 {
+      return None
+    }
+    if !is_http_weekday(parts[0]) {
       return None
     }
     month = match month_from_name(parts[1]) {
@@ -6147,7 +6176,7 @@ fn evaluate_preconditions_input(
       if allows_not_modified {
         match input.if_modified_since {
           Some(value) =>
-            match parse_http_date(value) {
+            match parse_http_date_view(trim_ascii_space(value.view())) {
               Some(since) =>
                 if mtime_secs > 0L && mtime_secs <= since {
                   return PreconditionNotModified
@@ -7981,6 +8010,38 @@ fn header_list_has_token(list : StringView, token : StringView) -> Bool {
         return true
       }
       start = i + 1
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+/// Whether a `Cache-Control` field value contains `directive` as a complete
+/// directive, compared case-insensitively. A directive may carry arguments
+/// after `=`; quoted argument values may contain commas.
+fn cache_control_has_directive(
+  value : StringView,
+  directive : StringView,
+) -> Bool {
+  let length = value.length()
+  let directive_length = directive.length()
+  let mut start = 0
+  let mut i = 0
+  let mut in_quotes = false
+  while i <= length {
+    let at_end = i == length
+    if at_end || (value.unsafe_get(i) == (',' : UInt16) && !in_quotes) {
+      let entry = trim_ascii_space(value[start:i])
+      if entry.length() >= directive_length &&
+        entry[:directive_length].equal_ignore_ascii_case(directive) &&
+        (entry.length() == directive_length ||
+          entry.unsafe_get(directive_length) == ('=' : UInt16)) {
+        return true
+      }
+      start = i + 1
+    } else if value.unsafe_get(i) == ('"' : UInt16) {
+      in_quotes = !in_quotes
     }
     i = i + 1
   }

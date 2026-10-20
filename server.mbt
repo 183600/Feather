@@ -437,7 +437,7 @@ fn if_range_allows(
         token == etag_view {
         true
       } else {
-        match parse_http_date(value) {
+        match parse_http_date_view(token) {
           Some(since) => mtime_secs > 0L && mtime_secs == since
           None => false
         }
@@ -525,7 +525,7 @@ async fn send_file_response(
   let effective_etag = headers.get(header_etag).unwrap_or(etag)
   let effective_mtime = match headers.get(header_last_modified) {
     Some(value) =>
-      match parse_http_date(value) {
+      match parse_http_date_view(trim_ascii_space(value.view())) {
         Some(seconds) => seconds
         None => mtime_secs
       }
