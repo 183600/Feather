@@ -125,3 +125,25 @@ async test "agent static 416 must drop middleware content length" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+async test "agent dynamic error must drop middleware content length" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_header("Content-Length", "999")
+        next(ctx)
+      }
+    })
+    .get("/boom", fn(_ctx) { raise @feather.HttpError(503, "down") })
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "GET /boom HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n",
+      ),
+    )
+    let head = read_http_head(conn)
+    assert_true(head.has_prefix("HTTP/1.1 503"))
+    assert_false(head.contains("Content-Length: 999"))
+  })
+}

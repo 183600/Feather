@@ -808,7 +808,10 @@ async fn send_response(
       None => Some(@utf8.encode(response.body))
     }
   }
-  if has_body && !headers.contains(header_content_length) {
+  if has_body {
+    // The body is fully buffered, so its byte length is authoritative: a
+    // `Content-Length` seeded by middleware or copied from the handler must not
+    // frame a different number of bytes than are actually written.
     let body_length = match body_bytes {
       Some(data) => data.length()
       None =>
