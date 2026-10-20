@@ -288,3 +288,39 @@ test "Feather stream registers a resolvable stream route" {
   ).stream("/feed", async fn(_ctx, stream) { stream.write("x") })
   assert_true(app.app.has_stream("/feed"))
 }
+
+///|
+async test "stream ignores framing headers set by the handler" {
+  let app = @feather.App::new().stream("/feed", async fn(_ctx, stream) {
+    stream.set_header("Content-Length", "999")
+    stream.set_header("Transfer-Encoding", "identity")
+    stream.set_header("Connection", "keep-alive")
+    stream.write("abc")
+  })
+  with_stream_server(app, client => {
+    let response = client.get("/feed")
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Length")),
+      None,
+    )
+    assert_eq(client.read_all().text(), "abc")
+  })
+}
+
+///|
+async test "stream header names are case-insensitive" {
+  let app = @feather.App::new().stream("/feed", async fn(_ctx, stream) {
+    stream.set_header("x-feed", "first")
+    stream.set_header("X-Feed", "second")
+    stream.write("ok")
+  })
+  with_stream_server(app, client => {
+    let response = client.get("/feed")
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-Feed")),
+      Some("second"),
+    )
+    assert_eq(client.read_all().text(), "ok")
+  })
+}

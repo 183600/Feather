@@ -66,7 +66,7 @@ pub fn Stream::set_header(
   value : String,
 ) -> Unit {
   if !self.started {
-    self.headers.set(name, value)
+    set_header_ignore_case(self.headers, name, value)
   }
 }
 
@@ -80,7 +80,9 @@ async fn Stream::start(self : Stream) -> Unit {
   self.started = true
   let headers : @http.Headers = Map([], capacity=self.headers.length() + 1)
   for name, value in self.headers {
-    headers.set(header_key(name), value)
+    if !is_stream_reserved_header(name) {
+      headers.set(header_key(name), value)
+    }
   }
   if !headers.contains(header_content_type) {
     headers.set(header_content_type, "text/plain; charset=utf-8")
