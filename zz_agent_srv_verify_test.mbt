@@ -1,0 +1,70 @@
+///|
+async test "agent async middleware error after calling through must not start sse" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        next(ctx)
+        raise @feather.HttpError(500, "boom")
+      }
+    })
+    .sse("/events", async fn(_ctx, sse) {
+      sse.send("handler-ran")
+    })
+  with_sse_server(app, client => {
+    let response = client.get("/events")
+    assert_eq(response.code, 500)
+    assert_eq(client.read_all().text(), "{\"status\":500,\"error\":\"boom\"}")
+  })
+}
+
+///|
+async test "agent static middleware error after calling through must not serve file" {
+  let dir = @fs.tmpdir(prefix="feather-static-middleware-error")
+  @fs.write_file(dir + "/asset.txt", "asset")
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        next(ctx)
+        raise @feather.HttpError(503, "unavailable")
+      }
+    })
+    .static_files("/assets", dir)
+  with_server(app, client => {
+    let response = client.get("/assets/asset.txt")
+    assert_eq(response.code, 503)
+    assert_eq(
+      client.read_all().text(),
+      "{\"status\":503,\"error\":\"unavailable\"}",
+    )
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "agent static 304 must drop middleware content length" {
+  let dir = @fs.tmpdir(prefix="feather-static-304-cl")
+  @fs.write_file(dir + "/asset.txt", "asset")
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_header("Content-Length", "999")
+        next(ctx)
+      }
+    })
+    .static_files("/assets", dir)
+  with_server(app, client => {
+    let first = client.get("/assets/asset.txt")
+    let etag = first.headers.get(@http.CaseInsensitiveString("ETag")).unwrap()
+    ignore(client.read_all())
+    let second = client.get(
+      "/assets/asset.txt",
+      extra_headers=Map([(@http.CaseInsensitiveString("If-None-Match"), etag)]),
+    )
+    assert_eq(second.code, 304)
+    assert_eq(
+      second.headers.get(@http.CaseInsensitiveString("Content-Length")),
+      None,
+    )
+  })
+  @fs.rmdir(dir, recursive=true)
+}

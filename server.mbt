@@ -931,13 +931,22 @@ fn run_async_middleware_chain(chain : Handler, ctx : Context) -> Bool {
   // A previous chain (the application-level one) may have left its pass marker
   // behind; clear it so only a call-through in this chain counts.
   ctx.state.remove(ASYNC_CHAIN_PASS_KEY)
+  let mut failed = false
   chain(ctx) catch {
-    HttpError(status, message) => error_response(ctx, status, message)
-    HttpErrorPayload(status, message, payload) =>
+    HttpError(status, message) => {
+      error_response(ctx, status, message)
+      failed = true
+    }
+    HttpErrorPayload(status, message, payload) => {
       error_response_with_payload(ctx, status, message, payload)
-    err => internal_error(ctx, "\{err}")
+      failed = true
+    }
+    err => {
+      internal_error(ctx, "\{err}")
+      failed = true
+    }
   }
-  ctx.state.get(ASYNC_CHAIN_PASS_KEY) is Some(_)
+  !failed && ctx.state.get(ASYNC_CHAIN_PASS_KEY) is Some(_)
 }
 
 ///|
@@ -1330,6 +1339,10 @@ async fn serve_static_file(
     }
     PreconditionNotModified => {
       let headers = static_base_headers(extra_headers, cookies, 2)
+      // A 304 carries no body, so the framing and content type a middleware
+      // seeded for a body response must not leak into it.
+      headers.remove(header_content_type)
+      headers.remove(header_content_length)
       headers.set(etag_key, etag)
       headers.set(last_modified_key, last_modified)
       if cache_control != "" {
@@ -1495,13 +1508,22 @@ async fn handle_static(
       }
     }
   }
+  let mut failed = false
   chain(ctx) catch {
-    HttpError(status, message) => error_response(ctx, status, message)
-    HttpErrorPayload(status, message, payload) =>
+    HttpError(status, message) => {
+      error_response(ctx, status, message)
+      failed = true
+    }
+    HttpErrorPayload(status, message, payload) => {
       error_response_with_payload(ctx, status, message, payload)
-    err => internal_error(ctx, "\{err}")
+      failed = true
+    }
+    err => {
+      internal_error(ctx, "\{err}")
+      failed = true
+    }
   }
-  if ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) {
+  if !failed && ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) {
     serve_static_file(
       conn,
       file_path,
