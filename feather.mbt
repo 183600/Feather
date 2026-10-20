@@ -6105,19 +6105,12 @@ let precondition_if_modified_since_name : StringView = "If-Modified-Since".view(
 let precondition_if_unmodified_since_name : StringView = "If-Unmodified-Since".view()
 
 ///|
-/// Most recently scanned request header map and its precondition fields.
-/// Server requests reuse the map for a single request; tests and embedded
-/// callers often reuse the same map object, where rescanning ten headers on
-/// every response is pure overhead.
-let last_precondition_headers : Ref[Map[String, String]?] = Ref(None)
-let last_precondition_size : Ref[Int] = Ref(-1)
-let last_precondition_input : Ref[PreconditionInput?] = Ref(None)
-
-///|
 /// Collect the precondition request headers in a single pass over the map.
 ///
 /// Four separate case-insensitive lookups would rescan the header map four
-/// times; this walks it once without allocating a tuple per entry.
+/// times; this walks it once without allocating a tuple per entry. The map is
+/// mutable and can be changed in place without its length changing, so the
+/// result is not cached.
 fn precondition_input_from_map(
   headers : Map[String, String],
 ) -> PreconditionInput {
@@ -6128,17 +6121,6 @@ fn precondition_input_from_map(
       if_modified_since: None,
       if_unmodified_since: None,
     }
-  }
-  match last_precondition_headers.val {
-    Some(cached) =>
-      if physical_equal(cached, headers) &&
-        last_precondition_size.val == headers.length() {
-        match last_precondition_input.val {
-          Some(input) => return input
-          None => ()
-        }
-      }
-    None => ()
   }
   let mut if_match : String? = None
   let mut if_none_match : String? = None
@@ -6172,11 +6154,7 @@ fn precondition_input_from_map(
       }
     }
   })
-  let input = { if_match, if_none_match, if_modified_since, if_unmodified_since }
-  last_precondition_headers.val = Some(headers)
-  last_precondition_size.val = headers.length()
-  last_precondition_input.val = Some(input)
-  input
+  { if_match, if_none_match, if_modified_since, if_unmodified_since }
 }
 
 ///|
