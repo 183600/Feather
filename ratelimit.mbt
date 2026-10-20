@@ -96,7 +96,13 @@ fn RateLimiter::allow_with_remaining(
         (false, 0)
       }
     None => {
-      self.maybe_sweep(now)
+      if self.buckets.length() >= RATE_LIMIT_MAX_BUCKETS {
+        // The throttle may have skipped the sweep even though expired windows
+        // are present, so collect them before dropping an arbitrary bucket.
+        self.sweep()
+      } else {
+        self.maybe_sweep(now)
+      }
       if self.buckets.length() >= RATE_LIMIT_MAX_BUCKETS {
         self.evict_one()
       }
