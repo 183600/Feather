@@ -8007,7 +8007,7 @@ pub fn middleware_request_id(header~ : String = "X-Request-Id") -> Middleware {
       let id = if existing != "" {
         existing
       } else {
-        match ctx.response.headers.get(header) {
+        match get_header_ignore_case(ctx.response.headers, header) {
           Some(value) => value
           None => {
             counter.val = counter.val + 1
@@ -8015,7 +8015,7 @@ pub fn middleware_request_id(header~ : String = "X-Request-Id") -> Middleware {
           }
         }
       }
-      ctx.response.headers.set(header, id)
+      set_header_ignore_case(ctx.response.headers, header, id)
       ctx.state.set("request_id", id)
       next(ctx)
     }

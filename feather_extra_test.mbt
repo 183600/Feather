@@ -718,3 +718,31 @@ test "secure headers middleware sets defensive response headers" {
   assert_eq(ctx.response.headers.get("X-Frame-Options"), Some("SAMEORIGIN"))
   assert_eq(ctx.response.headers.get("Referrer-Policy"), Some("strict-origin"))
 }
+
+///|
+test "request id middleware replaces a case-variant response header" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        ctx.response.headers.set("x-request-id", "outer")
+        next(ctx)
+      }
+    })
+    .use(@feather.middleware_request_id())
+    .get("/id", fn(ctx) { ctx.text(200, ctx.request_id()) })
+  let response = app.respond({
+    method: "GET",
+    path: "/id",
+    headers: Map([]),
+    body: "",
+  })
+  let mut count = 0
+  for key, _ in response.headers {
+    if key.view().equal_ignore_ascii_case("x-request-id".view()) {
+      count = count + 1
+    }
+  }
+  assert_eq(count, 1)
+  assert_eq(response.headers.get("X-Request-Id"), Some("outer"))
+  assert_eq(response.body, "outer")
+}
