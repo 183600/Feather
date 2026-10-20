@@ -6248,12 +6248,17 @@ pub fn Context::not_modified(
   self.response.data = None
   ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
   match etag {
-    Some(etag) => self.response.headers.set("ETag", etag)
+    Some(etag) =>
+      set_header_ignore_case(self.response.headers, "ETag", etag)
     None => ()
   }
   match last_modified {
     Some(last_modified) =>
-      self.response.headers.set("Last-Modified", last_modified)
+      set_header_ignore_case(
+        self.response.headers,
+        "Last-Modified",
+        last_modified,
+      )
     None => ()
   }
 }
