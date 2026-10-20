@@ -68,9 +68,17 @@ fn parse_accept_entries(header : StringView) -> Array[AcceptEntry] {
     while scan < length && header.unsafe_get(scan) == (';' : UInt16) {
       scan = scan + 1
       let parameter_start = scan
+      let mut quoted_parameter = false
       while scan < length {
         let code = header.unsafe_get(scan)
-        if code == (';' : UInt16) || code == (',' : UInt16) {
+        if quoted_parameter && code == ('\\' : UInt16) && scan + 1 < length {
+          scan = scan + 2
+          continue
+        }
+        if code == ('"' : UInt16) {
+          quoted_parameter = !quoted_parameter
+        } else if !quoted_parameter &&
+          (code == (';' : UInt16) || code == (',' : UInt16)) {
           break
         }
         scan = scan + 1
@@ -81,7 +89,8 @@ fn parse_accept_entries(header : StringView) -> Array[AcceptEntry] {
           parameter.unsafe_get(0) == ('Q' : UInt16)) {
         let mut marker = 1
         while marker < parameter.length() &&
-          parameter.unsafe_get(marker) == (' ' : UInt16) {
+          (parameter.unsafe_get(marker) == (' ' : UInt16) ||
+            parameter.unsafe_get(marker) == ('\t' : UInt16)) {
           marker = marker + 1
         }
         if marker < parameter.length() &&
@@ -453,9 +462,17 @@ fn parse_encoding_entries(header : StringView) -> Array[EncodingEntry] {
     while scan < length && header.unsafe_get(scan) == (';' : UInt16) {
       scan = scan + 1
       let parameter_start = scan
+      let mut quoted_parameter = false
       while scan < length {
         let code = header.unsafe_get(scan)
-        if code == (';' : UInt16) || code == (',' : UInt16) {
+        if quoted_parameter && code == ('\\' : UInt16) && scan + 1 < length {
+          scan = scan + 2
+          continue
+        }
+        if code == ('"' : UInt16) {
+          quoted_parameter = !quoted_parameter
+        } else if !quoted_parameter &&
+          (code == (';' : UInt16) || code == (',' : UInt16)) {
           break
         }
         scan = scan + 1
@@ -466,7 +483,8 @@ fn parse_encoding_entries(header : StringView) -> Array[EncodingEntry] {
           parameter.unsafe_get(0) == ('Q' : UInt16)) {
         let mut marker = 1
         while marker < parameter.length() &&
-          parameter.unsafe_get(marker) == (' ' : UInt16) {
+          (parameter.unsafe_get(marker) == (' ' : UInt16) ||
+            parameter.unsafe_get(marker) == ('\t' : UInt16)) {
           marker = marker + 1
         }
         if marker < parameter.length() &&
@@ -657,9 +675,17 @@ fn parse_language_entries(header : StringView) -> Array[LanguageEntry] {
     while scan < length && header.unsafe_get(scan) == (';' : UInt16) {
       scan = scan + 1
       let parameter_start = scan
+      let mut quoted_parameter = false
       while scan < length {
         let code = header.unsafe_get(scan)
-        if code == (';' : UInt16) || code == (',' : UInt16) {
+        if quoted_parameter && code == ('\\' : UInt16) && scan + 1 < length {
+          scan = scan + 2
+          continue
+        }
+        if code == ('"' : UInt16) {
+          quoted_parameter = !quoted_parameter
+        } else if !quoted_parameter &&
+          (code == (';' : UInt16) || code == (',' : UInt16)) {
           break
         }
         scan = scan + 1
@@ -670,7 +696,8 @@ fn parse_language_entries(header : StringView) -> Array[LanguageEntry] {
           parameter.unsafe_get(0) == ('Q' : UInt16)) {
         let mut marker = 1
         while marker < parameter.length() &&
-          parameter.unsafe_get(marker) == (' ' : UInt16) {
+          (parameter.unsafe_get(marker) == (' ' : UInt16) ||
+            parameter.unsafe_get(marker) == ('\t' : UInt16)) {
           marker = marker + 1
         }
         if marker < parameter.length() &&
@@ -753,15 +780,18 @@ fn language_quality_from(
   let mut best_specificity = -1
   for entry in entries {
     let token = entry.token
+    // Exact matches score above every prefix match of the same tag
+    // (`language.length() + 2` beats `(language.length() - 1) + 1`), and
+    // longer prefixes score above shorter ones.
     let specificity = if token == "*" {
       0
     } else if token.equal_ignore_ascii_case(language) {
-      2
+      language.length() + 2
     } else if language.length() > token.length() &&
       token.length() > 0 &&
       language.unsafe_get(token.length()) == ('-' : UInt16) &&
       starts_with_ignore_ascii_case(language, token) {
-      1
+      token.length() + 1
     } else {
       -1
     }

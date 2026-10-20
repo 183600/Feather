@@ -370,3 +370,25 @@ async test "precompressed static files work without a source sibling" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+test "accepts_language lets the longest prefix decide" {
+  assert_false(
+    language_ctx("zh;q=0.4, zh-Hans;q=0").accepts_language("zh-Hans-CN"),
+  )
+  assert_true(
+    language_ctx("zh;q=0, zh-Hans;q=0.9").accepts_language("zh-Hans-CN"),
+  )
+}
+
+///|
+test "preferred_language scores offers by their most specific range" {
+  let ctx = language_ctx("zh;q=0.4, zh-Hans;q=0.9, en;q=0.6")
+  assert_eq(ctx.preferred_language(["zh-Hans-CN", "en-US"]), Some("zh-Hans-CN"))
+}
+
+///|
+test "accepts_language keeps q values out of quoted parameters" {
+  assert_false(language_ctx("en;note=\"x,y\";q=0").accepts_language("en"))
+  assert_true(language_ctx("en;note=\"x,y\";q=0.5").accepts_language("en"))
+}
