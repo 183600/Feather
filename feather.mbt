@@ -8311,10 +8311,14 @@ pub fn middleware_cors(
         let preflight = request_origin != "" &&
           ctx.header("Access-Control-Request-Method") != ""
         if preflight {
+          ctx.file = None
           ctx.response.status = 204
           ctx.response.data = None
           ctx.response.body = ""
           ignore(remove_header_ignore_case(ctx.response.headers, "Content-Type"))
+          ignore(remove_header_ignore_case(ctx.response.headers, "Content-Length"))
+          ignore(remove_header_ignore_case(ctx.response.headers, "Content-Encoding"))
+          ignore(remove_header_ignore_case(ctx.response.headers, "Content-Range"))
           // The preflight answer depends on the two request headers, so shared
           // caches must key on them as well (Fetch: Vary considerations).
           ctx.vary("Access-Control-Request-Method")

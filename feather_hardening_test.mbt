@@ -116,6 +116,36 @@ test "cors preflight short-circuits without running the handler" {
 }
 
 ///|
+test "cors preflight discards a prepared file response" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.file(200, "/tmp/feather-preflight-file")
+        ctx.set_header("Content-Encoding", "gzip")
+        ctx.set_header("Content-Range", "bytes 0-1/2")
+        next(ctx)
+      }
+    })
+    .use(@feather.middleware_cors())
+    .get("/res", fn(ctx) { ctx.text(200, "g") })
+  let ctx = @feather.Context::new({
+    method: "OPTIONS",
+    path: "/res",
+    headers: Map([
+      ("Origin", "https://app.test"),
+      ("Access-Control-Request-Method", "GET"),
+    ]),
+    body: "",
+  })
+  app.handle(ctx)
+  assert_eq(ctx.response.status, 204)
+  assert_eq(ctx.response.body, "")
+  assert_true(ctx.file_response() is None)
+  assert_eq(ctx.response.headers.get("Content-Encoding"), None)
+  assert_eq(ctx.response.headers.get("Content-Range"), None)
+}
+
+///|
 async test "head and get agree on framing for missing static files" {
   let dir = @fs.tmpdir(prefix="feather-static-head-parity")
   let app = @feather.App::new().static_files("/assets", dir)
