@@ -1170,6 +1170,10 @@ async fn send_static_error(
 ) -> Unit {
   let bytes = @utf8.encode(body)
   let headers = static_base_headers(extra_headers, cookies, 2)
+  // The error body is plain text, not the representation a middleware may have
+  // prepared for a file response.
+  headers.remove(header_content_encoding)
+  headers.remove(header_content_range)
   if precompressed {
     // Whether this path resolves to a file depends on `Accept-Encoding`, so
     // caches must not reuse an identity 404 for a gzip-capable client.

@@ -435,6 +435,34 @@ async test "static misses keep middleware headers and cookies" {
 }
 
 ///|
+async test "static errors drop stale representation headers" {
+  let dir = @fs.tmpdir(prefix="feather-static-error-encoding")
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_header("Content-Encoding", "gzip")
+        ctx.set_header("Content-Range", "bytes 0-1/2")
+        next(ctx)
+      }
+    })
+    .static_files("/assets", dir)
+  with_server(app, client => {
+    let missing = client.get("/assets/missing.css")
+    assert_eq(missing.code, 404)
+    assert_eq(
+      missing.headers.get(@http.CaseInsensitiveString("Content-Encoding")),
+      None,
+    )
+    assert_eq(
+      missing.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      None,
+    )
+    assert_eq(client.read_all().text(), "404 Not Found")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
 async test "compression weakens handler supplied etags" {
   let payload = "feather compression payload ".repeat(128)
   let app = @feather.App::new()
