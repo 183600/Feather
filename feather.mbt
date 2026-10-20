@@ -8246,13 +8246,25 @@ pub fn middleware_cors(
         (allow_credentials && request_origin != "")
       if echo_origin {
         let origin = if allow_origin != "*" { allow_origin } else { request_origin }
-        ctx.response.headers.set("Access-Control-Allow-Origin", origin)
+        set_header_ignore_case(
+          ctx.response.headers,
+          "Access-Control-Allow-Origin",
+          origin,
+        )
         ctx.vary("Origin")
       } else {
-        ctx.response.headers.set("Access-Control-Allow-Origin", allow_origin)
+        set_header_ignore_case(
+          ctx.response.headers,
+          "Access-Control-Allow-Origin",
+          allow_origin,
+        )
       }
       if allow_credentials {
-        ctx.response.headers.set("Access-Control-Allow-Credentials", "true")
+        set_header_ignore_case(
+          ctx.response.headers,
+          "Access-Control-Allow-Credentials",
+          "true",
+        )
       }
       if is_options {
         // A real CORS preflight carries both `Origin` and
@@ -8274,16 +8286,30 @@ pub fn middleware_cors(
         } else {
           next(ctx)
         }
-        ctx.response.headers.set("Access-Control-Allow-Methods", allow_methods)
-        ctx.response.headers.set("Access-Control-Allow-Headers", allow_headers)
+        set_header_ignore_case(
+          ctx.response.headers,
+          "Access-Control-Allow-Methods",
+          allow_methods,
+        )
+        set_header_ignore_case(
+          ctx.response.headers,
+          "Access-Control-Allow-Headers",
+          allow_headers,
+        )
         if max_age > 0 {
-          ctx.response.headers.set(
-            "Access-Control-Max-Age", max_age.to_string(),
+          set_header_ignore_case(
+            ctx.response.headers,
+            "Access-Control-Max-Age",
+            max_age.to_string(),
           )
         }
       } else {
         if expose_headers != "" {
-          ctx.response.headers.set("Access-Control-Expose-Headers", expose_headers)
+          set_header_ignore_case(
+            ctx.response.headers,
+            "Access-Control-Expose-Headers",
+            expose_headers,
+          )
         }
         next(ctx)
       }

@@ -453,3 +453,27 @@ async test "server answers head requests for queued files" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+test "cors replaces case-variant response headers" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        ctx.set_header("access-control-allow-origin", "https://old.example")
+        ctx.set_header("access-control-allow-methods", "OLD")
+        next(ctx)
+      }
+    })
+    .use(@feather.middleware_cors(allow_methods="GET"))
+    .get("/", fn(ctx) { ctx.text(200, "ok") })
+  let ctx = @feather.create_context()
+  app.handle(ctx)
+  let mut origins = 0
+  for key, _ in ctx.response.headers {
+    if key.view().equal_ignore_ascii_case("access-control-allow-origin".view()) {
+      origins = origins + 1
+    }
+  }
+  assert_eq(origins, 1)
+  assert_eq(ctx.response.headers.get("Access-Control-Allow-Origin"), Some("*"))
+}
