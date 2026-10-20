@@ -1373,8 +1373,8 @@ pub fn internal_error(ctx : Context, detail : String) -> Unit {
 let error_body_cache : Map[Int32, Map[String, String]] = Map([])
 
 ///|
-/// Recency ticks for the cached error bodies, keyed by message.
-let error_body_cache_ages : Map[String, Int] = Map([])
+/// Recency ticks for the cached error bodies, keyed by status and message.
+let error_body_cache_ages : Map[Int32, Map[String, Int]] = Map([])
 
 ///|
 fn cached_error_body(status : Int32, message : String) -> String {
@@ -1383,15 +1383,24 @@ fn cached_error_body(status : Int32, message : String) -> String {
     None => {
       if error_body_cache.length() >= 32 {
         error_body_cache.clear()
+        error_body_cache_ages.clear()
       }
       let by_message : Map[String, String] = Map([], capacity=4)
       error_body_cache.set(status, by_message)
       by_message
     }
   }
+  let ages = match error_body_cache_ages.get(status) {
+    Some(ages) => ages
+    None => {
+      let ages : Map[String, Int] = Map([], capacity=4)
+      error_body_cache_ages.set(status, ages)
+      ages
+    }
+  }
   match by_message.get(message) {
     Some(body) => {
-      cache_touch(error_body_cache_ages, message)
+      cache_touch(ages, message)
       body
     }
     None => {
@@ -1400,7 +1409,7 @@ fn cached_error_body(status : Int32, message : String) -> String {
       payload.set("error", Json::string(message))
       let body = Json::object(payload).stringify()
       if message.length() <= 128 {
-        cache_set(by_message, error_body_cache_ages, 8, message, body)
+        cache_set(by_message, ages, 8, message, body)
       }
       body
     }

@@ -215,3 +215,21 @@ test "tmp route cache randomized invalidation" {
     }
   }
 }
+
+///|
+test "tmp error body cache eviction is scoped by status" {
+  error_body_cache.clear()
+  error_body_cache_ages.clear()
+  for i = 0; i < 9; i = i + 1 {
+    ignore(cached_error_body(210, "a" + i.to_string()))
+    ignore(cached_error_body(211, "b" + i.to_string()))
+  }
+  match error_body_cache.get(210) {
+    Some(by_message) => assert_eq(by_message.length(), 8)
+    None => fail("expected status 210 cache")
+  }
+  match error_body_cache.get(211) {
+    Some(by_message) => assert_eq(by_message.length(), 8)
+    None => fail("expected status 211 cache")
+  }
+}
