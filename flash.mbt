@@ -185,11 +185,13 @@ pub fn Context::flash(
   match self.session_materialized() {
     Some(session) => {
       let pending = session.flash_pending_map()
+      let is_new_category = !pending.contains(category)
       let messages = match pending.get(category) {
         Some(messages) => messages
         None => self.flash_messages(FLASH_PREFIX + category)
       }
-      let adds_category = !session.data.contains(FLASH_PREFIX + category)
+      let adds_category = is_new_category &&
+        !session.data.contains(FLASH_PREFIX + category)
       if !(adds_category &&
         session.flash_retained_categories() >= FLASH_MAX_CATEGORIES) &&
         messages.length() < FLASH_MAX_MESSAGES_PER_CATEGORY &&

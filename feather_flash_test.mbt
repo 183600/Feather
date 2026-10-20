@@ -150,3 +150,20 @@ test "flash category cap counts categories already stored" {
   assert_eq(existing[0], "old")
   assert_eq(existing[1], "more")
 }
+
+///|
+test "flash category cap still allows appends to a queued category" {
+  let store = @feather.SessionStore::new()
+  let ctx = @feather.create_context()
+  ctx.session = Some(store.create())
+  let session = ctx.session.unwrap()
+  for i = 0; i < 15; i = i + 1 {
+    session.data.set(
+      "__flash:c" + i.to_string(),
+      Json::array([Json::string("old")]).stringify(),
+    )
+  }
+  assert_true(ctx.flash("a", category="extra"))
+  assert_true(ctx.flash("b", category="extra"))
+  assert_eq(ctx.flash_peek(category="extra"), ["a", "b"])
+}
