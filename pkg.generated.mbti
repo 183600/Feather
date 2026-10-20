@@ -155,6 +155,7 @@ pub fn App::has_websocket(Self, String) -> Bool
 pub fn App::head(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::max_body_size(Self, Int32) -> Self
 pub fn App::mount(Self, String, Self) -> Self
+pub fn App::mount_with(Self, String, Self, Array[((Context) -> Unit raise) -> (Context) -> Unit raise]) -> Self
 pub fn App::new() -> Self
 pub fn App::options(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::patch(Self, String, (Context) -> Unit raise) -> Self
@@ -321,6 +322,7 @@ pub fn Feather::head(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::listen_address(Self) -> String
 pub fn Feather::max_body_size(Self, Int32) -> Self
 pub fn Feather::mount(Self, String, Self) -> Self
+pub fn Feather::mount_with(Self, String, Self, Array[((Context) -> Unit raise) -> (Context) -> Unit raise]) -> Self
 pub fn Feather::options(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::patch(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::post(Self, String, (Context) -> Unit raise) -> Self
@@ -423,12 +425,14 @@ pub struct RouteGroup {
   router : Router
   prefix : String
   middlewares : Array[((Context) -> Unit raise) -> (Context) -> Unit raise]
+  app : App?
 }
 pub fn RouteGroup::all(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::delete(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::get(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::group(Self, String) -> Self
 pub fn RouteGroup::head(Self, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::mount(Self, String, App) -> Self
 pub fn RouteGroup::options(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::patch(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::post(Self, String, (Context) -> Unit raise) -> Self
@@ -437,8 +441,16 @@ pub fn RouteGroup::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::route_named_with(Self, String, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn RouteGroup::route_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
+pub fn RouteGroup::sse(Self, String, async (Context, Sse) -> Unit) -> Self
+pub fn RouteGroup::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Sse) -> Unit) -> Self
+pub fn RouteGroup::static_files(Self, String, String, index? : String, max_age? : Int32, precompressed? : Bool) -> Self
+pub fn RouteGroup::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool) -> Self
+pub fn RouteGroup::stream(Self, String, async (Context, Stream) -> Unit) -> Self
+pub fn RouteGroup::stream_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Stream) -> Unit) -> Self
 pub fn RouteGroup::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn RouteGroup::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
+pub fn RouteGroup::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
+pub fn RouteGroup::websocket_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, @websocket.Conn) -> Unit) -> Self
 
 pub struct RouteNode {
   mut handler : ((Context) -> Unit raise)?

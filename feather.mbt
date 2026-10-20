@@ -6370,11 +6370,12 @@ pub struct RouteGroup {
   router : Router
   prefix : String
   middlewares : Array[Middleware]
+  app : App?
 }
 
 ///|
 pub fn Router::group(self : Router, prefix : String) -> RouteGroup {
-  { router: self, prefix: normalize_prefix(prefix), middlewares: [], }
+  { router: self, prefix: normalize_prefix(prefix), middlewares: [], app: None, }
 }
 
 ///|
@@ -6383,7 +6384,28 @@ pub fn RouteGroup::group(self : RouteGroup, prefix : String) -> RouteGroup {
     router: self.router,
     prefix: join_paths(self.prefix, prefix),
     middlewares: self.middlewares.copy(),
+    app: self.app,
   }
+}
+
+///|
+/// Compose this group's middleware outside additional route-level middleware.
+fn RouteGroup::route_middlewares(
+  self : RouteGroup,
+  extra : Array[Middleware],
+) -> Array[Middleware] {
+  if self.middlewares.length() == 0 {
+    return extra.copy()
+  }
+  if extra.length() == 0 {
+    return self.middlewares.copy()
+  }
+  let combined : Array[Middleware] = Array(
+    capacity=self.middlewares.length() + extra.length(),
+  )
+  combined.append(self.middlewares)
+  combined.append(extra)
+  combined
 }
 
 ///|
@@ -6558,6 +6580,172 @@ pub fn RouteGroup::url_for(
 }
 
 ///|
+/// Register a WebSocket endpoint under this group's prefix.
+///
+/// Group middleware runs before the upgrade is attempted, so it can reject a
+/// connection by answering the handshake request. Groups created with
+/// `Router::group` have no application to attach the endpoint to and ignore
+/// this method; use `App::group` or `Feather::group` instead.
+pub fn RouteGroup::websocket(
+  self : RouteGroup,
+  path : String,
+  handler : WebSocketHandler,
+) -> RouteGroup {
+  self.websocket_with(path, [], handler)
+}
+
+///|
+/// Register a prefixed WebSocket endpoint with additional route middleware.
+/// Group middleware stays outermost, matching `RouteGroup::route_with`.
+pub fn RouteGroup::websocket_with(
+  self : RouteGroup,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : WebSocketHandler,
+) -> RouteGroup {
+  match self.app {
+    Some(app) =>
+      ignore(
+        app.websocket_with(
+          join_paths(self.prefix, path),
+          self.route_middlewares(middlewares),
+          handler,
+        ),
+      )
+    None => ()
+  }
+  self
+}
+
+///|
+/// Register a server-sent events endpoint under this group's prefix.
+pub fn RouteGroup::sse(
+  self : RouteGroup,
+  path : String,
+  handler : SseHandler,
+) -> RouteGroup {
+  self.sse_with(path, [], handler)
+}
+
+///|
+/// Register a prefixed server-sent events endpoint with additional route
+/// middleware. Group middleware stays outermost, matching
+/// `RouteGroup::route_with`.
+pub fn RouteGroup::sse_with(
+  self : RouteGroup,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : SseHandler,
+) -> RouteGroup {
+  match self.app {
+    Some(app) =>
+      ignore(
+        app.sse_with(
+          join_paths(self.prefix, path),
+          self.route_middlewares(middlewares),
+          handler,
+        ),
+      )
+    None => ()
+  }
+  self
+}
+
+///|
+/// Register a chunked streaming endpoint under this group's prefix.
+pub fn RouteGroup::stream(
+  self : RouteGroup,
+  path : String,
+  handler : StreamHandler,
+) -> RouteGroup {
+  self.stream_with(path, [], handler)
+}
+
+///|
+/// Register a prefixed streaming endpoint with additional route middleware.
+/// Group middleware stays outermost, matching `RouteGroup::route_with`.
+pub fn RouteGroup::stream_with(
+  self : RouteGroup,
+  path : String,
+  middlewares : Array[Middleware],
+  handler : StreamHandler,
+) -> RouteGroup {
+  match self.app {
+    Some(app) =>
+      ignore(
+        app.stream_with(
+          join_paths(self.prefix, path),
+          self.route_middlewares(middlewares),
+          handler,
+        ),
+      )
+    None => ()
+  }
+  self
+}
+
+///|
+/// Serve files under `url_prefix`, itself nested below the group prefix.
+pub fn RouteGroup::static_files(
+  self : RouteGroup,
+  url_prefix : String,
+  root : String,
+  index~ : String = "index.html",
+  max_age~ : Int32 = 0,
+  precompressed~ : Bool = false,
+) -> RouteGroup {
+  self.static_files_with(url_prefix, root, [], index~, max_age~, precompressed~)
+}
+
+///|
+/// Serve files through a mount-specific middleware chain that runs inside this
+/// group's middleware.
+pub fn RouteGroup::static_files_with(
+  self : RouteGroup,
+  url_prefix : String,
+  root : String,
+  middlewares : Array[Middleware],
+  index~ : String = "index.html",
+  max_age~ : Int32 = 0,
+  precompressed~ : Bool = false,
+) -> RouteGroup {
+  match self.app {
+    Some(app) =>
+      ignore(
+        app.static_files_with(
+          join_paths(self.prefix, url_prefix),
+          root,
+          self.route_middlewares(middlewares),
+          index~,
+          max_age~,
+          precompressed~,
+        ),
+      )
+    None => ()
+  }
+  self
+}
+
+///|
+/// Mount another application below this group's prefix, with the group
+/// middleware wrapping every route, static mount and asynchronous endpoint
+/// contributed by the child.
+pub fn RouteGroup::mount(
+  self : RouteGroup,
+  prefix : String,
+  child : App,
+) -> RouteGroup {
+  match self.app {
+    Some(app) =>
+      ignore(
+        app.mount_with(join_paths(self.prefix, prefix), child, self.middlewares),
+      )
+    None => ()
+  }
+  self
+}
+
+///|
 pub(all) struct StaticMount {
   url_prefix : String
   root : String
@@ -6727,7 +6915,12 @@ pub fn App::fallback(self : App, handler : Handler) -> App {
 
 ///|
 pub fn App::group(self : App, prefix : String) -> RouteGroup {
-  self.router.group(prefix)
+  {
+    router: self.router,
+    prefix: normalize_prefix(prefix),
+    middlewares: [],
+    app: Some(self),
+  }
 }
 
 ///|
@@ -7190,39 +7383,52 @@ fn collect_route_nodes(
 }
 
 ///|
-/// Wrap an asynchronous route's pre-composed middleware chain with the
-/// middlewares of the application being mounted, once at mount time. The child
-/// application's own middlewares run outermost, matching the order a directly
-/// registered route would see.
+/// Wrap an asynchronous route's pre-composed middleware chain with the outer
+/// mount middleware and the middlewares of the application being mounted, once
+/// at mount time. The outer middleware runs first, then the child
+/// application's own middlewares, matching the order a directly registered
+/// route would see.
 fn mounted_route_chain(
   outer : Array[Middleware],
+  child : Array[Middleware],
   route_chain : Handler,
 ) -> Handler {
-  if outer.length() == 0 {
+  let wrapped = if child.length() == 0 {
     route_chain
   } else {
-    apply_middleware(outer, route_chain)
+    apply_middleware(child, route_chain)
+  }
+  if outer.length() == 0 {
+    wrapped
+  } else {
+    apply_middleware(outer, wrapped)
   }
 }
 
 ///|
-/// Combine the middleware a child application already attached to one of its
-/// static mounts with the child's own middleware. The child's middleware runs
-/// outside the mount-specific chain, matching how mounted dynamic routes are
-/// wrapped.
+/// Combine the outer mount middleware, the middleware a child application
+/// already attached to one of its static mounts, and the child's own
+/// middleware. The outer middleware runs first, then the child's middleware,
+/// then the mount-specific chain.
 fn mounted_static_middlewares(
+  outer : Array[Middleware],
   child : Array[Middleware],
   mount : Array[Middleware],
 ) -> Array[Middleware] {
-  if child.length() == 0 {
-    return mount.copy()
-  }
-  if mount.length() == 0 {
-    return child.copy()
+  if outer.length() == 0 {
+    if child.length() == 0 {
+      return mount.copy()
+    }
+    if mount.length() == 0 {
+      return child.copy()
+    }
+  } else if child.length() == 0 && mount.length() == 0 {
+    return outer.copy()
   }
   let combined : Array[Middleware] = Array(
-    capacity=child.length() + mount.length(),
+    capacity=outer.length() + child.length() + mount.length(),
   )
+  combined.append(outer)
   combined.append(child)
   combined.append(mount)
   combined
@@ -7237,6 +7443,24 @@ fn mounted_static_middlewares(
 /// compression settings are not carried over; the parent application governs
 /// those. Returns the parent so calls can be chained.
 pub fn App::mount(self : App, prefix : String, child : App) -> App {
+  self.mount_with(prefix, child, [])
+}
+
+///|
+/// Mount another application under `prefix` with additional middleware that
+/// wraps everything contributed by the child: ordinary routes, static mounts,
+/// websocket upgrades, server-sent events and streaming handlers.
+///
+/// `middlewares` run before the child application's own middleware, so they
+/// can authenticate or decorate the whole mounted application without
+/// modifying the child. Returns the parent so calls can be chained.
+pub fn App::mount_with(
+  self : App,
+  prefix : String,
+  child : App,
+  middlewares : Array[Middleware],
+) -> App {
+  let outer = middlewares.copy()
   let base = normalize_prefix(prefix)
   let routes : Array[(String, String, Handler)] = []
   for method, root in child.router.trees {
@@ -7244,7 +7468,7 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
   }
   for route in routes {
     let (method, path, handler) = route
-    let wrapped = apply_middleware(child.middlewares, handler)
+    let wrapped = mounted_route_chain(outer, child.middlewares, handler)
     self.router.add_route(method, join_paths(base, path), wrapped)
   }
   for name, named in child.router.named {
@@ -7264,7 +7488,11 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
       index: mount.index,
       max_age: mount.max_age,
       precompressed: mount.precompressed,
-      middlewares: mounted_static_middlewares(child.middlewares, mount.middlewares),
+      middlewares: mounted_static_middlewares(
+        outer,
+        child.middlewares,
+        mount.middlewares,
+      ),
       chain: None,
     })
   }
@@ -7279,6 +7507,7 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
     self.ws_middlewares.set(
       mounted,
       mounted_route_chain(
+        outer,
         child.middlewares,
         child.ws_middlewares.get(path).unwrap_or(async_chain_terminal),
       ),
@@ -7291,6 +7520,7 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
     self.sse_middlewares.set(
       mounted,
       mounted_route_chain(
+        outer,
         child.middlewares,
         child.sse_middlewares.get(path).unwrap_or(async_chain_terminal),
       ),
@@ -7303,6 +7533,7 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
     self.stream_middlewares.set(
       mounted,
       mounted_route_chain(
+        outer,
         child.middlewares,
         child.stream_middlewares.get(path).unwrap_or(async_chain_terminal),
       ),
@@ -8162,6 +8393,18 @@ pub fn Feather::websocket_with(
 ///|
 pub fn Feather::mount(self : Feather, prefix : String, child : Feather) -> Feather {
   ignore(self.app.mount(prefix, child.app))
+  self
+}
+
+///|
+/// Mount another Feather application with additional outer middleware.
+pub fn Feather::mount_with(
+  self : Feather,
+  prefix : String,
+  child : Feather,
+  middlewares : Array[Middleware],
+) -> Feather {
+  ignore(self.app.mount_with(prefix, child.app, middlewares))
   self
 }
 
