@@ -4411,6 +4411,24 @@ priv struct DispositionNames {
 }
 
 ///|
+fn unescape_quoted_parameter(raw : StringView) -> String {
+  let length = raw.length()
+  let builder = StringBuilder(size_hint=length)
+  let mut i = 0
+  while i < length {
+    let unit = raw.unsafe_get(i)
+    if unit == ('\\' : UInt16) && i + 1 < length {
+      builder.write_char(raw.unsafe_get(i + 1).to_int().unsafe_to_char())
+      i = i + 2
+    } else {
+      builder.write_char(unit.to_int().unsafe_to_char())
+      i = i + 1
+    }
+  }
+  builder.to_string()
+}
+
+///|
 fn disposition_names(value : StringView) -> DispositionNames {
   let length = value.length()
   let mut pos = 0
@@ -4445,10 +4463,17 @@ fn disposition_names(value : StringView) -> DispositionNames {
         value.unsafe_get(pos) == ('"' : UInt16) {
         let quoted_start = pos + 1
         let mut end = quoted_start
-        while end < length && value.unsafe_get(end) != ('"' : UInt16) {
-          end = end + 1
+        while end < length {
+          let unit = value.unsafe_get(end)
+          if unit == ('\\' : UInt16) && end + 1 < length {
+            end = end + 2
+          } else if unit == ('"' : UInt16) {
+            break
+          } else {
+            end = end + 1
+          }
         }
-        let result = value[quoted_start:end].to_owned()
+        let result = unescape_quoted_parameter(value[quoted_start:end])
         pos = if end < length { end + 1 } else { end }
         Some(result)
       } else {
@@ -4833,10 +4858,17 @@ fn header_parameter(value : StringView, name : String) -> String? {
         value.unsafe_get(pos) == ('"' : UInt16) {
         let quoted_start = pos + 1
         let mut end = quoted_start
-        while end < length && value.unsafe_get(end) != ('"' : UInt16) {
-          end = end + 1
+        while end < length {
+          let unit = value.unsafe_get(end)
+          if unit == ('\\' : UInt16) && end + 1 < length {
+            end = end + 2
+          } else if unit == ('"' : UInt16) {
+            break
+          } else {
+            end = end + 1
+          }
         }
-        let result = value[quoted_start:end].to_owned()
+        let result = unescape_quoted_parameter(value[quoted_start:end])
         pos = if end < length { end + 1 } else { end }
         Some(result)
       } else {

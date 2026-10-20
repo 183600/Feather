@@ -52,6 +52,17 @@ test "parse_multipart reads attributes around quoted separators" {
 }
 
 ///|
+test "parse_multipart unescapes quoted parameter pairs" {
+  let body = "--X\r\nContent-Disposition: form-data; name=\"a\\\"b\"; filename=\"c\\\\d.txt\"\r\n\r\n1\r\n--X--\r\n"
+  let parts = @feather
+    .parse_multipart(body, "multipart/form-data; boundary=X")
+    .unwrap()
+  assert_eq(parts.length(), 1)
+  assert_eq(parts[0].name, "a\"b")
+  assert_eq(parts[0].filename, "c\\d.txt")
+}
+
+///|
 test "parse_multipart accepts quoted boundary and ignores trailing data" {
   let body = "--b0\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--b0--\r\nepilogue"
   let parts = @feather
