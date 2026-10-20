@@ -172,3 +172,33 @@ test "basic auth middleware escapes realm quotes" {
     Some("Basic realm=\"say \\\"hi\\\"\\\\now\""),
   )
 }
+
+///|
+test "basic auth challenge replaces a case-variant header" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        ctx.set_header("www-authenticate", "Old")
+        next(ctx)
+      }
+    })
+    .use(@feather.middleware_basic_auth(Map([("admin", "secret")])))
+    .get("/private", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "GET",
+    path: "/private",
+    headers: Map([]),
+    body: "",
+  })
+  let mut count = 0
+  for key, _ in response.headers {
+    if key.view().equal_ignore_ascii_case("www-authenticate".view()) {
+      count = count + 1
+    }
+  }
+  assert_eq(count, 1)
+  assert_eq(
+    response.headers.get("WWW-Authenticate"),
+    Some("Basic realm=\"Restricted\""),
+  )
+}

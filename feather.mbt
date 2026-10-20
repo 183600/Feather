@@ -8370,7 +8370,11 @@ fn basic_auth_middleware(
       } else {
         ctx.file = None
         ctx.response.status = 401
-        ctx.response.headers.set("WWW-Authenticate", challenge)
+        set_header_ignore_case(
+          ctx.response.headers,
+          "WWW-Authenticate",
+          challenge,
+        )
         set_header_ignore_case(ctx.response.headers, "Content-Type", "text/plain; charset=utf-8")
         ctx.response.data = None
         ctx.response.body = "401 Unauthorized"
