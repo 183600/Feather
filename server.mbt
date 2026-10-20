@@ -464,6 +464,7 @@ async fn send_file_response(
         head,
         404,
         "404 Not Found",
+        false,
       )
       return
     }
@@ -477,6 +478,7 @@ async fn send_file_response(
       head,
       404,
       "404 Not Found",
+      false,
     )
     return
   }
@@ -489,6 +491,7 @@ async fn send_file_response(
         head,
         500,
         "500 Internal Server Error",
+        false,
       )
       return
     }
@@ -545,6 +548,7 @@ async fn send_file_response(
         head,
         412,
         "412 Precondition Failed",
+        false,
       )
       return
     }
@@ -1146,6 +1150,11 @@ fn static_base_headers(
     capacity=extra_headers.length() + capacity,
   )
   for name, value in extra_headers {
+    // Framing headers are recomputed for whatever this response turns out to
+    // be; a middleware's body length must not leak into 304/416/redirects.
+    if is_stream_reserved_header(name) {
+      continue
+    }
     if cookies.length() > 0 &&
       name.view().equal_ignore_ascii_case("set-cookie".view()) {
       continue
@@ -1165,9 +1174,15 @@ async fn send_static_error(
   head : Bool,
   code : Int32,
   body : String,
+  precompressed : Bool,
 ) -> Unit {
   let bytes = @utf8.encode(body)
   let headers = static_base_headers(extra_headers, cookies, 2)
+  if precompressed {
+    // Whether this path resolves to a file depends on `Accept-Encoding`, so
+    // caches must not reuse an identity 404 for a gzip-capable client.
+    add_vary_header(headers, "Accept-Encoding")
+  }
   headers.set(header_content_type, "text/plain; charset=utf-8")
   headers.set(header_content_length, bytes.length().to_string())
   send_with_date(conn, code, status_text(code), headers, cookies~)
@@ -1222,7 +1237,15 @@ async fn serve_static_file(
         }
       }
       if gzip_handle is None {
-        send_static_error(conn, extra_headers, cookies, head, 404, "404 Not Found")
+        send_static_error(
+          conn,
+          extra_headers,
+          cookies,
+          head,
+          404,
+          "404 Not Found",
+          precompressed,
+        )
         return
       }
       None
@@ -1308,7 +1331,15 @@ async fn serve_static_file(
       match base {
         Some(base_file) => base_file
         None => {
-          send_static_error(conn, extra_headers, cookies, head, 404, "404 Not Found")
+          send_static_error(
+            conn,
+            extra_headers,
+            cookies,
+            head,
+            404,
+            "404 Not Found",
+            precompressed,
+          )
           return
         }
       }
@@ -1334,7 +1365,15 @@ async fn serve_static_file(
   let cache_control_key = header_cache_control
   match evaluate_preconditions(request, etag, mtime_secs, true) {
     PreconditionFailed => {
-      send_static_error(conn, extra_headers, cookies, head, 412, "412 Precondition Failed")
+      send_static_error(
+        conn,
+        extra_headers,
+        cookies,
+        head,
+        412,
+        "412 Precondition Failed",
+        precompressed,
+      )
       return
     }
     PreconditionNotModified => {
