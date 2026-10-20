@@ -30,6 +30,8 @@ pub struct RateLimiter {
   window : Int64
   buckets : Map[String, RateBucket]
   mut last_sweep : Int64
+  mut last_key : String
+  mut last_bucket : RateBucket?
 }
 
 ///|
@@ -44,6 +46,8 @@ pub fn RateLimiter::new(
     window: if window < 1L { 1L } else { window },
     buckets: Map([]),
     last_sweep: 0L,
+    last_key: "",
+    last_bucket: None,
   }
 }
 
@@ -67,7 +71,19 @@ fn RateLimiter::allow_with_remaining(
   key : String,
 ) -> (Bool, Int) {
   let now = @async.now()
-  match self.buckets.get(key) {
+  let bucket = match self.last_bucket {
+    Some(bucket) if self.last_key == key => Some(bucket)
+    _ =>
+      match self.buckets.get(key) {
+        Some(bucket) => {
+          self.last_key = key
+          self.last_bucket = Some(bucket)
+          Some(bucket)
+        }
+        None => None
+      }
+  }
+  match bucket {
     Some(bucket) =>
       if now - bucket.start >= self.window {
         bucket.start = now
@@ -84,7 +100,10 @@ fn RateLimiter::allow_with_remaining(
       if self.buckets.length() >= RATE_LIMIT_MAX_BUCKETS {
         self.evict_one()
       }
-      self.buckets.set(key, { start: now, count: 1 })
+      let bucket = { start: now, count: 1 }
+      self.buckets.set(key, bucket)
+      self.last_key = key
+      self.last_bucket = Some(bucket)
       (true, self.max - 1)
     }
   }
@@ -149,6 +168,10 @@ pub fn RateLimiter::count(self : RateLimiter) -> Int {
 pub fn RateLimiter::reset(self : RateLimiter, key : String) -> Bool {
   let existed = self.buckets.contains(key)
   self.buckets.remove(key)
+  if self.last_key == key {
+    self.last_key = ""
+    self.last_bucket = None
+  }
   existed
 }
 
@@ -164,6 +187,8 @@ pub fn RateLimiter::sweep(self : RateLimiter) -> Unit {
   self.buckets.retain(fn(_key, bucket) {
     now - bucket.start < self.window
   })
+  self.last_key = ""
+  self.last_bucket = None
 }
 
 ///|
@@ -171,7 +196,13 @@ pub fn RateLimiter::sweep(self : RateLimiter) -> Unit {
 /// when no bucket has expired yet. The map is a bounded cache of windows.
 fn RateLimiter::evict_one(self : RateLimiter) -> Unit {
   match self.buckets.keys().next() {
-    Some(key) => ignore(self.buckets.remove(key))
+    Some(key) => {
+      ignore(self.buckets.remove(key))
+      if self.last_key == key {
+        self.last_key = ""
+        self.last_bucket = None
+      }
+    }
     None => ()
   }
 }

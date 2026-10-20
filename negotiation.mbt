@@ -345,16 +345,17 @@ pub fn Context::wants_json(self : Context) -> Bool {
 }
 
 ///|
-/// Pick the most preferred media type from `offers` according to the
-/// request's `Accept` header.
-///
-/// Returns `None` when the client rejects every offer. Ties keep the order of
-/// `offers`, so the server can express its own preference.
-pub fn Context::preferred_type(
+/// Most recent header/offers pair scored by `preferred_type` and its result.
+/// The inputs are copied so later mutations of the caller's array cannot
+/// change a cached result.
+let last_preferred_type : Ref[(String, Array[String], String?)?] = Ref(None)
+
+///|
+fn Context::preferred_type_compute(
   self : Context,
+  header : String,
   offers : ArrayView[String],
 ) -> String? {
-  let header = self.header("Accept")
   if trim_ascii_space(header.view()).is_empty() {
     for offer in offers {
       if media_type_parts_cached(offer) is Some(_) {
@@ -385,6 +386,44 @@ pub fn Context::preferred_type(
     }
   }
   best
+}
+
+///|
+/// Pick the most preferred media type from `offers` according to the
+/// request's `Accept` header.
+///
+/// Returns `None` when the client rejects every offer. Ties keep the order of
+/// `offers`, so the server can express its own preference.
+pub fn Context::preferred_type(
+  self : Context,
+  offers : ArrayView[String],
+) -> String? {
+  let header = self.header("Accept")
+  match last_preferred_type.val {
+    Some((cached_header, cached_offers, cached_result)) =>
+      if (physical_equal(cached_header, header) || cached_header == header) &&
+        cached_offers.length() == offers.length() {
+        let mut same = true
+        for i = 0; i < cached_offers.length(); i = i + 1 {
+          if !physical_equal(cached_offers[i], offers[i]) &&
+            cached_offers[i] != offers[i] {
+            same = false
+            break
+          }
+        }
+        if same {
+          return cached_result
+        }
+      }
+    None => ()
+  }
+  let result = self.preferred_type_compute(header, offers)
+  let copied : Array[String] = Array(capacity=offers.length())
+  for offer in offers {
+    copied.push(offer)
+  }
+  last_preferred_type.val = Some((header, copied, result))
+  result
 }
 
 ///|

@@ -1,6 +1,6 @@
 ///|
 /// SHA-256 round constants (FIPS 180-4, section 4.2.2).
-let sha256_round_constants : Array[UInt] = [
+let sha256_round_constants : FixedArray[UInt] = FixedArray::from_array([
   0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU, 0x59f111f1U,
   0x923f82a4U, 0xab1c5ed5U, 0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U,
   0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U, 0xe49b69c1U, 0xefbe4786U,
@@ -12,14 +12,14 @@ let sha256_round_constants : Array[UInt] = [
   0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU,
   0x5b9cca4fU, 0x682e6ff3U, 0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
   0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U,
-]
+])
 
 ///|
 /// SHA-256 initial hash values (FIPS 180-4, section 5.3.3).
-let sha256_initial_state : Array[UInt] = [
+let sha256_initial_state : FixedArray[UInt] = FixedArray::from_array([
   0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU, 0x510e527fU, 0x9b05688cU,
   0x1f83d9abU, 0x5be0cd19U,
-]
+])
 
 ///|
 #inline
@@ -66,10 +66,10 @@ fn sha256_big_sigma1(value : UInt) -> UInt {
 ///|
 #inline
 fn read_uint32_be(data : Bytes, offset : Int) -> UInt {
-  (data[offset].to_uint() << 24) |
-    (data[offset + 1].to_uint() << 16) |
-    (data[offset + 2].to_uint() << 8) |
-    data[offset + 3].to_uint()
+  (data.unsafe_get(offset).to_uint() << 24) |
+    (data.unsafe_get(offset + 1).to_uint() << 16) |
+    (data.unsafe_get(offset + 2).to_uint() << 8) |
+    data.unsafe_get(offset + 3).to_uint()
 }
 
 ///|
@@ -81,28 +81,28 @@ let sha256_schedule : FixedArray[UInt] = FixedArray::make(64, 0U)
 fn sha256_compress(state : FixedArray[UInt], block : Bytes, offset : Int) -> Unit {
   let schedule = sha256_schedule
   for i = 0; i < 16; i = i + 1 {
-    schedule[i] = read_uint32_be(block, offset + i * 4)
+    schedule.unsafe_set(i, read_uint32_be(block, offset + i * 4))
   }
   for i = 16; i < 64; i = i + 1 {
-    schedule[i] = schedule[i - 16] +
-      sha256_sigma0(schedule[i - 15]) +
-      schedule[i - 7] +
-      sha256_sigma1(schedule[i - 2])
+    schedule.unsafe_set(i, schedule.unsafe_get(i - 16) +
+      sha256_sigma0(schedule.unsafe_get(i - 15)) +
+      schedule.unsafe_get(i - 7) +
+      sha256_sigma1(schedule.unsafe_get(i - 2)))
   }
-  let mut a = state[0]
-  let mut b = state[1]
-  let mut c = state[2]
-  let mut d = state[3]
-  let mut e = state[4]
-  let mut f = state[5]
-  let mut g = state[6]
-  let mut h = state[7]
+  let mut a = state.unsafe_get(0)
+  let mut b = state.unsafe_get(1)
+  let mut c = state.unsafe_get(2)
+  let mut d = state.unsafe_get(3)
+  let mut e = state.unsafe_get(4)
+  let mut f = state.unsafe_get(5)
+  let mut g = state.unsafe_get(6)
+  let mut h = state.unsafe_get(7)
   for i = 0; i < 64; i = i + 1 {
     let temp1 = h +
       sha256_big_sigma1(e) +
       sha256_choose(e, f, g) +
-      sha256_round_constants[i] +
-      schedule[i]
+      sha256_round_constants.unsafe_get(i) +
+      schedule.unsafe_get(i)
     let temp2 = sha256_big_sigma0(a) + sha256_majority(a, b, c)
     h = g
     g = f
@@ -113,14 +113,14 @@ fn sha256_compress(state : FixedArray[UInt], block : Bytes, offset : Int) -> Uni
     b = a
     a = temp1 + temp2
   }
-  state[0] = state[0] + a
-  state[1] = state[1] + b
-  state[2] = state[2] + c
-  state[3] = state[3] + d
-  state[4] = state[4] + e
-  state[5] = state[5] + f
-  state[6] = state[6] + g
-  state[7] = state[7] + h
+  state.unsafe_set(0, state.unsafe_get(0) + a)
+  state.unsafe_set(1, state.unsafe_get(1) + b)
+  state.unsafe_set(2, state.unsafe_get(2) + c)
+  state.unsafe_set(3, state.unsafe_get(3) + d)
+  state.unsafe_set(4, state.unsafe_get(4) + e)
+  state.unsafe_set(5, state.unsafe_get(5) + f)
+  state.unsafe_set(6, state.unsafe_get(6) + g)
+  state.unsafe_set(7, state.unsafe_get(7) + h)
 }
 
 ///|
@@ -150,7 +150,7 @@ let sha256_hmac_inner_digest : FixedArray[Byte] = FixedArray::make(32, b'\x00')
 ///|
 fn sha256_state_reset(state : FixedArray[UInt]) -> Unit {
   for i = 0; i < 8; i = i + 1 {
-    state[i] = sha256_initial_state[i]
+    state.unsafe_set(i, sha256_initial_state.unsafe_get(i))
   }
 }
 
@@ -189,21 +189,21 @@ fn sha256_finish_into(
     .reinterpret_as_uint64()
   for i = 0; i < 8; i = i + 1 {
     let shift = (7 - i) * 8
-    tail[tail_length - 8 + i] = ((bit_length >> shift) & 0xFFUL)
+    tail.unsafe_set(tail_length - 8 + i, ((bit_length >> shift) & 0xFFUL)
       .reinterpret_as_int64()
       .to_int()
-      .to_byte()
+      .to_byte())
   }
   let tail_bytes = tail.unsafe_reinterpret_as_bytes()
   for block = 0; block < tail_length / 64; block = block + 1 {
     sha256_compress(state, tail_bytes, block * 64)
   }
   for i = 0; i < 8; i = i + 1 {
-    let word = state[i]
-    out[i * 4] = ((word >> 24) & 0xFFU).reinterpret_as_int().to_byte()
-    out[i * 4 + 1] = ((word >> 16) & 0xFFU).reinterpret_as_int().to_byte()
-    out[i * 4 + 2] = ((word >> 8) & 0xFFU).reinterpret_as_int().to_byte()
-    out[i * 4 + 3] = (word & 0xFFU).reinterpret_as_int().to_byte()
+    let word = state.unsafe_get(i)
+    out.unsafe_set(i * 4, ((word >> 24) & 0xFFU).reinterpret_as_int().to_byte())
+    out.unsafe_set(i * 4 + 1, ((word >> 16) & 0xFFU).reinterpret_as_int().to_byte())
+    out.unsafe_set(i * 4 + 2, ((word >> 8) & 0xFFU).reinterpret_as_int().to_byte())
+    out.unsafe_set(i * 4 + 3, (word & 0xFFU).reinterpret_as_int().to_byte())
   }
 }
 
@@ -465,6 +465,13 @@ fn signed_cookie_signing_input(
 }
 
 ///|
+/// Most recently minted token and the inputs it was derived from. Signing is
+/// deterministic, so an identical call can reuse the previous token.
+let last_signed_token : Ref[(String, String, String, Int64, String)?] = Ref(
+  None,
+)
+
+///|
 /// Sign `value` for the cookie called `name` with `secret`, producing a token
 /// that `verify_signed_cookie_token` can check.
 ///
@@ -484,12 +491,24 @@ pub fn signed_cookie_token(
     Some(value) => value
     None => 0L
   }
+  match last_signed_token.val {
+    Some((cached_secret, cached_name, cached_value, cached_deadline, token)) =>
+      if cached_deadline == deadline &&
+        cached_name == name &&
+        cached_value == value &&
+        cached_secret == secret {
+        return token
+      }
+    None => ()
+  }
   let encoded_value = base64url_encode(@utf8.encode(value))
   let mac = hmac_sha256(
     secret_utf8(secret),
     signed_cookie_signing_input(name, encoded_value.view(), deadline),
   )
-  encoded_value + "." + deadline.to_string() + "." + base64url_encode(mac)
+  let token = encoded_value + "." + deadline.to_string() + "." + base64url_encode(mac)
+  last_signed_token.val = Some((secret, name, value, deadline, token))
+  token
 }
 
 ///|

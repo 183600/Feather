@@ -18,18 +18,18 @@ fn write_fnv1a_hex(builder : StringBuilder, data : Bytes) -> Unit {
   let length = data.length()
   let mut i = 0
   while i + 8 <= length {
-    hash = (hash ^ data[i].to_uint64()) * 1099511628211UL
-    hash = (hash ^ data[i + 1].to_uint64()) * 1099511628211UL
-    hash = (hash ^ data[i + 2].to_uint64()) * 1099511628211UL
-    hash = (hash ^ data[i + 3].to_uint64()) * 1099511628211UL
-    hash = (hash ^ data[i + 4].to_uint64()) * 1099511628211UL
-    hash = (hash ^ data[i + 5].to_uint64()) * 1099511628211UL
-    hash = (hash ^ data[i + 6].to_uint64()) * 1099511628211UL
-    hash = (hash ^ data[i + 7].to_uint64()) * 1099511628211UL
+    hash = (hash ^ data.unsafe_get(i).to_uint64()) * 1099511628211UL
+    hash = (hash ^ data.unsafe_get(i + 1).to_uint64()) * 1099511628211UL
+    hash = (hash ^ data.unsafe_get(i + 2).to_uint64()) * 1099511628211UL
+    hash = (hash ^ data.unsafe_get(i + 3).to_uint64()) * 1099511628211UL
+    hash = (hash ^ data.unsafe_get(i + 4).to_uint64()) * 1099511628211UL
+    hash = (hash ^ data.unsafe_get(i + 5).to_uint64()) * 1099511628211UL
+    hash = (hash ^ data.unsafe_get(i + 6).to_uint64()) * 1099511628211UL
+    hash = (hash ^ data.unsafe_get(i + 7).to_uint64()) * 1099511628211UL
     i = i + 8
   }
   while i < length {
-    hash = (hash ^ data[i].to_uint64()) * 1099511628211UL
+    hash = (hash ^ data.unsafe_get(i).to_uint64()) * 1099511628211UL
     i = i + 1
   }
   for j = 0; j < 16; j = j + 1 {
@@ -42,6 +42,44 @@ fn write_fnv1a_hex(builder : StringBuilder, data : Bytes) -> Unit {
       }).unsafe_to_char(),
     )
   }
+}
+
+///|
+/// Validators and opt-out headers that affect ETag generation and precondition
+/// checks, collected in one case-insensitive pass. Responses carry only a few
+/// headers, so scanning beats building the general header index.
+priv struct ResponseValidators {
+  etag : String?
+  cache_control : String?
+  last_modified : String?
+  content_range : Bool
+}
+
+///|
+#inline
+fn response_validators(headers : Map[String, String]) -> ResponseValidators {
+  if headers.is_empty() {
+    return { etag: None, cache_control: None, last_modified: None, content_range: false }
+  }
+  let mut etag : String? = None
+  let mut cache_control : String? = None
+  let mut last_modified : String? = None
+  let mut content_range = false
+  headers.each(fn(key, value) {
+    let name = key.view()
+    if etag is None && name.equal_ignore_ascii_case("ETag".view()) {
+      etag = Some(value)
+    } else if cache_control is None &&
+      name.equal_ignore_ascii_case("Cache-Control".view()) {
+      cache_control = Some(value)
+    } else if last_modified is None &&
+      name.equal_ignore_ascii_case("Last-Modified".view()) {
+      last_modified = Some(value)
+    } else if name.equal_ignore_ascii_case("Content-Range".view()) {
+      content_range = true
+    }
+  })
+  { etag, cache_control, last_modified, content_range }
 }
 
 ///|
@@ -62,22 +100,12 @@ fn apply_etag(response : Response) -> Unit {
   if !has_representation {
     return
   }
-  // Check the exact `ETag` spelling first; the other guards use the
-  // case-insensitive header index.
-  if response.headers.get("ETag") is Some(_) {
-    return
+  let validators = response_validators(response.headers)
+  let no_store = match validators.cache_control {
+    Some(control) => contains_ignore_ascii_case(control.view(), "no-store".view())
+    None => false
   }
-  if get_header_ignore_case(response.headers, "Content-Range") is Some(_) {
-    return
-  }
-  match get_header_ignore_case(response.headers, "Cache-Control") {
-    Some(control) =>
-      if contains_ignore_ascii_case(control.view(), "no-store".view()) {
-        return
-      }
-    None => ()
-  }
-  if get_header_ignore_case(response.headers, "ETag") is Some(_) {
+  if validators.etag is Some(_) || validators.content_range || no_store {
     return
   }
   let data = match response.data {
@@ -140,32 +168,33 @@ fn apply_preconditions_input(
     !has_if_unmodified_since {
     return
   }
-  match get_header_ignore_case(response.headers, "Cache-Control") {
-    Some(control) =>
-      if contains_ignore_ascii_case(control.view(), "no-store".view()) {
-        return
-      }
-    None => ()
-  }
-  let etag = if has_if_match || has_if_none_match {
-    match get_header_ignore_case(response.headers, "ETag") {
-      Some(existing) => existing
-      None => ""
-    }
-  } else {
-    ""
-  }
-  let mtime_secs = if has_if_modified_since || has_if_unmodified_since {
-    match get_header_ignore_case(response.headers, "Last-Modified") {
-      Some(value) =>
-        match parse_http_date(value) {
-          Some(seconds) => seconds
-          None => 0L
+  let mut etag = ""
+  let mut mtime_secs = 0L
+  if !response.headers.is_empty() {
+    let validators = response_validators(response.headers)
+    match validators.cache_control {
+      Some(control) =>
+        if contains_ignore_ascii_case(control.view(), "no-store".view()) {
+          return
         }
-      None => 0L
+      None => ()
     }
-  } else {
-    0L
+    if has_if_match || has_if_none_match {
+      etag = match validators.etag {
+        Some(existing) => existing
+        None => ""
+      }
+    }
+    if has_if_modified_since || has_if_unmodified_since {
+      mtime_secs = match validators.last_modified {
+        Some(value) =>
+          match parse_http_date(value) {
+            Some(seconds) => seconds
+            None => 0L
+          }
+        None => 0L
+      }
+    }
   }
   match evaluate_preconditions_input(input, etag, mtime_secs, allows_not_modified) {
     PreconditionPass => ()
@@ -258,15 +287,19 @@ fn precheck_preconditions(
   if !has_precondition_headers(input) {
     return (false, input)
   }
-  match get_header_ignore_case(response.headers, "Cache-Control") {
+  if response.headers.is_empty() {
+    return (false, input)
+  }
+  let validators = response_validators(response.headers)
+  match validators.cache_control {
     Some(control) =>
       if contains_ignore_ascii_case(control.view(), "no-store".view()) {
         return (false, input)
       }
     None => ()
   }
-  let response_etag = get_header_ignore_case(response.headers, "ETag")
-  let response_mtime = get_header_ignore_case(response.headers, "Last-Modified")
+  let response_etag = validators.etag
+  let response_mtime = validators.last_modified
   if response_etag is None && response_mtime is None {
     return (false, input)
   }

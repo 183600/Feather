@@ -14,7 +14,7 @@ pub(all) struct Session {
   mut regenerate : Bool
   mut flash_pending : Map[String, Array[String]]?
   mut flash_pending_bytes : Int
-  json_cache : Map[String, (String, Json)]
+  mut json_cache : Map[String, (String, Json)]?
 }
 
 ///|
@@ -84,6 +84,10 @@ fn platform_rand() -> @random.Rand {
 let session_id_rng : @random.Rand = platform_rand()
 
 ///|
+/// Hex digits used by `session_random_id`.
+let session_hex_digits : Bytes = b"0123456789abcdef"
+
+///|
 /// Render a random 32-character hex id from `rng`.
 fn session_random_id(rng : @random.Rand) -> String {
   let out = FixedArray::make(32, b'0')
@@ -91,11 +95,7 @@ fn session_random_id(rng : @random.Rand) -> String {
     let value = rng.uint64()
     for j = 0; j < 16; j = j + 1 {
       let nibble = ((value >> ((15 - j) * 4)) & 15UL).to_int()
-      out[i * 16 + j] = (if nibble < 10 {
-        b'0'.to_int() + nibble
-      } else {
-        b'a'.to_int() + nibble - 10
-      }).to_byte()
+      out[i * 16 + j] = session_hex_digits[nibble]
     }
   }
   @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes())
@@ -128,14 +128,14 @@ fn SessionStore::generate_id(self : SessionStore) -> String {
 pub fn SessionStore::create(self : SessionStore) -> Session {
   {
     id: self.generate_id(),
-    data: Map([], capacity=4),
+    data: Map([]),
     expires_at: @async.now() + self.ttl,
     modified: false,
     destroyed: false,
     regenerate: false,
     flash_pending: None,
     flash_pending_bytes: 0,
-    json_cache: Map([]),
+    json_cache: None,
   }
 }
 
@@ -152,7 +152,7 @@ fn session_detached(ttl : Int64) -> Session {
     regenerate: false,
     flash_pending: None,
     flash_pending_bytes: 0,
-    json_cache: Map([]),
+    json_cache: None,
   }
 }
 
@@ -224,9 +224,10 @@ pub fn SessionStore::get(self : SessionStore, id : String) -> Session? {
 ///|
 /// Store a session, refreshing its expiry to `ttl` from now.
 pub fn SessionStore::save(self : SessionStore, session : Session) -> Unit {
-  session.expires_at = @async.now() + self.ttl
+  let now = @async.now()
+  session.expires_at = now + self.ttl
   if !self.sessions.contains(session.id) {
-    self.maybe_sweep()
+    self.maybe_sweep(now)
     if self.sessions.length() >= SESSION_STORE_MAX_SESSIONS {
       self.evict_one()
     }
@@ -277,8 +278,7 @@ pub fn SessionStore::sweep(self : SessionStore) -> Unit {
 }
 
 ///|
-fn SessionStore::maybe_sweep(self : SessionStore) -> Unit {
-  let now = @async.now()
+fn SessionStore::maybe_sweep(self : SessionStore, now : Int64) -> Unit {
   if self.last_sweep == 0L || now - self.last_sweep >= SESSION_SWEEP_INTERVAL {
     self.sweep()
   }
@@ -350,7 +350,17 @@ pub fn Context::session_set_json(
   let stored = self.session_set(key, text)
   if stored {
     match self.session {
-      Some(session) => session.json_cache.set(key, (text, value))
+      Some(session) => {
+        let cache = match session.json_cache {
+          Some(cache) => cache
+          None => {
+            let cache : Map[String, (String, Json)] = Map([])
+            session.json_cache = Some(cache)
+            cache
+          }
+        }
+        cache.set(key, (text, value))
+      }
       None => ()
     }
   }
@@ -366,12 +376,16 @@ pub fn Context::session_get_json(self : Context, key : String) -> Json? {
     Some(session) =>
       match session.data.get(key) {
         Some(text) =>
-          match session.json_cache.get(key) {
-            Some((cached_text, value)) =>
-              if cached_text == text {
-                Some(value)
-              } else {
-                session_parse_json_into_cache(session, key, text)
+          match session.json_cache {
+            Some(cache) =>
+              match cache.get(key) {
+                Some((cached_text, value)) =>
+                  if cached_text == text {
+                    Some(value)
+                  } else {
+                    session_parse_json_into_cache(session, key, text)
+                  }
+                None => session_parse_json_into_cache(session, key, text)
               }
             None => session_parse_json_into_cache(session, key, text)
           }
@@ -391,7 +405,15 @@ fn session_parse_json_into_cache(
   let parsed : Json = @json.parse(text) catch {
     _ => return None
   }
-  session.json_cache.set(key, (text, parsed))
+  let cache = match session.json_cache {
+    Some(cache) => cache
+    None => {
+      let cache : Map[String, (String, Json)] = Map([])
+      session.json_cache = Some(cache)
+      cache
+    }
+  }
+  cache.set(key, (text, parsed))
   Some(parsed)
 }
 
@@ -402,7 +424,10 @@ pub fn Context::session_remove(self : Context, key : String) -> Bool {
     Some(session) =>
       match session.data.remove_and_get(key) {
         Some(_) => {
-          ignore(session.json_cache.remove(key))
+          match session.json_cache {
+            Some(cache) => ignore(cache.remove(key))
+            None => ()
+          }
           session.modified = true
           true
         }

@@ -382,6 +382,8 @@ pub struct RateLimiter {
   window : Int64
   buckets : Map[String, RateBucket]
   mut last_sweep : Int64
+  mut last_key : String
+  mut last_bucket : RateBucket?
 }
 pub fn RateLimiter::allow(Self, String) -> Bool
 pub fn RateLimiter::count(Self) -> Int32
@@ -490,7 +492,7 @@ pub(all) struct Session {
   mut regenerate : Bool
   mut flash_pending : Map[String, Array[String]]?
   mut flash_pending_bytes : Int32
-  json_cache : Map[String, (String, Json)]
+  mut json_cache : Map[String, (String, Json)]?
 }
 
 pub struct SessionStore {

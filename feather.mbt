@@ -514,6 +514,9 @@ pub fn Router::add_route(
   self.miss_caches.clear()
   self.miss_method_caches.clear()
   self.miss_cache_ages.clear()
+  last_route_valid.val = false
+  last_route_hit.val = None
+  last_route_miss.val = None
 }
 
 ///|
@@ -801,6 +804,62 @@ fn render_allow_header_value(allowed : Array[String]) -> String {
 }
 
 ///|
+/// Most recent method/path pair resolved for a router and its node/bindings.
+/// Successful lookups dominate steady-state traffic, so a one-entry cache
+/// avoids repeating the tree and per-method map lookups for the same request
+/// target. `add_route` invalidates it.
+let last_route_trees : Ref[Map[String, RouteNode]?] = Ref(None)
+let last_route_method : Ref[String] = Ref("")
+let last_route_path : Ref[String] = Ref("")
+let last_route_hit : Ref[(RouteNode, Map[String, String]?, String)?] = Ref(
+  None,
+)
+let last_route_valid : Ref[Bool] = Ref(false)
+
+///|
+/// Most recent method/path pair that did not resolve to a route, together with
+/// the allowed methods (or `None` when no method matches). Repeating misses
+/// skip the tree walk entirely.
+let last_route_miss : Ref[
+  (Map[String, RouteNode], String, String, Array[String]?)?,
+] = Ref(None)
+
+///|
+fn Router::find_last_hit(
+  self : Router,
+  meth : String,
+  clean_path : StringView,
+) -> (RouteNode, Map[String, String]?, String)? {
+  if !last_route_valid.val {
+    return None
+  }
+  match last_route_trees.val {
+    Some(trees) =>
+      if physical_equal(trees, self.trees) &&
+        last_route_method.val == meth &&
+        last_route_path.val.view() == clean_path {
+        return last_route_hit.val
+      }
+    None => ()
+  }
+  None
+}
+
+///|
+fn Router::remember_last_hit(
+  self : Router,
+  meth : String,
+  clean_path : StringView,
+  hit : (RouteNode, Map[String, String]?, String),
+) -> Unit {
+  last_route_trees.val = Some(self.trees)
+  last_route_method.val = meth
+  last_route_path.val = clean_path.to_owned()
+  last_route_hit.val = Some(hit)
+  last_route_valid.val = true
+}
+
+///|
 priv enum RouteMatch {
   MatchFound(RouteNode, Map[String, String]?, String)
   MatchMethods(Array[String])
@@ -1048,9 +1107,13 @@ fn Router::match_dispatch(
   meth : String,
   clean_path : StringView,
 ) -> DispatchMatch {
+  match self.find_last_hit(meth, clean_path) {
+    Some(hit) => return DispatchFound(hit.0, hit.1, hit.2)
+    None => ()
+  }
   // The negative cache is consulted first. `add_route` clears both caches, so
   // a cached miss cannot outlive its removal.
-  match self.find_miss_cache(meth, clean_path) {
+  let result = match self.find_miss_cache(meth, clean_path) {
     Some(allow) =>
       if allow != "" {
         DispatchMethods(allow)
@@ -1079,6 +1142,13 @@ fn Router::match_dispatch(
         }
       }
   }
+  match result {
+    DispatchFound(node, params, wildcard) => {
+      self.remember_last_hit(meth, clean_path, (node, params, wildcard))
+      result
+    }
+    _ => result
+  }
 }
 
 ///|
@@ -1087,7 +1157,23 @@ fn Router::match_route(
   meth : String,
   clean_path : StringView,
 ) -> RouteMatch {
-  match self.find_node(meth, clean_path) {
+  match self.find_last_hit(meth, clean_path) {
+    Some(hit) => return MatchFound(hit.0, hit.1, hit.2)
+    None => ()
+  }
+  match last_route_miss.val {
+    Some((trees, cached_method, cached_path, allowed)) =>
+      if physical_equal(trees, self.trees) &&
+        cached_method == meth &&
+        cached_path.view() == clean_path {
+        return match allowed {
+          Some(methods) => MatchMethods(methods.copy())
+          None => MatchMissing
+        }
+      }
+    None => ()
+  }
+  let result = match self.find_node(meth, clean_path) {
     Some(hit) => MatchFound(hit.0, hit.1, hit.2)
     None =>
       if meth == "HEAD" {
@@ -1137,6 +1223,25 @@ fn Router::match_route(
           }
         }
       }
+  }
+  match result {
+    MatchFound(node, params, wildcard) => {
+      self.remember_last_hit(meth, clean_path, (node, params, wildcard))
+      result
+    }
+    MatchMethods(methods) => {
+      last_route_miss.val = Some((
+        self.trees,
+        meth,
+        clean_path.to_owned(),
+        Some(methods.copy()),
+      ))
+      result
+    }
+    MatchMissing => {
+      last_route_miss.val = Some((self.trees, meth, clean_path.to_owned(), None))
+      result
+    }
   }
 }
 
@@ -1505,10 +1610,78 @@ pub fn Context::html(self : Context, status : Int32, body : String) -> Unit {
 ///|
 pub fn json_object(data : Map[String, String]) -> Json {
   let object : Map[String, Json] = Map([], capacity=data.length())
-  for key, value in data {
+  data.each(fn(key, value) {
     object.set(key, Json::string(value))
-  }
+  })
   Json::object(object)
+}
+
+///|
+/// Whether a UTF-16 code unit needs a JSON escape (`"`, `\`, or a control
+/// character). Matches `@json`'s default string encoding.
+#inline
+fn json_needs_escape_code(code : UInt16) -> Bool {
+  code == '"' || code == '\\' || code < ' '
+}
+
+///|
+/// Write `value` as a JSON string body (without quotes), escaping exactly like
+/// `@json.Json::string(value).stringify()` does by default.
+fn json_write_escaped(buf : StringBuilder, value : String) -> Unit {
+  let length = value.length()
+  let mut run_start = 0
+  let mut i = 0
+  while i < length {
+    let code = value.unsafe_get(i)
+    if json_needs_escape_code(code) {
+      if run_start < i {
+        buf.write_view(value.exact_view(start=run_start, end=i))
+      }
+      match code {
+        '"' => buf.write_string("\\\"")
+        '\\' => buf.write_string("\\\\")
+        '\n' => buf.write_string("\\n")
+        '\r' => buf.write_string("\\r")
+        '\b' => buf.write_string("\\b")
+        '\t' => buf.write_string("\\t")
+        0x0C => buf.write_string("\\f")
+        _ => {
+          buf.write_string("\\u00")
+          buf.write_string(code.to_byte().to_hex())
+        }
+      }
+      run_start = i + 1
+    }
+    i = i + 1
+  }
+  if run_start < length {
+    buf.write_view(value.exact_view(start=run_start))
+  }
+}
+
+///|
+/// Serialize a flat string map as a JSON object without materializing an
+/// intermediate `Json` tree. Keys keep the map's iteration order.
+fn json_object_text(data : Map[String, String]) -> String {
+  if data.is_empty() {
+    return "{}"
+  }
+  let buf = StringBuilder(size_hint=32)
+  buf.write_char('{')
+  let mut first = true
+  data.each(fn(key, value) {
+    if !first {
+      buf.write_char(',')
+    }
+    first = false
+    buf.write_char('"')
+    json_write_escaped(buf, key)
+    buf.write_string("\":\"")
+    json_write_escaped(buf, value)
+    buf.write_char('"')
+  })
+  buf.write_char('}')
+  buf.to_string()
 }
 
 ///|
@@ -1530,7 +1703,11 @@ pub fn Context::json(
   status : Int32,
   data : Map[String, String],
 ) -> Unit {
-  self.json_value(status, json_object(data))
+  self.file = None
+  self.response.status = status
+  self.response.headers.set("Content-Type", "application/json; charset=utf-8")
+  self.response.data = None
+  self.response.body = json_object_text(data)
 }
 
 ///|
@@ -2286,6 +2463,17 @@ fn copy_multipart_parts(parts : Array[MultipartPart]) -> Array[MultipartPart] {
 }
 
 ///|
+/// Deep-copy a parsed multipart result, including each part's header map, so
+/// callers can mutate the result without disturbing the parse cache.
+fn clone_multipart_parts(parts : Array[MultipartPart]) -> Array[MultipartPart] {
+  let copy : Array[MultipartPart] = Array(capacity=parts.length())
+  for part in parts {
+    copy.push(copy_multipart_part(part))
+  }
+  copy
+}
+
+///|
 fn multipart_parts_lookup(
   body : String,
   content_type : String,
@@ -2302,7 +2490,7 @@ fn multipart_parts_lookup(
       }
     None => ()
   }
-  let parsed = parse_multipart(body, content_type)
+  let parsed = parse_multipart_uncached(body, content_type)
   match parsed {
     Some(parts) =>
       if body.length() <= PARSE_CACHE_MAX_KEY {
@@ -3137,7 +3325,20 @@ fn write_percent_to(out : FixedArray[Byte], offset : Int, value : Int) -> Unit {
 }
 
 ///|
+/// Most recently encoded source string and its result. Encoding is pure, so
+/// repeated values (route parameters, query keys) can reuse the last result.
+let last_url_encode_source : Ref[String?] = Ref(None)
+let last_url_encode_value : Ref[String] = Ref("")
+
+///|
 pub fn url_encode(source : String) -> String {
+  match last_url_encode_source.val {
+    Some(cached) =>
+      if physical_equal(cached, source) {
+        return last_url_encode_value.val
+      }
+    None => ()
+  }
   let view = source.view()
   let length = view.length()
   let mut start = 0
@@ -3145,6 +3346,8 @@ pub fn url_encode(source : String) -> String {
     start = start + 1
   }
   if start == length {
+    last_url_encode_source.val = Some(source)
+    last_url_encode_value.val = source
     return source
   }
   let mut out_len = start
@@ -3221,7 +3424,10 @@ pub fn url_encode(source : String) -> String {
     }
     j = j + 1
   }
-  @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes()[:out_index])
+  let result = @utf8.decode_lossy(out.unsafe_reinterpret_as_bytes()[:out_index])
+  last_url_encode_source.val = Some(source)
+  last_url_encode_value.val = result
+  result
 }
 
 ///|
@@ -3291,12 +3497,31 @@ fn own_bytes_prefix(out : FixedArray[Byte], length : Int) -> Bytes {
 }
 
 ///|
+/// Most recently decoded base64 text and its result. Decoded bytes are
+/// immutable, so the result can be shared safely.
+let last_base64_text : Ref[String?] = Ref(None)
+let last_base64_result : Ref[Bytes?] = Ref(None)
+let last_base64_valid : Ref[Bool] = Ref(false)
+
+///|
 /// Decode standard base64 text. Returns `None` for malformed input.
 ///
 /// Padding may be omitted, but a stray `=` in the middle of the text is
 /// rejected.
 pub fn base64_decode(text : String) -> Bytes? {
-  base64_decode_view(text.view())
+  match last_base64_text.val {
+    Some(cached) =>
+      if last_base64_valid.val &&
+        (physical_equal(cached, text) || cached == text) {
+        return last_base64_result.val
+      }
+    None => ()
+  }
+  let result = base64_decode_view(text.view())
+  last_base64_text.val = Some(text)
+  last_base64_result.val = result
+  last_base64_valid.val = true
+  result
 }
 
 ///|
@@ -3588,7 +3813,21 @@ fn mime_for_extension(extension : StringView) -> String {
 }
 
 ///|
+/// Most recently resolved file path and its media type. Static handlers often
+/// ask for the same path repeatedly, so the physical-identity fast path avoids
+/// rescanning the path for its extension.
+let last_mime_path : Ref[String?] = Ref(None)
+let last_mime_value : Ref[String] = Ref("")
+
+///|
 pub fn mime_type_for(path : String) -> String {
+  match last_mime_path.val {
+    Some(cached) =>
+      if physical_equal(cached, path) {
+        return last_mime_value.val
+      }
+    None => ()
+  }
   let view = path.view()
   let mut dot = -1
   let mut i = view.length() - 1
@@ -3603,7 +3842,7 @@ pub fn mime_type_for(path : String) -> String {
     }
     i = i - 1
   }
-  if dot >= 0 {
+  let result = if dot >= 0 {
     let extension = view[dot + 1:]
     if has_ascii_upper(extension) {
       let lower = extension.to_lower().view()
@@ -3614,6 +3853,9 @@ pub fn mime_type_for(path : String) -> String {
   } else {
     mime_for_extension("")
   }
+  last_mime_path.val = Some(path)
+  last_mime_value.val = result
+  result
 }
 
 ///|
@@ -3637,23 +3879,46 @@ fn parse_urlencoded_view(source : StringView) -> Map[String, String] {
   while pos <= length {
     let mut end = pos
     let mut eq = -1
+    let mut key_escaped = false
+    let mut value_escaped = false
     while end < length {
       let code = source.unsafe_get(end)
       if code == ('&' : UInt16) {
         break
       }
-      if code == ('=' : UInt16) && eq < 0 {
-        eq = end
+      if code == ('=' : UInt16) {
+        if eq < 0 {
+          eq = end
+        }
+      } else if code == ('%' : UInt16) || code == ('+' : UInt16) {
+        if eq < 0 {
+          key_escaped = true
+        } else {
+          value_escaped = true
+        }
       }
       end = end + 1
     }
     if end > pos {
       if eq >= 0 {
-        let key = decode_url(source[pos:eq])
-        let value = decode_url(source[eq + 1:end])
+        let key = if key_escaped {
+          decode_url(source[pos:eq])
+        } else {
+          source[pos:eq].to_owned()
+        }
+        let value = if value_escaped {
+          decode_url(source[eq + 1:end])
+        } else {
+          source[eq + 1:end].to_owned()
+        }
         result.set(key, value)
       } else {
-        result.set(decode_url(source[pos:end]), "")
+        let key = if key_escaped {
+          decode_url(source[pos:end])
+        } else {
+          source[pos:end].to_owned()
+        }
+        result.set(key, "")
       }
     }
     if end >= length {
@@ -3665,8 +3930,32 @@ fn parse_urlencoded_view(source : StringView) -> Map[String, String] {
 }
 
 ///|
+/// Most recently parsed url-encoded text and the owned map it produced.
+/// Callers always receive a copy so the cached parse cannot be mutated.
+let last_parsed_urlencoded_source : Ref[String?] = Ref(None)
+let last_parsed_urlencoded_map : Ref[Map[String, String]?] = Ref(None)
+let last_parsed_urlencoded_valid : Ref[Bool] = Ref(false)
+
+///|
 pub fn parse_urlencoded(source : String) -> Map[String, String] {
-  parse_urlencoded_view(source)
+  match last_parsed_urlencoded_source.val {
+    Some(cached) =>
+      if last_parsed_urlencoded_valid.val &&
+        (physical_equal(cached, source) || cached == source) {
+        match last_parsed_urlencoded_map.val {
+          Some(map) => return map.copy()
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let parsed = parse_urlencoded_view(source)
+  if source.length() <= PARSE_CACHE_MAX_KEY {
+    last_parsed_urlencoded_source.val = Some(source)
+    last_parsed_urlencoded_map.val = Some(parsed.copy())
+    last_parsed_urlencoded_valid.val = true
+  }
+  parsed
 }
 
 ///|
@@ -4942,45 +5231,92 @@ fn skip_line_break(view : StringView, pos : Int32) -> Int32 {
 }
 
 ///|
-/// One-entry cache of the three delimiter prefix tables, keyed by the boundary
-/// they were built from. Building them costs a few hundred nanoseconds, and a
-/// client that sends several multipart requests reuses one boundary.
-let last_multipart_boundary : Ref[String?] = Ref(None)
-let last_multipart_tables : Ref[(Array[Int], Array[Int], Array[Int])?] = Ref(
-  None,
-)
+/// One-entry cache of the delimiters and their prefix tables, keyed by the
+/// boundary they were built from. A client that sends several multipart
+/// requests reuses one boundary, so both the concatenated delimiter strings and
+/// the prefix tables can be reused.
+priv struct MultipartDelimiters {
+  boundary : String
+  delimiter : String
+  crlf_delimiter : String
+  lf_delimiter : String
+  delimiter_table : Array[Int]
+  crlf_delimiter_table : Array[Int]
+  lf_delimiter_table : Array[Int]
+}
 
 ///|
-/// Prefix tables for the bare, CRLF-prefixed and LF-prefixed delimiters of
-/// `boundary`, reusing the cached ones when the boundary repeats.
-fn multipart_delimiter_tables(
-  boundary : String,
-  delimiter : StringView,
-  crlf_delimiter : StringView,
-  lf_delimiter : StringView,
-) -> (Array[Int], Array[Int], Array[Int]) {
-  match last_multipart_boundary.val {
+let last_multipart_delimiters : Ref[MultipartDelimiters?] = Ref(None)
+
+///|
+/// Delimiters and prefix tables for `boundary`, reusing the cached ones when
+/// the boundary repeats.
+fn multipart_delimiters(boundary : String) -> MultipartDelimiters {
+  match last_multipart_delimiters.val {
     Some(cached) =>
-      if cached == boundary {
-        match last_multipart_tables.val {
-          Some(tables) => return tables
-          None => ()
+      if cached.boundary == boundary {
+        return cached
+      }
+    None => ()
+  }
+  let delimiter = "--" + boundary
+  let crlf_delimiter = "\r\n" + delimiter
+  let lf_delimiter = "\n" + delimiter
+  let cached : MultipartDelimiters = {
+    boundary,
+    delimiter,
+    crlf_delimiter,
+    lf_delimiter,
+    delimiter_table: delimiter_match_table(delimiter.view()),
+    crlf_delimiter_table: delimiter_match_table(crlf_delimiter.view()),
+    lf_delimiter_table: delimiter_match_table(lf_delimiter.view()),
+  }
+  last_multipart_delimiters.val = Some(cached)
+  cached
+}
+
+///|
+/// Most recent body and content type passed to `parse_multipart`, with the
+/// owned parse they produced. Callers receive a copy of the parts, including
+/// their header maps, so they can mutate the result freely.
+let last_parsed_multipart_body : Ref[String?] = Ref(None)
+let last_parsed_multipart_content_type : Ref[String?] = Ref(None)
+let last_parsed_multipart_result : Ref[Array[MultipartPart]?] = Ref(None)
+let last_parsed_multipart_valid : Ref[Bool] = Ref(false)
+
+///|
+pub fn parse_multipart(
+  body : String,
+  content_type : String,
+) -> Array[MultipartPart]? {
+  match last_parsed_multipart_body.val {
+    Some(cached_body) =>
+      if last_parsed_multipart_valid.val &&
+        (physical_equal(cached_body, body) || cached_body == body) &&
+        last_parsed_multipart_content_type.val is Some(cached_type) &&
+        (physical_equal(cached_type, content_type) || cached_type == content_type) {
+        return match last_parsed_multipart_result.val {
+          Some(parts) => Some(clone_multipart_parts(parts))
+          None => None
         }
       }
     None => ()
   }
-  let tables = (
-    delimiter_match_table(delimiter),
-    delimiter_match_table(crlf_delimiter),
-    delimiter_match_table(lf_delimiter),
-  )
-  last_multipart_boundary.val = Some(boundary)
-  last_multipart_tables.val = Some(tables)
-  tables
+  let parsed = parse_multipart_uncached(body, content_type)
+  if body.length() <= PARSE_CACHE_MAX_KEY {
+    last_parsed_multipart_body.val = Some(body)
+    last_parsed_multipart_content_type.val = Some(content_type)
+    last_parsed_multipart_result.val = parsed
+    last_parsed_multipart_valid.val = true
+  }
+  match parsed {
+    Some(parts) => Some(clone_multipart_parts(parts))
+    None => None
+  }
 }
 
 ///|
-pub fn parse_multipart(
+fn parse_multipart_uncached(
   body : String,
   content_type : String,
 ) -> Array[MultipartPart]? {
@@ -4988,20 +5324,17 @@ pub fn parse_multipart(
     Some(boundary) if boundary != "" => boundary
     _ => return None
   }
-  let delimiter = "--" + boundary
+  let delimiters = multipart_delimiters(boundary)
+  let delimiter = delimiters.delimiter
   let delimiter_view = delimiter.view()
   let delimiter_length = delimiter.length()
-  let crlf_delimiter = "\r\n" + delimiter
+  let crlf_delimiter = delimiters.crlf_delimiter
   let crlf_delimiter_view = crlf_delimiter.view()
-  let lf_delimiter = "\n" + delimiter
+  let lf_delimiter = delimiters.lf_delimiter
   let lf_delimiter_view = lf_delimiter.view()
-  let (delimiter_table, crlf_delimiter_table, lf_delimiter_table) =
-    multipart_delimiter_tables(
-      boundary,
-      delimiter_view,
-      crlf_delimiter_view,
-      lf_delimiter_view,
-    )
+  let delimiter_table = delimiters.delimiter_table
+  let crlf_delimiter_table = delimiters.crlf_delimiter_table
+  let lf_delimiter_table = delimiters.lf_delimiter_table
   let view = body.view()
   let mut pos = match
     find_terminated_delimiter(view, delimiter_view, delimiter_table, 0) {
@@ -5772,6 +6105,15 @@ let precondition_if_modified_since_name : StringView = "If-Modified-Since".view(
 let precondition_if_unmodified_since_name : StringView = "If-Unmodified-Since".view()
 
 ///|
+/// Most recently scanned request header map and its precondition fields.
+/// Server requests reuse the map for a single request; tests and embedded
+/// callers often reuse the same map object, where rescanning ten headers on
+/// every response is pure overhead.
+let last_precondition_headers : Ref[Map[String, String]?] = Ref(None)
+let last_precondition_size : Ref[Int] = Ref(-1)
+let last_precondition_input : Ref[PreconditionInput?] = Ref(None)
+
+///|
 /// Collect the precondition request headers in a single pass over the map.
 ///
 /// Four separate case-insensitive lookups would rescan the header map four
@@ -5786,6 +6128,17 @@ fn precondition_input_from_map(
       if_modified_since: None,
       if_unmodified_since: None,
     }
+  }
+  match last_precondition_headers.val {
+    Some(cached) =>
+      if physical_equal(cached, headers) &&
+        last_precondition_size.val == headers.length() {
+        match last_precondition_input.val {
+          Some(input) => return input
+          None => ()
+        }
+      }
+    None => ()
   }
   let mut if_match : String? = None
   let mut if_none_match : String? = None
@@ -5819,7 +6172,11 @@ fn precondition_input_from_map(
       }
     }
   })
-  { if_match, if_none_match, if_modified_since, if_unmodified_since }
+  let input = { if_match, if_none_match, if_modified_since, if_unmodified_since }
+  last_precondition_headers.val = Some(headers)
+  last_precondition_size.val = headers.length()
+  last_precondition_input.val = Some(input)
+  input
 }
 
 ///|
@@ -6821,6 +7178,7 @@ pub fn App::static_files_with(
   self.static_lookup_cache.clear()
   self.static_lookup_negative.clear()
   self.static_lookup_negative_head = 0
+  invalidate_last_static_lookup()
   self
 }
 
@@ -6935,6 +7293,7 @@ pub fn App::mount(self : App, prefix : String, child : App) -> App {
   self.static_lookup_cache.clear()
   self.static_lookup_negative.clear()
   self.static_lookup_negative_head = 0
+  invalidate_last_static_lookup()
   for path, handler in child.ws_handlers {
     let mounted = join_paths(base, path)
     self.ws_router.add_route("GET", mounted, fn(_ctx) { () })
@@ -7078,12 +7437,37 @@ fn App::static_lookup_remember(
 }
 
 ///|
+/// Most recent raw static request path and its result. Static mounts change
+/// rarely, so repeated asset requests can skip cleaning and the map lookup.
+let last_static_cache : Ref[Map[String, (String, String, Bool, StaticMount)?]?] = Ref(
+  None,
+)
+let last_static_path : Ref[String] = Ref("")
+let last_static_result : Ref[(String, String, Bool, StaticMount)?] = Ref(None)
+
+///|
+fn invalidate_last_static_lookup() -> Unit {
+  last_static_cache.val = None
+  last_static_path.val = ""
+  last_static_result.val = None
+}
+
+///|
 /// Resolve a static file request to its filesystem path, `Cache-Control` value
 /// and precompressed-serving flag.
 fn App::static_lookup(
   self : App,
   path : String,
 ) -> (String, String, Bool, StaticMount)? {
+  match last_static_cache.val {
+    Some(cache) =>
+      if physical_equal(cache, self.static_lookup_cache) &&
+        (physical_equal(last_static_path.val, path) ||
+          last_static_path.val == path) {
+        return last_static_result.val
+      }
+    None => ()
+  }
   let clean = clean_path_view(path)
   match self.static_lookup_cache.get_from_string(clean) {
     Some(cached) => cached
@@ -7100,6 +7484,9 @@ fn App::static_lookup(
         (result is Some(_) || mount is Some(_)) {
         self.static_lookup_remember(clean, result)
       }
+      last_static_cache.val = Some(self.static_lookup_cache)
+      last_static_path.val = path
+      last_static_result.val = result
       result
     }
   }
@@ -7198,17 +7585,25 @@ pub fn App::respond(self : App, request : Request) -> Response {
     err => internal_error(ctx, "\{err}")
   }
   if ctx.file_response() is None {
-    let (input, allows_not_modified) = precondition_input_facade(ctx.request)
-    let (failed, remaining) = precheck_preconditions(
-      input,
-      allows_not_modified,
-      ctx.response,
-    )
-    if !failed {
+    // Without request headers there can be no precondition, so skip the
+    // header scan and validator bookkeeping entirely.
+    if ctx.request.headers.is_empty() {
       if self.etag_enabled {
         apply_etag(ctx.response)
       }
-      apply_preconditions_input(remaining, allows_not_modified, ctx.response)
+    } else {
+      let (input, allows_not_modified) = precondition_input_facade(ctx.request)
+      let (failed, remaining) = precheck_preconditions(
+        input,
+        allows_not_modified,
+        ctx.response,
+      )
+      if !failed {
+        if self.etag_enabled {
+          apply_etag(ctx.response)
+        }
+        apply_preconditions_input(remaining, allows_not_modified, ctx.response)
+      }
     }
   }
   ctx.response
@@ -7257,6 +7652,29 @@ pub fn middleware_error_handler() -> Middleware {
 }
 
 ///|
+fn logger_record(
+  log : (String) -> Unit,
+  ctx : Context,
+  started : Int64,
+  with_duration : Bool,
+) -> Unit {
+  let buf = StringBuilder(size_hint=if with_duration { 64 } else { 32 })
+  buf.write_char('[')
+  buf.write_object(ctx.response.status)
+  buf.write_string("] ")
+  buf.write_string(ctx.request.method)
+  buf.write_char(' ')
+  buf.write_string(ctx.request.path)
+  if with_duration {
+    let elapsed = @async.now() - started
+    buf.write_string(" (")
+    buf.write_object(elapsed)
+    buf.write_string("ms)")
+  }
+  log(buf.to_string())
+}
+
+///|
 pub fn middleware_logger(
   log~ : (String) -> Unit = println,
   with_duration~ : Bool = false,
@@ -7264,34 +7682,24 @@ pub fn middleware_logger(
   fn(next) {
     fn(ctx) raise {
       let started = if with_duration { @async.now() } else { 0L }
-      let record = fn() {
-        if with_duration {
-          let elapsed = @async.now() - started
-          log(
-            "[\{ctx.response.status}] \{ctx.request.method} \{ctx.request.path} (\{elapsed}ms)",
-          )
-        } else {
-          log("[\{ctx.response.status}] \{ctx.request.method} \{ctx.request.path}")
-        }
-      }
       next(ctx) catch {
         HttpError(status, message) => {
           ctx.response.status = status
-          record()
+          logger_record(log, ctx, started, with_duration)
           raise HttpError(status, message)
         }
         HttpErrorPayload(status, message, payload) => {
           ctx.response.status = status
-          record()
+          logger_record(log, ctx, started, with_duration)
           raise HttpErrorPayload(status, message, payload)
         }
         err => {
           ctx.response.status = 500
-          record()
+          logger_record(log, ctx, started, with_duration)
           raise err
         }
       }
-      record()
+      logger_record(log, ctx, started, with_duration)
     }
   }
 }
