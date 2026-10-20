@@ -234,3 +234,17 @@ test "context forwarded_ip parses the Forwarded header" {
     "127.0.0.1",
   )
 }
+
+///|
+test "context protocol survives a forwarded value with a dangling escape" {
+  assert_false(
+    request_with_headers(Map([("Forwarded", "proto=\"https\\")])).is_secure(),
+  )
+  assert_eq(
+    request_with_headers(Map([("Forwarded", "\"x\\")])).protocol(),
+    "http",
+  )
+  assert_true(
+    request_with_headers(Map([("Forwarded", "proto=\"ht\\tps\"")])).is_secure(),
+  )
+}

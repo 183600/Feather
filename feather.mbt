@@ -1848,7 +1848,7 @@ fn forwarded_first_param(header : StringView, name : StringView) -> String? {
   let mut in_quotes = false
   while i < length {
     let unit = header.unsafe_get(i)
-    if in_quotes && unit == ('\\' : UInt16) {
+    if in_quotes && unit == ('\\' : UInt16) && i + 1 < length {
       i = i + 2
       continue
     }
@@ -1866,7 +1866,7 @@ fn forwarded_first_param(header : StringView, name : StringView) -> String? {
     let mut quoted = false
     while end < element_end {
       let unit = header.unsafe_get(end)
-      if quoted && unit == ('\\' : UInt16) {
+      if quoted && unit == ('\\' : UInt16) && end + 1 < element_end {
         end = end + 2
         continue
       }
