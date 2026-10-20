@@ -310,3 +310,18 @@ test "etag body hash matches standard FNV-1a 64" {
   assert_eq(long.status, 200)
   assert_eq(long.headers.get("ETag"), Some("\"11-779a65e7023cd2e7\""))
 }
+
+///|
+test "etag generation skips partial content" {
+  let app = @feather.App::new()
+    .etag()
+    .get("/partial", fn(ctx) { ctx.text(206, "partial") })
+  let response = app.respond({
+    method: "GET",
+    path: "/partial",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 206)
+  assert_eq(response.headers.get("ETag"), None)
+}
