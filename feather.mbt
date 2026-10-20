@@ -1323,7 +1323,7 @@ pub fn Router::dispatch_with(
 pub fn not_found(ctx : Context) -> Unit {
   ctx.file = None
   ctx.response.status = 404
-  ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
+  set_header_ignore_case(ctx.response.headers, "Content-Type", "text/plain; charset=utf-8")
   ctx.response.data = None
   ctx.response.body = "404 Not Found"
 }
@@ -1332,8 +1332,8 @@ pub fn not_found(ctx : Context) -> Unit {
 fn method_not_allowed_with_allow(ctx : Context, allow : String) -> Unit {
   ctx.file = None
   ctx.response.status = 405
-  ctx.response.headers.set("Allow", allow)
-  ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
+  set_header_ignore_case(ctx.response.headers, "Allow", allow)
+  set_header_ignore_case(ctx.response.headers, "Content-Type", "text/plain; charset=utf-8")
   ctx.response.data = None
   ctx.response.body = "405 Method Not Allowed"
 }
@@ -1347,7 +1347,7 @@ pub fn method_not_allowed(ctx : Context, allowed : Array[String]) -> Unit {
 fn respond_options_with_allow(ctx : Context, allow : String) -> Unit {
   ctx.file = None
   ctx.response.status = 204
-  ctx.response.headers.set("Allow", allow)
+  set_header_ignore_case(ctx.response.headers, "Allow", allow)
   ctx.response.data = None
   ctx.response.body = ""
 }
@@ -1364,7 +1364,7 @@ pub fn internal_error(ctx : Context, detail : String) -> Unit {
   ctx.file = None
   ctx.state.set("error", detail)
   ctx.response.status = 500
-  ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
+  set_header_ignore_case(ctx.response.headers, "Content-Type", "text/plain; charset=utf-8")
   ctx.response.data = None
   ctx.response.body = "Internal Server Error"
 }
@@ -1411,7 +1411,7 @@ fn cached_error_body(status : Int32, message : String) -> String {
 pub fn error_response(ctx : Context, status : Int32, message : String) -> Unit {
   ctx.file = None
   ctx.response.status = status
-  ctx.response.headers.set("Content-Type", "application/json; charset=utf-8")
+  set_header_ignore_case(ctx.response.headers, "Content-Type", "application/json; charset=utf-8")
   ctx.response.data = None
   ctx.response.body = cached_error_body(status, message)
 }
@@ -1435,7 +1435,7 @@ pub fn error_response_with_payload(
     _ => body.set("detail", payload)
   }
   ctx.response.status = status
-  ctx.response.headers.set("Content-Type", "application/json; charset=utf-8")
+  set_header_ignore_case(ctx.response.headers, "Content-Type", "application/json; charset=utf-8")
   ctx.response.data = None
   ctx.response.body = Json::object(body).stringify()
 }
@@ -1572,7 +1572,11 @@ pub fn Context::set_header(
 pub fn Context::text(self : Context, status : Int32, body : String) -> Unit {
   self.file = None
   self.response.status = status
-  self.response.headers.set("Content-Type", "text/plain; charset=utf-8")
+  set_header_ignore_case(
+    self.response.headers,
+    "Content-Type",
+    "text/plain; charset=utf-8",
+  )
   self.response.data = None
   self.response.body = body
 }
@@ -1586,7 +1590,7 @@ pub fn Context::bytes(
 ) -> Unit {
   self.file = None
   self.response.status = status
-  self.response.headers.set("Content-Type", content_type)
+  set_header_ignore_case(self.response.headers, "Content-Type", content_type)
   self.response.body = ""
   self.response.data = Some(data)
 }
@@ -1595,7 +1599,11 @@ pub fn Context::bytes(
 pub fn Context::html(self : Context, status : Int32, body : String) -> Unit {
   self.file = None
   self.response.status = status
-  self.response.headers.set("Content-Type", "text/html; charset=utf-8")
+  set_header_ignore_case(
+    self.response.headers,
+    "Content-Type",
+    "text/html; charset=utf-8",
+  )
   self.response.data = None
   self.response.body = body
 }
@@ -1681,7 +1689,11 @@ fn json_object_text(data : Map[String, String]) -> String {
 pub fn Context::json_value(self : Context, status : Int32, data : Json) -> Unit {
   self.file = None
   self.response.status = status
-  self.response.headers.set("Content-Type", "application/json; charset=utf-8")
+  set_header_ignore_case(
+    self.response.headers,
+    "Content-Type",
+    "application/json; charset=utf-8",
+  )
   self.response.data = None
   self.response.body = match data {
     Json::Object(members) if members.is_empty() => "{}"
@@ -1698,7 +1710,11 @@ pub fn Context::json(
 ) -> Unit {
   self.file = None
   self.response.status = status
-  self.response.headers.set("Content-Type", "application/json; charset=utf-8")
+  set_header_ignore_case(
+    self.response.headers,
+    "Content-Type",
+    "application/json; charset=utf-8",
+  )
   self.response.data = None
   self.response.body = json_object_text(data)
 }
@@ -1720,7 +1736,7 @@ pub fn Context::redirect(
 ) -> Unit {
   self.file = None
   self.response.status = status
-  self.response.headers.set("Location", location)
+  set_header_ignore_case(self.response.headers, "Location", location)
   self.response.data = None
   self.response.body = ""
 }
@@ -1731,7 +1747,7 @@ pub fn Context::no_content(self : Context) -> Unit {
   self.response.status = 204
   self.response.body = ""
   self.response.data = None
-  self.response.headers.remove("Content-Type")
+  ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
 }
 
 ///|
@@ -3068,10 +3084,11 @@ pub fn Context::file(
   self.response.status = status
   self.response.body = ""
   self.response.data = None
-  self.response.headers.set("Content-Type", resolved_type)
+  set_header_ignore_case(self.response.headers, "Content-Type", resolved_type)
   match download_name {
     Some(name) =>
-      self.response.headers.set(
+      set_header_ignore_case(
+        self.response.headers,
         "Content-Disposition",
         content_disposition_attachment(name),
       )
@@ -3092,7 +3109,8 @@ pub fn Context::file_response(self : Context) -> FileResponse? {
 /// `Context::json`. The name is quoted and escaped, and non-ASCII names also
 /// receive an RFC 6266 `filename*` parameter.
 pub fn Context::attachment(self : Context, filename : String) -> Unit {
-  self.response.headers.set(
+  set_header_ignore_case(
+    self.response.headers,
     "Content-Disposition",
     content_disposition_value("attachment", filename),
   )
@@ -3104,7 +3122,8 @@ pub fn Context::attachment(self : Context, filename : String) -> Unit {
 /// naming the payload. Escaping and non-ASCII handling follow
 /// `Context::attachment`.
 pub fn Context::inline(self : Context, filename : String) -> Unit {
-  self.response.headers.set(
+  set_header_ignore_case(
+    self.response.headers,
     "Content-Disposition",
     content_disposition_value("inline", filename),
   )
@@ -6227,7 +6246,7 @@ pub fn Context::not_modified(
   self.response.status = 304
   self.response.body = ""
   self.response.data = None
-  self.response.headers.remove("Content-Type")
+  ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
   match etag {
     Some(etag) => self.response.headers.set("ETag", etag)
     None => ()
@@ -8217,7 +8236,7 @@ pub fn middleware_cors(
           ctx.response.status = 204
           ctx.response.data = None
           ctx.response.body = ""
-          ctx.response.headers.remove("Content-Type")
+          ignore(remove_header_ignore_case(ctx.response.headers, "Content-Type"))
           // The preflight answer depends on the two request headers, so shared
           // caches must key on them as well (Fetch: Vary considerations).
           ctx.vary("Access-Control-Request-Method")
@@ -8296,7 +8315,7 @@ fn basic_auth_middleware(
         ctx.file = None
         ctx.response.status = 401
         ctx.response.headers.set("WWW-Authenticate", challenge)
-        ctx.response.headers.set("Content-Type", "text/plain; charset=utf-8")
+        set_header_ignore_case(ctx.response.headers, "Content-Type", "text/plain; charset=utf-8")
         ctx.response.data = None
         ctx.response.body = "401 Unauthorized"
       }
