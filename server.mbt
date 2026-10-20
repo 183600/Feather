@@ -1129,20 +1129,6 @@ fn add_vary_header(headers : @http.Headers, value : String) -> Unit {
 }
 
 ///|
-/// Bounded cache recording whether a static file has a precompressed `.gz`
-/// sibling, keyed by path and validated against the base file's `(size, mtime)`
-/// so a changed file is probed again.
-let gzip_probe_cache : Map[String, (Int64, Int64, Int, Bool)] = Map([])
-
-///|
-/// Recency ticks for `gzip_probe_cache`.
-let gzip_probe_ages : Map[String, Int] = Map([])
-
-///|
-/// Maximum number of paths tracked by `gzip_probe_cache`.
-const GZIP_PROBE_CACHE_LIMIT : Int = 64
-
-///|
 /// Build the outgoing headers for a static response, seeding them with the
 /// headers a request context accumulated. A `Set-Cookie` entry is dropped when
 /// the response carries cookies, which are sent separately.
@@ -1272,52 +1258,15 @@ async fn serve_static_file(
   }
   if precompressed && gzip_handle is None {
     match base {
-      Some(base_file) =>
+      Some(_) =>
         match request.headers.get(header_accept_encoding) {
           Some(value) =>
             if accept_encoding_allows_gzip_cached(value) {
-              let base_size = base_file.size() catch {
-                _ => 0L
-              }
-              let base_mtime = base_file.mtime() catch {
-                _ => (0L, 0)
-              }
-              let (base_secs, base_nanos) = base_mtime
-              let mut has_gzip = false
-              let mut known = false
-              match gzip_probe_cache.get(file_path) {
-                Some((cached_size, cached_secs, cached_nanos, cached_has)) =>
-                  if cached_size == base_size &&
-                    cached_secs == base_secs &&
-                    cached_nanos == base_nanos {
-                    has_gzip = cached_has
-                    known = true
-                    cache_touch(gzip_probe_ages, file_path)
-                  }
-                None => ()
-              }
-              if !known {
-                gzip_handle = open_precompressed_gzip(file_path)
-                has_gzip = gzip_handle is Some(_)
-                cache_set(
-                  gzip_probe_cache,
-                  gzip_probe_ages,
-                  GZIP_PROBE_CACHE_LIMIT,
-                  file_path,
-                  (base_size, base_secs, base_nanos, has_gzip),
-                )
-              } else if has_gzip {
-                gzip_handle = open_precompressed_gzip(file_path)
-                if gzip_handle is None {
-                  cache_set(
-                    gzip_probe_cache,
-                    gzip_probe_ages,
-                    GZIP_PROBE_CACHE_LIMIT,
-                    file_path,
-                    (base_size, base_secs, base_nanos, false),
-                  )
-                }
-              }
+              // The probe always runs: a `.gz` sibling may appear (or vanish)
+              // while the server is running, so a remembered miss would keep
+              // serving the identity representation even after a deploy added
+              // the precompressed file.
+              gzip_handle = open_precompressed_gzip(file_path)
             }
           None => ()
         }
