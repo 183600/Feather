@@ -8108,16 +8108,37 @@ pub fn middleware_secure_headers(
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
-      ctx.response.headers.set("X-Content-Type-Options", content_type_options)
-      ctx.response.headers.set("X-Frame-Options", frame_options)
-      ctx.response.headers.set("Referrer-Policy", referrer_policy)
+      set_header_ignore_case(
+        ctx.response.headers,
+        "X-Content-Type-Options",
+        content_type_options,
+      )
+      set_header_ignore_case(
+        ctx.response.headers,
+        "X-Frame-Options",
+        frame_options,
+      )
+      set_header_ignore_case(
+        ctx.response.headers,
+        "Referrer-Policy",
+        referrer_policy,
+      )
       match hsts {
         Some(value) =>
-          ctx.response.headers.set("Strict-Transport-Security", value)
+          set_header_ignore_case(
+            ctx.response.headers,
+            "Strict-Transport-Security",
+            value,
+          )
         None => ()
       }
       match content_security_policy {
-        Some(value) => ctx.response.headers.set("Content-Security-Policy", value)
+        Some(value) =>
+          set_header_ignore_case(
+            ctx.response.headers,
+            "Content-Security-Policy",
+            value,
+          )
         None => ()
       }
       next(ctx)

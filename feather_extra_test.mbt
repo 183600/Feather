@@ -746,3 +746,33 @@ test "request id middleware replaces a case-variant response header" {
   assert_eq(response.headers.get("X-Request-Id"), Some("outer"))
   assert_eq(response.body, "outer")
 }
+
+///|
+test "secure headers replace case-variant response headers" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        ctx.set_header("x-frame-options", "ALLOW")
+        ctx.set_header("referrer-policy", "unsafe-url")
+        next(ctx)
+      }
+    })
+    .use(@feather.middleware_secure_headers())
+    .get("/", fn(ctx) { ctx.text(200, "ok") })
+  let ctx = @feather.create_context()
+  app.handle(ctx)
+  let mut frames = 0
+  let mut referrers = 0
+  for key, _ in ctx.response.headers {
+    if key.view().equal_ignore_ascii_case("x-frame-options".view()) {
+      frames = frames + 1
+    }
+    if key.view().equal_ignore_ascii_case("referrer-policy".view()) {
+      referrers = referrers + 1
+    }
+  }
+  assert_eq(frames, 1)
+  assert_eq(referrers, 1)
+  assert_eq(ctx.response.headers.get("X-Frame-Options"), Some("DENY"))
+  assert_eq(ctx.response.headers.get("Referrer-Policy"), Some("no-referrer"))
+}
