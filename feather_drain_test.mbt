@@ -38,6 +38,58 @@ async fn drain_read_until(conn : @socket.Tcp, needle : String, max_iters : Int) 
 }
 
 ///|
+suberror DrainStopError
+
+///|
+async test "graceful shutdown drains before propagating a stop error" {
+  let app = @feather.App::new().post("/upload", fn(ctx) {
+    ctx.text(200, "uploaded:" + ctx.request.body)
+  })
+  @async.with_task_group(group => {
+    let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
+    let port = server.addr.port()
+    let finished : Ref[Bool] = Ref(false)
+    let raised : Ref[Bool] = Ref(false)
+    group.spawn_bg(no_wait=true, () => {
+      app.serve_with_graceful_until(
+        server,
+        stop=() => {
+          @async.sleep(100)
+          raise DrainStopError
+        },
+        drain_timeout=2000,
+      ) catch {
+        DrainStopError => raised.val = true
+        _ => ()
+      }
+      finished.val = true
+    })
+    @async.sleep(50)
+    let conn = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{port}"))
+    conn.write(
+      @utf8.encode(
+        "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\nConnection: close\r\n\r\n",
+      ),
+    )
+    // The stop error fires at ~100ms; finish the request afterwards so a
+    // drain that gave up on the error would miss the response.
+    @async.sleep(200)
+    conn.write(@utf8.encode("hello"))
+    let received = drain_read_until(conn, "uploaded:hello", 200)
+    conn.close()
+    assert_true(received.contains("200 OK"))
+    assert_true(received.contains("uploaded:hello"))
+    let mut waited = 0
+    while !finished.val && waited < 400 {
+      @async.sleep(10)
+      waited = waited + 1
+    }
+    assert_true(finished.val)
+    assert_true(raised.val)
+  })
+}
+
+///|
 async test "graceful shutdown waits for in-flight requests to finish" {
   let app = @feather.App::new().post("/upload", fn(ctx) {
     ctx.text(200, "uploaded:" + ctx.request.body)

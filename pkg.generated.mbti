@@ -9,6 +9,7 @@ import {
   "moonbitlang/core/debug",
   "moonbitlang/core/json",
   "moonbitlang/core/random",
+  "moonbitlang/core/ref",
 }
 
 // Values
@@ -18,11 +19,15 @@ pub const DEFAULT_SESSION_TTL : Int64 = 86_400_000
 
 pub const PARAM_PREFIX : String = "param:"
 
+pub const PROBLEM_CONTENT_TYPE : String = "application/problem+json; charset=utf-8"
+
 pub fn apply_middleware(Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn base64_decode(String) -> Bytes?
 
 pub fn base64_encode(Bytes) -> String
+
+pub fn build_problem_document(Int32, String, String, String, String) -> String
 
 pub fn compose_middleware(Array[(Context) -> Unit]) -> ((Context) -> Unit raise)?
 
@@ -88,6 +93,8 @@ pub fn parse_multipart(String, String) -> Array[MultipartPart]?
 
 pub fn parse_urlencoded(String) -> Map[String, String]
 
+pub fn problem_response(Context, Int32, String, String, String, String) -> Unit
+
 pub fn respond_options(Context, Array[String]) -> Unit
 
 pub fn sha256(Bytes) -> Bytes
@@ -109,6 +116,10 @@ pub(all) suberror HttpError {
 
 pub(all) suberror HttpErrorPayload {
   HttpErrorPayload(Int32, String, Json)
+}
+
+pub(all) suberror HttpProblem {
+  HttpProblem(Int32, String, String, String, String)
 }
 
 pub suberror PayloadTooLarge
@@ -141,6 +152,8 @@ pub struct App {
   static_lookup_cache : Map[String, (String, String, Bool, StaticMount)?]
   static_lookup_negative : Array[String]
   mut static_lookup_negative_head : Int32
+  in_flight : @ref.Ref[Int32]
+  mut draining : Bool
 }
 pub fn App::all(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::compress(Self, min_size? : Int32) -> Self
@@ -178,8 +191,10 @@ pub fn App::route_named_with(Self, String, String, String, Array[((Context) -> U
 pub fn App::route_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn App::routes(Self) -> Array[(String, String)]
 pub async fn App::serve(Self, @socket.Addr) -> Unit
+pub async fn App::serve_graceful_until(Self, @socket.Addr, stop~ : async () -> Unit, drain_timeout? : Int32) -> Unit
 pub async fn App::serve_until(Self, @socket.Addr, stop~ : async () -> Unit) -> Unit
 pub async fn App::serve_with(Self, @http.Server, max_connections? : Int32) -> Unit
+pub async fn App::serve_with_graceful_until(Self, @http.Server, stop~ : async () -> Unit, drain_timeout? : Int32, max_connections? : Int32) -> Unit
 pub async fn App::serve_with_until(Self, @http.Server, stop~ : async () -> Unit, max_connections? : Int32) -> Unit
 pub fn App::set_json_state(Self, String, Json) -> Self
 pub fn App::set_state(Self, String, String) -> Self
@@ -233,6 +248,7 @@ pub fn Context::cookies(Self) -> Map[String, String]
 pub fn Context::csrf_token(Self, key? : String) -> String
 pub fn Context::defer_cleanup(Self, () -> Unit raise) -> Unit
 pub fn Context::fail(Self, Int32, String) -> Unit raise HttpError
+pub fn Context::fail_problem(Self, Int32, String, title? : String, type_name? : String, instance? : String) -> Unit raise HttpProblem
 pub fn Context::fail_with(Self, Int32, String, Json) -> Unit raise HttpErrorPayload
 pub fn Context::file(Self, Int32, String, content_type? : String, download_name? : String) -> Unit
 pub fn Context::file_response(Self) -> FileResponse?
@@ -280,6 +296,7 @@ pub fn Context::params(Self) -> Map[String, String]
 pub fn Context::preferred_encoding(Self, ArrayView[String]) -> String?
 pub fn Context::preferred_language(Self, ArrayView[String]) -> String?
 pub fn Context::preferred_type(Self, ArrayView[String]) -> String?
+pub fn Context::problem(Self, Int32, String, title? : String, type_name? : String, instance? : String) -> Unit
 pub fn Context::protocol(Self) -> String
 pub fn Context::queries(Self) -> Map[String, String]
 pub fn Context::query(Self, String) -> String
@@ -309,6 +326,7 @@ pub fn Context::status(Self, Int32) -> Unit
 pub fn Context::text(Self, Int32, String) -> Unit
 pub fn Context::vary(Self, String) -> Unit
 pub fn Context::wants_json(Self) -> Bool
+pub fn Context::wants_problem_details(Self) -> Bool
 
 pub(all) struct Feather {
   config : Config
@@ -346,8 +364,10 @@ pub fn Feather::route_named_with(Self, String, String, String, Array[((Context) 
 pub fn Feather::route_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn Feather::routes(Self) -> Array[(String, String)]
 pub async fn Feather::serve(Self) -> Unit
+pub async fn Feather::serve_graceful_until(Self, stop~ : async () -> Unit, drain_timeout? : Int32) -> Unit
 pub async fn Feather::serve_until(Self, stop~ : async () -> Unit) -> Unit
 pub async fn Feather::serve_with(Self, @http.Server, max_connections? : Int32) -> Unit
+pub async fn Feather::serve_with_graceful_until(Self, @http.Server, stop~ : async () -> Unit, drain_timeout? : Int32, max_connections? : Int32) -> Unit
 pub async fn Feather::serve_with_until(Self, @http.Server, stop~ : async () -> Unit, max_connections? : Int32) -> Unit
 pub fn Feather::set_json_state(Self, String, Json) -> Self
 pub fn Feather::set_state(Self, String, String) -> Self

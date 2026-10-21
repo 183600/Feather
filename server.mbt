@@ -2014,10 +2014,20 @@ pub async fn App::serve_with_graceful_until(
 ) -> Unit {
   let app = self
   @async.with_task_group(group => {
+    // Clear the drain flag once shutdown has completed so this application
+    // can be served again later.
+    defer {
+      app.draining = false
+    }
     let serving : @async.Task[Unit] = group.spawn(no_wait=true, () => {
       app.serve_with(server, max_connections?)
     })
-    stop()
+    // A failing `stop` must not abort the drain; the error is re-raised after
+    // in-flight requests have finished.
+    let mut stop_error : Error? = None
+    stop() catch {
+      err => stop_error = Some(err)
+    }
     server.close()
     app.draining = true
     let mut timed_out = false
@@ -2031,17 +2041,21 @@ pub async fn App::serve_with_graceful_until(
         timed_out = true
         serving.cancel()
       }
+    } else {
+      // A zero timeout means waiting for in-flight requests without a bound.
+      while app.in_flight.val > 0 {
+        @async.sleep(10)
+      }
     }
     if !timed_out {
-      let mut waited = 0
-      while app.in_flight.val > 0 && waited < 5000 {
-        @async.sleep(10)
-        waited = waited + 10
-      }
       // Let idle kept-alive connections observe the drain and receive a
       // `503` for anything they send before the server task is cancelled.
       @async.sleep(GRACEFUL_DRAIN_SETTLE_MS)
       serving.cancel()
+    }
+    match stop_error {
+      Some(err) => raise err
+      None => ()
     }
   })
 }
