@@ -149,6 +149,7 @@ pub struct App {
   mut compress_enabled : Bool
   mut compress_min_size : Int32
   mut etag_enabled : Bool
+  mut trust_proxy_hops : Int32
   static_lookup_cache : Map[String, (String, String, Bool, StaticMount)?]
   static_lookup_negative : Array[String]
   mut static_lookup_negative_head : Int32
@@ -206,6 +207,7 @@ pub fn App::static_files(Self, String, String, index? : String, max_age? : Int32
 pub fn App::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool) -> Self
 pub fn App::stream(Self, String, async (Context, Stream) -> Unit) -> Self
 pub fn App::stream_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Stream) -> Unit) -> Self
+pub fn App::trust_proxy(Self, Int32) -> Self
 pub fn App::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn App::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 pub fn App::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
@@ -380,6 +382,7 @@ pub fn Feather::static_files(Self, String, String, index? : String, max_age? : I
 pub fn Feather::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool) -> Self
 pub fn Feather::stream(Self, String, async (Context, Stream) -> Unit) -> Self
 pub fn Feather::stream_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Stream) -> Unit) -> Self
+pub fn Feather::trust_proxy(Self, Int32) -> Self
 pub fn Feather::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn Feather::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 pub fn Feather::validate_body_size(Self, String) -> Bool

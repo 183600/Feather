@@ -2176,13 +2176,23 @@ fn forwarded_first_param(header : StringView, name : StringView) -> String? {
     }
     i = i + 1
   }
+  forwarded_element_param(header[:element_end], name)
+}
+
+///|
+/// Value of parameter `name` in a single element of an RFC 7239 `Forwarded`
+/// header, for example `host` in `for=192.0.2.60;host="example.com:8443"`.
+///
+/// Parameter names are matched case-insensitively and quoted values are
+/// unescaped. Returns `None` when the parameter is absent or empty.
+fn forwarded_element_param(element : StringView, name : StringView) -> String? {
   let mut pos = 0
-  while pos < element_end {
+  while pos < element.length() {
     let mut end = pos
     let mut quoted = false
-    while end < element_end {
-      let unit = header.unsafe_get(end)
-      if quoted && unit == ('\\' : UInt16) && end + 1 < element_end {
+    while end < element.length() {
+      let unit = element.unsafe_get(end)
+      if quoted && unit == ('\\' : UInt16) && end + 1 < element.length() {
         end = end + 2
         continue
       }
@@ -2194,14 +2204,14 @@ fn forwarded_first_param(header : StringView, name : StringView) -> String? {
       end = end + 1
     }
     let mut eq = pos
-    while eq < end && header.unsafe_get(eq) != ('=' : UInt16) {
+    while eq < end && element.unsafe_get(eq) != ('=' : UInt16) {
       eq = eq + 1
     }
     if eq < end {
-      let key = trim_ascii_space(header[pos:eq])
+      let key = trim_ascii_space(element[pos:eq])
       if key.equal_ignore_ascii_case(name) {
         let unquoted = unquote_forwarded_value(
-          trim_ascii_space(header[eq + 1:end]),
+          trim_ascii_space(element[eq + 1:end]),
         )
         let value = trim_ascii_space(unquoted.view())
         if value.is_empty() {
@@ -2335,11 +2345,27 @@ pub fn Context::full_url(self : Context) -> String {
 /// port. When the request is served by `App::serve` this is the peer IP
 /// recorded by the server; contexts built by hand report `"127.0.0.1"` unless
 /// `remote_addr` was set in the state.
+///
+/// When the application declares trusted proxies with `App::trust_proxy`, the
+/// address of the real client is reported instead: the forwarded chain is
+/// walked `hops` steps back from the peer, so one trusted proxy reports the
+/// address that proxy saw. Without a trusted-proxy configuration the peer
+/// address is reported, and `Context::forwarded_ip` remains the way to read
+/// the forwarded headers directly.
 pub fn Context::ip(self : Context) -> String {
-  match self.state.get("remote_addr") {
+  let peer = match self.state.get("remote_addr") {
     Some(value) => value
     None => "127.0.0.1"
   }
+  let hops = match self.state.get(TRUST_PROXY_HOPS_KEY) {
+    Some(value) =>
+      match parse_int_value(value.view()) {
+        Some(hops) => hops
+        None => 0
+      }
+    None => 0
+  }
+  trusted_client_address(peer, forwarded_chain(self), hops)
 }
 
 ///|
@@ -7433,6 +7459,7 @@ pub struct App {
   mut compress_enabled : Bool
   mut compress_min_size : Int32
   mut etag_enabled : Bool
+  mut trust_proxy_hops : Int32
   static_lookup_cache : Map[String, (String, String, Bool, StaticMount)?]
   static_lookup_negative : Array[String]
   mut static_lookup_negative_head : Int32
@@ -7468,6 +7495,7 @@ fn App::fresh(timeout : Int32) -> App {
     compress_enabled: false,
     compress_min_size: 1024,
     etag_enabled: false,
+    trust_proxy_hops: 0,
     static_lookup_cache: Map([]),
     static_lookup_negative: [],
     static_lookup_negative_head: 0,
@@ -7553,6 +7581,9 @@ fn App::merge_state(self : App, ctx : Context) -> Unit {
 /// state.
 fn App::context_for_request(self : App, request : Request) -> Context {
   let ctx = Context::new(request)
+  if self.trust_proxy_hops != 0 {
+    ctx.state.set(TRUST_PROXY_HOPS_KEY, self.trust_proxy_hops.to_string())
+  }
   self.merge_state(ctx)
   ctx
 }
@@ -8500,6 +8531,25 @@ pub fn App::max_body_size(self : App, size : Int32) -> App {
 }
 
 ///|
+/// Declare how many proxies in front of the application may be trusted when
+/// the client address is derived from the forwarded headers.
+///
+/// `hops` counts the trusted proxies, starting at the one closest to the
+/// application: with one trusted proxy, `Context::ip` reports the address
+/// that proxy recorded for the client, and with two it reports the address the
+/// outer proxy recorded. A negative `hops` trusts the whole forwarded chain
+/// and reports the original client. `0`, the default, trusts no proxy at all,
+/// so `Context::ip` keeps reporting the peer address.
+///
+/// The chain is read from the RFC 7239 `Forwarded` header when it carries
+/// `for=` parameters, and from `X-Forwarded-For` otherwise. Both list the
+/// client first, so the chain is walked from the closest proxy backwards.
+pub fn App::trust_proxy(self : App, hops : Int32) -> App {
+  self.trust_proxy_hops = hops
+  self
+}
+
+///|
 pub fn App::request_timeout(self : App, millis : Int32) -> App {
   self.timeout = millis
   self
@@ -9274,6 +9324,15 @@ pub fn Feather::max_body_size(self : Feather, size : Int32) -> Feather {
 ///|
 pub fn Feather::request_timeout(self : Feather, millis : Int32) -> Feather {
   ignore(self.app.request_timeout(millis))
+  self
+}
+
+///|
+/// Declare how many proxies in front of the application may be trusted when
+/// the client address is derived from the forwarded headers. See
+/// `App::trust_proxy` for the details.
+pub fn Feather::trust_proxy(self : Feather, hops : Int32) -> Feather {
+  ignore(self.app.trust_proxy(hops))
   self
 }
 
