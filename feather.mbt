@@ -2783,6 +2783,9 @@ let last_multipart_content_type : Ref[String?] = Ref(None)
 let last_multipart_parts : Ref[Array[MultipartPart]?] = Ref(None)
 
 ///|
+let last_multipart_raw_body : Ref[String?] = Ref(None)
+
+///|
 /// Copy one parsed part so callers get their own header map.
 fn copy_multipart_part(part : MultipartPart) -> MultipartPart {
   {
@@ -2828,7 +2831,8 @@ fn multipart_parts_lookup(
     Some(cached_body) =>
       if physical_equal(cached_body, body) &&
         last_multipart_content_type.val is Some(cached_type) &&
-        cached_type == content_type {
+        cached_type == content_type &&
+        last_multipart_raw_body.val == raw_body {
         match last_multipart_parts.val {
           Some(cached) => return Some(cached)
           None => ()
@@ -2843,6 +2847,7 @@ fn multipart_parts_lookup(
         last_multipart_body.val = Some(body)
         last_multipart_content_type.val = Some(content_type)
         last_multipart_parts.val = Some(parts)
+        last_multipart_raw_body.val = raw_body
       }
     None => ()
   }

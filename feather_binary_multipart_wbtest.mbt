@@ -54,3 +54,36 @@ test "resolve_part_bytes falls back to encoding text" {
   assert_eq(bytes, @utf8.encode("héllo"))
   assert_eq(text, "héllo")
 }
+
+///|
+fn lossless_multipart_body(byte : Int32) -> (String, String) {
+  let prefix = "--B\r\nContent-Disposition: form-data; name=\"f\"; filename=\"a.bin\"\r\n\r\n"
+  let suffix = "\r\n--B--\r\n"
+  let builder = StringBuilder()
+  builder.write_string(prefix)
+  builder.write_char((0xDC00 + byte).unsafe_to_char())
+  builder.write_string(suffix)
+  let raw = builder.to_string()
+  (prefix + "\u{FFFD}" + suffix, raw)
+}
+
+///|
+test "multipart cache distinguishes lossy-equal binary bodies" {
+  let (body, raw_ff) = lossless_multipart_body(0xFF)
+  let (_, raw_80) = lossless_multipart_body(0x80)
+  assert_eq(body, body)
+  let make = fn(raw : String) {
+    let ctx = Context::new({
+      method: "POST",
+      path: "/",
+      headers: Map([("Content-Type", "multipart/form-data; boundary=B")]),
+      body,
+    })
+    ctx.state.set(RAW_BODY_STATE_KEY, base64_encode(encode_utf8_lossless(raw)))
+    ctx
+  }
+  let first = make(raw_ff).multipart_file("f").unwrap()
+  let second = make(raw_80).multipart_file("f").unwrap()
+  assert_eq(first.data_bytes, b"\xff")
+  assert_eq(second.data_bytes, b"\x80")
+}
