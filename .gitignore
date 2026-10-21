@@ -3,7 +3,6 @@
 # MoonBit
 _build/
 target/
-target
 .mooncakes/
 .moonagent/
 
@@ -16,6 +15,11 @@ __pycache__/
 
 # Logs
 *.log
+
+# Editors
+.idea/
+.vscode/
+*.swp
 
 # Generated / transient artifacts
 *.coverage

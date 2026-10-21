@@ -12,12 +12,3 @@ import {
   "moonbitlang/core/json",
   "moonbitlang/core/random",
 }
-
-import {
-  "moonbitlang/async",
-  "moonbitlang/async/http",
-  "moonbitlang/async/socket",
-  "moonbitlang/async/fs",
-  "moonbitlang/async/gzip",
-  "moonbitlang/async/websocket",
-} for "test"

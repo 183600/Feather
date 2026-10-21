@@ -153,9 +153,8 @@ const BODY_SIZE_HINT_LIMIT : Int32 = 1048576
 /// `Content-Length` clamped to the body limit and the pre-size cap, or `0` when
 /// the header is absent or malformed.
 fn body_size_hint(request : @http.Request, limit : Int32) -> Int32 {
-  let limit_int = limit
-  let cap : Int32 = if limit_int < BODY_SIZE_HINT_LIMIT {
-    limit_int
+  let cap : Int32 = if limit < BODY_SIZE_HINT_LIMIT {
+    limit
   } else {
     BODY_SIZE_HINT_LIMIT
   }
@@ -199,18 +198,17 @@ async fn read_body_bytes(
   if total > limit {
     raise PayloadTooLarge
   }
-  let limit_int = limit
   let first_length = first.length()
   let hint : Int32 = if size_hint > first_length {
-    if size_hint < limit_int {
+    if size_hint < limit {
       size_hint
     } else {
-      limit_int
+      limit
     }
-  } else if first_length < limit_int {
+  } else if first_length < limit {
     first_length
   } else {
-    limit_int
+    limit
   }
   let buffer = @buffer.Buffer::Buffer(size_hint=hint)
   buffer.write_bytes(first)
@@ -249,11 +247,10 @@ async fn decode_gzip_body(data : Bytes, limit : Int32) -> Bytes {
   let reader = @io.MemoryReader(async fn(writer) { writer.write(data) })
   defer reader.close()
   let decoder = @gzip.Decoder::Decoder(reader)
-  let limit_int = limit
-  let hint : Int32 = if data.length() * 4 < limit_int {
+  let hint : Int32 = if data.length() * 4 < limit {
     data.length() * 4
   } else {
-    limit_int
+    limit
   }
   let buffer = @buffer.Buffer::Buffer(size_hint=hint)
   let mut total = 0

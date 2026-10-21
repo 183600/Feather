@@ -1,3 +1,9 @@
+> **Status note (2026-10):** this file is the original design brief kept for
+> historical reference. The implementation has since grown well beyond it
+> (sessions, CSRF, signed cookies, flash, rate limiting, SSE, streaming,
+> static files, compression, ETag, and content negotiation are all live and
+> tested). For the current architecture and package layout see the README.
+
 下面给你一套**“可以落地实现”的 MoonBit 后端 Web 框架方案**（偏 Gin/Express 风格），底层严格基于 `moonbitlang/async/http` 的 **`@http.run_server` + `@http.ServerConnection`** 来跑服务器、读请求、写响应。核心目标是：**路由 + 中间件 + Context + 统一响应封装 + 可靠的连接内请求循环**。 
 
 ---

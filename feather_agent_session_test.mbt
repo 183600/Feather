@@ -144,7 +144,7 @@ test "agent randomized flash differential" {
 }
 
 ///|
-test "agent probe flash stored byte accounting" {
+test "flash stored byte accounting keeps capped pending additions" {
   let store = @feather.SessionStore::new()
   let ctx = @feather.create_context()
   ctx.session = Some(store.create())
@@ -160,11 +160,16 @@ test "agent probe flash stored byte accounting" {
   session.data.set("__flash:default", Json::array(old).stringify())
   ignore(ctx.flash("a"))
   ignore(ctx.flash("b"))
-  println("flash cap peek length=\{ctx.flash_peek().length()}")
+  // Stored messages bypass the pending byte budget, so both additions fit
+  // the per-category message cap (30 stored + 2 new = 32).
+  let pending = ctx.flash_peek()
+  assert_eq(pending.length(), 32)
+  assert_true(pending.contains("a"))
+  assert_true(pending.contains("b"))
 }
 
 ///|
-test "agent probe flash category cap across persist" {
+test "flash category cap drops the 17th category across persist" {
   let store = @feather.SessionStore::new()
   let app = @feather.App::new()
     .use(@feather.middleware_session(store))
@@ -196,11 +201,19 @@ test "agent probe flash category cap across persist" {
     headers: Map([("Cookie", cookie)]),
     body: "",
   })
-  println("flash category cap take body=\{second.body}")
+  // 16 stored categories survive; the dropped 17th category ("newcat")
+  // never reaches the take-all snapshot.
+  assert_false(second.body.contains("newcat"))
+  assert_true(second.body.contains("c0=old,"))
+  assert_true(second.body.contains("c15=old,"))
+  assert_eq(
+    second.body,
+    "c0=old,;c1=old,;c10=old,;c11=old,;c12=old,;c13=old,;c14=old,;c15=old,;c2=old,;c3=old,;c4=old,;c5=old,;c6=old,;c7=old,;c8=old,;c9=old,;",
+  )
 }
 
 ///|
-test "agent probe lazy session direct id" {
+test "lazy session direct id access creates session and cookie" {
   let store = @feather.SessionStore::new()
   let app = @feather.App::new()
     .use(@feather.middleware_session(store))
@@ -214,13 +227,15 @@ test "agent probe lazy session direct id" {
     headers: Map([]),
     body: "",
   })
-  println(
-    "lazy direct id body=\{response.body} cookies=\{response.cookies.length()}",
-  )
+  // Read-only session access neither assigns the id nor sends a cookie:
+  // the raw `session.id` field stays empty until `session_id` or a write
+  // triggers lazy generation, and cookie-free requests stay cookie-free.
+  assert_eq(response.body, "[]")
+  assert_eq(response.cookies.length(), 0)
 }
 
 ///|
-test "agent probe regenerate id timing" {
+test "regenerate handler reads the old id while the cookie rotates" {
   let store = @feather.SessionStore::new()
   let app = @feather.App::new()
     .use(@feather.middleware_session(store))
@@ -245,13 +260,16 @@ test "agent probe regenerate id timing" {
     headers: Map([("Cookie", "feather_session=" + old_id)]),
     body: "",
   })
-  println(
-    "regen body=\{regen.body} cookie=\{regen.cookies[0].value} old=\{old_id}",
-  )
+  // `session_regenerate` only flags the rotation; the id visible inside the
+  // handler stays the old one and the response cookie carries the new one.
+  assert_true(regen.body == old_id)
+  let new_id = regen.cookies[0].value
+  assert_true(new_id != old_id)
+  assert_eq(new_id.length(), 32)
 }
 
 ///|
-test "agent probe eviction with expired sessions" {
+test "store save sweeps expired sessions and keeps live ones" {
   let store = @feather.SessionStore::new(ttl=3_600_000L)
   let live = store.create()
   store.save(live)
@@ -266,9 +284,9 @@ test "agent probe eviction with expired sessions" {
   }
   let fresh = store.create()
   store.save(fresh)
-  let live_present = store.get(live.id) is Some(_)
-  let fresh_present = store.get(fresh.id) is Some(_)
-  println(
-    "eviction live_present=\{live_present} fresh_present=\{fresh_present} count_before_get=\{store.count()}",
-  )
+  // Hitting the cap with expired sessions present sweeps them instead of
+  // evicting a live one, so both the first and the newest session survive.
+  assert_true(store.get(live.id) is Some(_))
+  assert_true(store.get(fresh.id) is Some(_))
+  assert_eq(store.count(), 2)
 }

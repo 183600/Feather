@@ -175,7 +175,7 @@ pub async fn Sse::send(
 
 ///|
 /// Send one event whose data is the JSON encoding of `value`, for streaming
-/// typed payloads (`Sse::send_json(event="tick", value)`). Field arguments
+/// typed payloads (`Sse::send_json(value, event="tick")`). Field arguments
 /// behave exactly as in `Sse::send`.
 pub async fn[T : @json.ToJson] Sse::send_json(
   self : Sse,

@@ -83,13 +83,14 @@ WebSocket, SSE, and streaming lives in
 ```moonbit
 let app = @feather.App::new()
   .get("/users/:id", fn(ctx) {
-    let id = ctx.param_int("id")
-    ctx.json(200, { "id": id })
+    let id = ctx.param_int("id").unwrap_or(-1)
+    ctx.json(200, { "id": id.to_string() })
   })
   .get("/files/*path", fn(ctx) {
     ctx.text(200, ctx.param("path"))
   })
 
+// `group` returns a `RouteGroup` (it does not chain back to `App`):
 let api = app.group("/api")
 ignore(api.get("/health", fn(ctx) { ctx.json(200, { "ok": "true" }) }))
 ```
@@ -173,6 +174,10 @@ let app = @feather.App::new()
   )
 ```
 
+`static_files_with` additionally takes the route middlewares as its fourth
+positional argument (`[]` for none); both accept the same optional `index` /
+`max_age` / `precompressed` / `cache_control` flags.
+
 Directory traversal outside the mounted root is rejected.
 
 ## SSE, streaming, and WebSocket
@@ -213,13 +218,17 @@ app.serve(@socket.Addr::parse("0.0.0.0:8080"))
 app.serve_graceful_until(addr, stop=async fn { /* resolve on SIGTERM */ })
 ```
 
+The default body-size limit is deliberately tiny (`DEFAULT_MAX_BODY_SIZE` is
+1000 bytes; larger bodies are rejected with `413`), so real applications
+should raise it with `max_body_size` as shown above.
+
 ## Package layout
 
 The project currently uses a single MoonBit package at the repository root.
 Large features are split by file (`feather.mbt`, `server.mbt`, `sse.mbt`,
 `stream.mbt`, `compress.mbt`, `session.mbt`, `csrf.mbt`, …) and tests live next
-to the code as `*_test.mbt` / `*_wbtest.mbt`. See [PLAN.md](PLAN.md) for the
-proposed multi-package layout.
+to the code as `*_test.mbt` / `*_wbtest.mbt`. [PLAN.md](PLAN.md) is the
+original design note; the implementation has since grown well beyond it.
 
 ## Development
 

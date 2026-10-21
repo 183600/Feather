@@ -5247,25 +5247,6 @@ pub extend MultipartPart with Show::{output, to_string}
 pub extend MultipartPart with Debug::{to_repr}
 
 ///|
-fn find_view_from(
-  haystack : StringView,
-  needle : StringView,
-  start : Int32,
-) -> Int32? {
-  let length = needle.length()
-  if length == 0 {
-    return Some(start)
-  }
-  if start > haystack.length() - length {
-    return None
-  }
-  match haystack[start:].find(needle) {
-    Some(offset) => Some(start + offset)
-    None => None
-  }
-}
-
-///|
 /// First index at or after `start` where a part header block ends with a blank
 /// line, using either CRLF or bare LF line endings: the earliest position of
 /// `\r\n\r\n` or `\n\n`.
