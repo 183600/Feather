@@ -1642,7 +1642,15 @@ pub fn error_response_with_payload(
       for key, value in extra {
         body.set(key, value)
       }
-    _ => body.set("detail", payload)
+    _ =>
+      // RFC 7807 requires `detail` to be a string. In problem mode it already
+      // carries the error message, so keep non-object payloads in an extension
+      // member instead of replacing it with arbitrary JSON.
+      if problem {
+        body.set("payload", payload)
+      } else {
+        body.set("detail", payload)
+      }
   }
   ctx.response.status = status
   clear_replaced_body_headers(ctx.response.headers)

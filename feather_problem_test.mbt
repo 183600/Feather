@@ -231,6 +231,20 @@ test "fail_with extends the problem document with payload members" {
 }
 
 ///|
+test "fail_with keeps a string detail for non-object problem payloads" {
+  let app = @feather.App::new().get("/dupe", fn(ctx) raise {
+    ctx.fail_with(409, "resource exists", Json::number(42.0))
+  })
+  let response = app.respond(problem_request("/dupe", "GET", true))
+  assert_eq(response.status, 409)
+  assert_eq(
+    json_field(response.body, "detail"),
+    Some(Json::string("resource exists")),
+  )
+  assert_eq(json_field(response.body, "payload"), Some(Json::number(42.0)))
+}
+
+///|
 test "problem writes problem details directly from a handler" {
   let app = @feather.App::new().get("/gone", fn(ctx) {
     ctx.problem(
