@@ -82,3 +82,68 @@ async test "server body_bytes sees through a gzip encoded binary body" {
     assert_eq(client.read_all().text(), "equal")
   })
 }
+
+///|
+/// Build a multipart body from a raw byte payload (binary parts included).
+fn binary_multipart_body(payload : Bytes) -> Bytes {
+  let head = @utf8.encode(
+    "--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n",
+  )
+  let tail = @utf8.encode("\r\n--B--\r\n")
+  let out = @buffer.Buffer::Buffer(
+    size_hint=head.length() + payload.length() + tail.length(),
+  )
+  out.write_bytes(head)
+  out.write_bytes(payload)
+  out.write_bytes(tail)
+  out.to_bytes()
+}
+
+///|
+async test "server exposes exact bytes of a binary multipart upload" {
+  let payload : Bytes = b"\x00\xff\xfe\x80header\x7f\xffPNG"
+  let app = @feather.App::new().post("/upload", fn(ctx) {
+    let file = ctx.multipart_file("file").unwrap()
+    ctx.text(200, if file.data_bytes == payload { "exact" } else { "lossy" })
+  })
+  with_server(app, client => {
+    let response = client.post(
+      "/upload",
+      binary_multipart_body(payload),
+      extra_headers=Map([
+        (
+          @http.CaseInsensitiveString("Content-Type"),
+          "multipart/form-data; boundary=B",
+        ),
+      ]),
+    )
+    assert_eq(response.code, 200)
+    assert_eq(client.read_all().text(), "exact")
+  })
+}
+
+///|
+async test "server keeps data_bytes aligned with data for text parts" {
+  let payload : Bytes = @utf8.encode("héllo 世界")
+  let app = @feather.App::new().post("/upload", fn(ctx) {
+    let file = ctx.multipart_file("file").unwrap()
+    ctx.text(
+      200,
+      "\{file.data_bytes == @utf8.encode(file.data)}:\{file.data == "héllo 世界"}",
+    )
+  })
+  with_server(app, client => {
+    let response = client.post(
+      "/upload",
+      binary_multipart_body(payload),
+      extra_headers=Map([
+        (
+          @http.CaseInsensitiveString("Content-Type"),
+          "multipart/form-data; boundary=B",
+        ),
+      ]),
+    )
+    assert_eq(response.code, 200)
+    assert_eq(client.read_all().text(), "true:true")
+  })
+}

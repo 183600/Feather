@@ -397,6 +397,7 @@ pub(all) struct MultipartPart {
   content_type : String
   headers : Map[String, String]
   data : String
+  data_bytes : Bytes
 }
 pub fn MultipartPart::equal(Self, Self) -> Bool
 pub fn MultipartPart::not_equal(Self, Self) -> Bool

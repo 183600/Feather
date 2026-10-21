@@ -2718,6 +2718,7 @@ fn copy_multipart_part(part : MultipartPart) -> MultipartPart {
     content_type: part.content_type,
     headers: part.headers.copy(),
     data: part.data,
+    data_bytes: part.data_bytes,
   }
 }
 
@@ -2748,6 +2749,7 @@ fn clone_multipart_parts(parts : Array[MultipartPart]) -> Array[MultipartPart] {
 fn multipart_parts_lookup(
   body : String,
   content_type : String,
+  raw_body~ : String? = None,
 ) -> Array[MultipartPart]? {
   match last_multipart_body.val {
     Some(cached_body) =>
@@ -2761,7 +2763,7 @@ fn multipart_parts_lookup(
       }
     None => ()
   }
-  let parsed = parse_multipart_uncached(body, content_type)
+  let parsed = parse_multipart_uncached(body, content_type, raw_body~)
   match parsed {
     Some(parts) =>
       if body.length() <= PARSE_CACHE_MAX_KEY {
@@ -4809,6 +4811,148 @@ pub(all) struct MultipartPart {
   content_type : String
   headers : Map[String, String]
   data : String
+  /// The part's payload as bytes, exactly as it arrived. `data` is the lossy
+  /// text view of the same bytes.
+  data_bytes : Bytes
+}
+
+///|
+/// Decode bytes without losing any information.
+///
+/// Well-formed UTF-8 becomes the text it encodes. A byte that is not part of a
+/// valid sequence is mapped to the private code unit `0xDC00 + byte`, the same
+/// escaping `WTF-8` uses, which `encode_utf8_lossless` turns back into that
+/// byte. Unlike the standard decoders the result may therefore hold lone
+/// surrogates, so it must only be re-encoded with the matching encoder.
+fn decode_utf8_lossless(bytes : Bytes) -> String {
+  let result = StringBuilder()
+  let length = bytes.length()
+  let mut i = 0
+  while i < length {
+    let b0 = bytes[i].to_int()
+    if b0 < 0x80 {
+      result.write_char(b0.unsafe_to_char())
+      i = i + 1
+    } else if b0 >= 0xC2 && b0 <= 0xDF {
+      if i + 1 < length {
+        let b1 = bytes[i + 1].to_int()
+        if b1 >= 0x80 && b1 <= 0xBF {
+          let code = ((b0 & 0x1F) << 6) | (b1 & 0x3F)
+          result.write_char(code.unsafe_to_char())
+          i = i + 2
+        } else {
+          result.write_char((0xDC00 + b0).unsafe_to_char())
+          i = i + 1
+        }
+      } else {
+        result.write_char((0xDC00 + b0).unsafe_to_char())
+        i = i + 1
+      }
+    } else if b0 >= 0xE0 && b0 <= 0xEF &&
+      i + 2 < length &&
+      bytes[i + 1].to_int() >= 0x80 &&
+      bytes[i + 1].to_int() <= 0xBF &&
+      bytes[i + 2].to_int() >= 0x80 &&
+      bytes[i + 2].to_int() <= 0xBF {
+      let b1 = bytes[i + 1].to_int()
+      let b2 = bytes[i + 2].to_int()
+      let code = ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F)
+      result.write_char(code.unsafe_to_char())
+      i = i + 3
+    } else if b0 >= 0xF0 && b0 <= 0xF4 &&
+      i + 3 < length &&
+      bytes[i + 1].to_int() >= 0x80 &&
+      bytes[i + 1].to_int() <= 0xBF &&
+      bytes[i + 2].to_int() >= 0x80 &&
+      bytes[i + 2].to_int() <= 0xBF &&
+      bytes[i + 3].to_int() >= 0x80 &&
+      bytes[i + 3].to_int() <= 0xBF {
+      let b1 = bytes[i + 1].to_int()
+      let b2 = bytes[i + 2].to_int()
+      let b3 = bytes[i + 3].to_int()
+      let code = ((b0 & 0x07) << 18) |
+        ((b1 & 0x3F) << 12) |
+        ((b2 & 0x3F) << 6) |
+        (b3 & 0x3F)
+      let code = code - 0x10000
+      result.write_char((((code >> 10) + 0xD800)).unsafe_to_char())
+      result.write_char(((code & 0x3FF) + 0xDC00).unsafe_to_char())
+      i = i + 4
+    } else {
+      result.write_char((0xDC00 + b0).unsafe_to_char())
+      i = i + 1
+    }
+  }
+  result.to_string()
+}
+
+///|
+/// Recover a part's exact bytes and its well-formed text.
+///
+/// `raw_data` is the lossless slice from the raw body (supplementary code
+/// units intact, invalid bytes escaped), so `data_bytes` returns the payload
+/// byte for byte while `data` is the lossy text handlers already expect. A
+/// part parsed from `Request::body` (no raw body available) falls back to
+/// re-encoding its text.
+/// Preserve a part's exact bytes together with its well-formed text.
+///
+/// `raw_data` is the lossless slice from the raw body (supplementary code
+/// units intact, invalid bytes escaped), so the bytes come back byte for byte
+/// while the text is the lossy view handlers already expect. A part parsed
+/// without a raw body falls back to re-encoding its text.
+fn resolve_part_bytes(
+  data : String,
+  raw_data : String?,
+) -> (Bytes, String) {
+  match raw_data {
+    Some(raw) => {
+      let bytes = encode_utf8_lossless(raw)
+      (bytes, @utf8.decode_lossy(bytes))
+    }
+    None => (@utf8.encode(data), data)
+  }
+}
+
+///
+/// A high surrogate followed by a low surrogate is a supplementary character;
+/// any other code unit in `0xDC00..=0xDCFF` stands for the single byte
+/// `code - 0xDC00`. Valid text that contains no such escape encodes to its
+/// normal UTF-8 bytes.
+fn encode_utf8_lossless(text : String) -> Bytes {
+  let out : Array[Byte] = Array(capacity=text.length())
+  let length = text.length()
+  let mut i = 0
+  while i < length {
+    let code = text.unsafe_get(i).to_int()
+    if code >= 0xD800 && code <= 0xDBFF &&
+      i + 1 < length &&
+      text.unsafe_get(i + 1).to_int() >= 0xDC00 &&
+      text.unsafe_get(i + 1).to_int() <= 0xDFFF {
+      let low = text.unsafe_get(i + 1).to_int()
+      let full = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+      out.push(((full >> 18) | 0xF0).to_byte())
+      out.push((((full >> 12) & 0x3F) | 0x80).to_byte())
+      out.push((((full >> 6) & 0x3F) | 0x80).to_byte())
+      out.push(((full & 0x3F) | 0x80).to_byte())
+      i = i + 2
+    } else if code >= 0xDC00 && code <= 0xDCFF {
+      out.push((code - 0xDC00).to_byte())
+      i = i + 1
+    } else if code < 0x80 {
+      out.push(code.to_byte())
+      i = i + 1
+    } else if code < 0x800 {
+      out.push(((code >> 6) | 0xC0).to_byte())
+      out.push(((code & 0x3F) | 0x80).to_byte())
+      i = i + 1
+    } else {
+      out.push(((code >> 12) | 0xE0).to_byte())
+      out.push((((code >> 6) & 0x3F) | 0x80).to_byte())
+      out.push(((code & 0x3F) | 0x80).to_byte())
+      i = i + 1
+    }
+  }
+  Bytes::from_array(out)
 }
 
 ///|
@@ -5576,7 +5720,10 @@ pub fn parse_multipart(
       }
     None => ()
   }
-  let parsed = parse_multipart_uncached(body, content_type)
+  let parsed = parse_multipart_uncached(
+    body,
+    content_type,
+  )
   if body.length() <= PARSE_CACHE_MAX_KEY {
     last_parsed_multipart_body.val = Some(body)
     last_parsed_multipart_content_type.val = Some(content_type)
@@ -5593,6 +5740,7 @@ pub fn parse_multipart(
 fn parse_multipart_uncached(
   body : String,
   content_type : String,
+  raw_body~ : String? = None,
 ) -> Array[MultipartPart]? {
   let boundary = match multipart_boundary(content_type) {
     Some(boundary) if boundary != "" => boundary
@@ -5609,13 +5757,22 @@ fn parse_multipart_uncached(
   let delimiter_table = delimiters.delimiter_table
   let crlf_delimiter_table = delimiters.crlf_delimiter_table
   let lf_delimiter_table = delimiters.lf_delimiter_table
-  let view = body.view()
+  // With a raw body available the parse runs over its lossless text, where
+  // every received byte is still represented (supplementary characters intact,
+  // invalid bytes escaped); the resulting slices can then be encoded back to
+  // the exact payload. Without one the parse only sees well-formed text.
+  let lossless = raw_body is Some(_)
+  let source = match raw_body {
+    Some(raw) => raw
+    None => body
+  }
+  let view = source.view()
   let mut pos = match
     find_terminated_delimiter(view, delimiter_view, delimiter_table, 0) {
     Some(index) => index + delimiter_length
     None => return Some([])
   }
-  let estimate = body.length() / (crlf_delimiter.length() + 8)
+  let estimate = source.length() / (crlf_delimiter.length() + 8)
   let parts : Array[MultipartPart] = Array(
     capacity=if estimate > 64 { 64 } else { estimate + 1 },
   )
@@ -5689,12 +5846,18 @@ fn parse_multipart_uncached(
     } else {
       get_header_ignore_case(headers, "Content-Type").unwrap_or("")
     }
+    let part_data = data.to_owned()
+    let (data_bytes, data_text) = resolve_part_bytes(
+      part_data,
+      if lossless { Some(part_data) } else { None },
+    )
     parts.push({
       name,
       filename,
       content_type: part_content_type,
       headers,
-      data: data.to_owned(),
+      data: data_text,
+      data_bytes,
     })
     pos = skip_line_break(view, data_end) + delimiter_length
   }
@@ -5709,7 +5872,18 @@ fn Context::multipart_entries(self : Context) -> Array[MultipartPart]? {
   if parsed_content_type(header) != "multipart/form-data" {
     return None
   }
-  multipart_parts_lookup(self.request.body, header)
+  // A binary body was preserved verbatim, so parse its lossless text and let
+  // each part recover its exact bytes; otherwise the well-formed body is used
+  // directly.
+  let raw_body = match self.state.get(RAW_BODY_STATE_KEY) {
+    Some(encoded) =>
+      match base64_decode(encoded) {
+        Some(bytes) => Some(decode_utf8_lossless(bytes))
+        None => None
+      }
+    None => None
+  }
+  multipart_parts_lookup(self.request.body, header, raw_body~)
 }
 
 ///|
