@@ -517,6 +517,11 @@ pub fn verify_signed_cookie_token(
     Some(value) => value
     None => return None
   }
+  // The MAC only covers the canonical decimal expiry, so any other spelling of
+  // the same deadline (leading zeros, ...) would otherwise verify.
+  if deadline.to_string().view() != expiry_view {
+    return None
+  }
   if deadline > 0L {
     let current = match now {
       Some(value) => value
@@ -531,6 +536,12 @@ pub fn verify_signed_cookie_token(
     None => return None
   }
   if signature.length() != 32 {
+    return None
+  }
+  // The decoder tolerates padding, `+`/`/` aliases, and non-zero trailing
+  // bits, each of which would yield a different token text for the same MAC.
+  // Require the canonical unpadded URL-safe spelling.
+  if base64url_encode(signature).view() != signature_view {
     return None
   }
   let expected = hmac_sha256(

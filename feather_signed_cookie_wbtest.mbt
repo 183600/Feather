@@ -190,3 +190,36 @@ test "parse_decimal_int64 accepts only canonical digit runs" {
   assert_eq(parse_decimal_int64("1 "), None)
   assert_eq(parse_decimal_int64("12345678901234567890123"), None)
 }
+
+///|
+test "signed cookie verification rejects non-canonical token text" {
+  let token = signed_cookie_token("s3cret", "user", "alice", expires_at=5_000L)
+  let first_dot = token.find(".").unwrap()
+  let rest = token[first_dot + 1:]
+  let second_dot = rest.find(".").unwrap()
+  let encoded_value = token[:first_dot].to_owned()
+  let expiry = rest[:second_dot].to_owned()
+  let signature_text = rest[second_dot + 1:].to_owned()
+  assert_eq(expiry, "5000")
+  let forged = encoded_value + ".0" + expiry + "." + signature_text
+  assert_eq(verify_signed_cookie_token("s3cret", "user", forged, now=1L), None)
+  let signature = base64url_decode(signature_text).unwrap()
+  assert_eq(signature.length(), 32)
+  let canonical = base64url_encode(signature)
+  assert_eq(canonical, signature_text)
+  let last = canonical.view().unsafe_get(canonical.length() - 1).to_int()
+  let rotated = canonical[:canonical.length() - 1].to_owned() +
+    ((last + 1).unsafe_to_char()).to_string()
+  let forged_sig =
+    encoded_value + "." + expiry + "." + rotated
+  assert_eq(
+    verify_signed_cookie_token("s3cret", "user", forged_sig, now=1L),
+    None,
+  )
+  let padded = encoded_value + "." + expiry + "." + signature_text + "=="
+  assert_eq(verify_signed_cookie_token("s3cret", "user", padded, now=1L), None)
+  assert_eq(
+    verify_signed_cookie_token("s3cret", "user", token, now=1L),
+    Some("alice"),
+  )
+}

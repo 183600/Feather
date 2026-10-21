@@ -325,7 +325,9 @@ pub fn Context::flash_peek(
       match session.flash_pending {
         Some(pending) =>
           match pending.get(category) {
-            Some(messages) => messages
+            // Copy: callers must not be able to mutate the queued messages
+            // (or bypass the flash byte accounting) through a peek.
+            Some(messages) => messages.copy()
             None => self.flash_messages(FLASH_PREFIX + category)
           }
         None => self.flash_messages(FLASH_PREFIX + category)
