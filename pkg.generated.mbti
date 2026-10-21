@@ -204,8 +204,8 @@ pub fn App::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn App::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Sse) -> Unit) -> Self
 pub fn App::static_cache_control_for(Self, String) -> String
 pub fn App::static_file_for(Self, String) -> String?
-pub fn App::static_files(Self, String, String, index? : String, max_age? : Int32, precompressed? : Bool) -> Self
-pub fn App::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool) -> Self
+pub fn App::static_files(Self, String, String, index? : String, max_age? : Int32, precompressed? : Bool, cache_control? : String) -> Self
+pub fn App::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool, cache_control? : String) -> Self
 pub fn App::stream(Self, String, async (Context, Stream) -> Unit) -> Self
 pub fn App::stream_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Stream) -> Unit) -> Self
 pub fn App::trust_proxy(Self, Int32) -> Self
@@ -386,8 +386,8 @@ pub fn Feather::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn Feather::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Sse) -> Unit) -> Self
 pub fn Feather::static_cache_control_for(Self, String) -> String
 pub fn Feather::static_file_for(Self, String) -> String?
-pub fn Feather::static_files(Self, String, String, index? : String, max_age? : Int32, precompressed? : Bool) -> Self
-pub fn Feather::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool) -> Self
+pub fn Feather::static_files(Self, String, String, index? : String, max_age? : Int32, precompressed? : Bool, cache_control? : String) -> Self
+pub fn Feather::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool, cache_control? : String) -> Self
 pub fn Feather::stream(Self, String, async (Context, Stream) -> Unit) -> Self
 pub fn Feather::stream_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Stream) -> Unit) -> Self
 pub fn Feather::trust_proxy(Self, Int32) -> Self
@@ -490,8 +490,8 @@ pub fn RouteGroup::route_named_with(Self, String, String, String, Array[((Contex
 pub fn RouteGroup::route_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn RouteGroup::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn RouteGroup::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Sse) -> Unit) -> Self
-pub fn RouteGroup::static_files(Self, String, String, index? : String, max_age? : Int32, precompressed? : Bool) -> Self
-pub fn RouteGroup::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool) -> Self
+pub fn RouteGroup::static_files(Self, String, String, index? : String, max_age? : Int32, precompressed? : Bool, cache_control? : String) -> Self
+pub fn RouteGroup::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool, cache_control? : String) -> Self
 pub fn RouteGroup::stream(Self, String, async (Context, Stream) -> Unit) -> Self
 pub fn RouteGroup::stream_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Stream) -> Unit) -> Self
 pub fn RouteGroup::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
@@ -588,6 +588,7 @@ pub(all) struct StaticMount {
   root : String
   index : String
   max_age : Int32
+  cache_control : String
   precompressed : Bool
   middlewares : Array[((Context) -> Unit raise) -> (Context) -> Unit raise]
   mut chain : ((Context) -> Unit raise)?

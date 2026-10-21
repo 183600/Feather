@@ -7427,8 +7427,17 @@ pub fn RouteGroup::static_files(
   index~ : String = "index.html",
   max_age~ : Int32 = 0,
   precompressed~ : Bool = false,
+  cache_control? : String,
 ) -> RouteGroup {
-  self.static_files_with(url_prefix, root, [], index~, max_age~, precompressed~)
+  self.static_files_with(
+    url_prefix,
+    root,
+    [],
+    index~,
+    max_age~,
+    precompressed~,
+    cache_control?,
+  )
 }
 
 ///|
@@ -7442,6 +7451,7 @@ pub fn RouteGroup::static_files_with(
   index~ : String = "index.html",
   max_age~ : Int32 = 0,
   precompressed~ : Bool = false,
+  cache_control? : String,
 ) -> RouteGroup {
   match self.app {
     Some(app) =>
@@ -7453,6 +7463,7 @@ pub fn RouteGroup::static_files_with(
           index~,
           max_age~,
           precompressed~,
+          cache_control?,
         ),
       )
     None => ()
@@ -7485,6 +7496,7 @@ pub(all) struct StaticMount {
   root : String
   index : String
   max_age : Int32
+  cache_control : String
   precompressed : Bool
   middlewares : Array[Middleware]
   mut chain : Handler?
@@ -8125,6 +8137,10 @@ fn clean_relative_path(relative : String) -> String? {
 /// When `precompressed` is enabled, a sibling `<file>.gz` is served instead of
 /// the file itself to clients that accept the `gzip` coding. Responses carry
 /// `Vary: Accept-Encoding` so shared caches keep the variants apart.
+///
+/// `cache_control` sets the exact `Cache-Control` field value and takes
+/// precedence over the policy derived from `max_age`; an empty value suppresses
+/// the header.
 pub fn App::static_files(
   self : App,
   url_prefix : String,
@@ -8132,8 +8148,17 @@ pub fn App::static_files(
   index~ : String = "index.html",
   max_age~ : Int32 = 0,
   precompressed~ : Bool = false,
+  cache_control? : String,
 ) -> App {
-  self.static_files_with(url_prefix, root, [], index~, max_age~, precompressed~)
+  self.static_files_with(
+    url_prefix,
+    root,
+    [],
+    index~,
+    max_age~,
+    precompressed~,
+    cache_control?,
+  )
 }
 
 ///|
@@ -8154,16 +8179,27 @@ pub fn App::static_files_with(
   index~ : String = "index.html",
   max_age~ : Int32 = 0,
   precompressed~ : Bool = false,
+  cache_control? : String,
 ) -> App {
   let mut clean_root = root
   while clean_root.length() > 1 && clean_root.has_suffix("/") {
     clean_root = clean_root[:clean_root.length() - 1].to_owned()
+  }
+  let resolved_cache_control = match cache_control {
+    Some(value) => value
+    None =>
+      if max_age > 0 {
+        "public, max-age=" + max_age.to_string()
+      } else {
+        ""
+      }
   }
   self.static_mounts.push({
     url_prefix: normalize_prefix(url_prefix),
     root: clean_root,
     index,
     max_age,
+    cache_control: resolved_cache_control,
     precompressed,
     middlewares: middlewares.copy(),
     chain: None,
@@ -8309,6 +8345,7 @@ pub fn App::mount_with(
       root: mount.root,
       index: mount.index,
       max_age: mount.max_age,
+      cache_control: mount.cache_control,
       precompressed: mount.precompressed,
       middlewares: mounted_static_middlewares(
         outer,
@@ -8556,12 +8593,7 @@ fn static_lookup_uncached(
   } else {
     join_fs_path(mount.root, clean)
   }
-  let cache_control = if mount.max_age > 0 {
-    "public, max-age=" + mount.max_age.to_string()
-  } else {
-    ""
-  }
-  Some((file_path, cache_control, mount.precompressed, mount))
+  Some((file_path, mount.cache_control, mount.precompressed, mount))
 }
 
 ///|
@@ -9591,9 +9623,17 @@ pub fn Feather::static_files(
   index~ : String = "index.html",
   max_age~ : Int32 = 0,
   precompressed~ : Bool = false,
+  cache_control? : String,
 ) -> Feather {
   ignore(
-    self.app.static_files(url_prefix, root, index~, max_age~, precompressed~),
+    self.app.static_files(
+      url_prefix,
+      root,
+      index~,
+      max_age~,
+      precompressed~,
+      cache_control?,
+    ),
   )
   self
 }
@@ -9607,6 +9647,7 @@ pub fn Feather::static_files_with(
   index~ : String = "index.html",
   max_age~ : Int32 = 0,
   precompressed~ : Bool = false,
+  cache_control? : String,
 ) -> Feather {
   ignore(
     self.app.static_files_with(
@@ -9616,6 +9657,7 @@ pub fn Feather::static_files_with(
       index~,
       max_age~,
       precompressed~,
+      cache_control?,
     ),
   )
   self

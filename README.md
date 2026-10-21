@@ -164,10 +164,10 @@ one.
 ```moonbit
 let app = @feather.App::new()
   .static_files("/assets", "public")
-  .static_files_with(
+  .static_files(
     "/downloads",
     "files",
-    cache_control="public, max-age=3600",
+    cache_control="public, max-age=3600, immutable",
     index="index.html",
   )
 ```
