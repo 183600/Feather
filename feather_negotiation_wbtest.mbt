@@ -63,3 +63,28 @@ test "accept negotiation keeps the best quality among equally specific ranges" {
     700,
   )
 }
+
+///|
+test "accept language keeps the best quality among equally specific ranges" {
+  assert_eq(
+    language_quality_from(
+      parse_language_entries("en;q=0.2, en;q=0.9".view()),
+      "en".view(),
+    ),
+    900,
+  )
+  assert_eq(
+    language_quality_from(
+      parse_language_entries("en;q=0.9, en;q=0".view()),
+      "en".view(),
+    ),
+    900,
+  )
+  assert_eq(
+    language_quality_from(
+      parse_language_entries("en;q=0.2, en;q=0.7".view()),
+      "en-US".view(),
+    ),
+    700,
+  )
+}

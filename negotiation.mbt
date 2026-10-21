@@ -863,7 +863,11 @@ fn language_quality_from(
     } else {
       -1
     }
-    if specificity >= 0 && specificity > best_specificity {
+    if specificity >= 0 &&
+      (
+        specificity > best_specificity ||
+        (specificity == best_specificity && entry.quality > best_q)
+      ) {
       best_specificity = specificity
       best_q = entry.quality
     }
