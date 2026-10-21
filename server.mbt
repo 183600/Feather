@@ -1442,6 +1442,12 @@ async fn serve_static_file(
 const STATIC_CHAIN_PASS_KEY : String = "__feather_static_pass"
 
 ///|
+/// How long a graceful shutdown keeps serving (answering `503`) after all
+/// in-flight requests have finished, so idle kept-alive connections have a
+/// chance to observe the drain before the server task is cancelled.
+const GRACEFUL_DRAIN_SETTLE_MS : Int = 250
+
+///|
 /// Serve a static mount after running the application middleware chain.
 ///
 /// The chain wraps the static lookup: middleware that short-circuits (for
@@ -1811,6 +1817,15 @@ async fn handle_request(
   body : &@io.Reader,
   conn : @http.ServerConnection,
 ) -> Unit {
+  if app.draining {
+    send_simple(conn, 503, "503 Service Unavailable", request.meth is @http.Head)
+    conn.close()
+    return
+  }
+  app.in_flight.val = app.in_flight.val + 1
+  defer {
+    app.in_flight.val = app.in_flight.val - 1
+  }
   send_continue_if_expected(request, conn)
   let head = request.meth is @http.Head
   if request.meth is @http.Get {
@@ -1976,6 +1991,77 @@ pub async fn App::serve_until(
 }
 
 ///|
+/// Serve `server` until `stop` resolves, then drain in-flight requests.
+///
+/// Unlike [`App::serve_with_until`], which cancels every in-flight request as
+/// soon as `stop` resolves, this variant performs a graceful shutdown:
+///
+/// 1. the listener is closed immediately so no new connections are accepted;
+/// 2. requests that are already being handled are allowed to finish;
+/// 3. requests arriving on kept-alive connections during the drain are
+///    answered with `503 Service Unavailable`;
+/// 4. `drain_timeout` milliseconds after `stop` any request still running is
+///    cancelled and the server returns anyway.
+///
+/// A `drain_timeout` of `0` waits indefinitely for in-flight requests. An
+/// error raised by `stop` propagates once the drain completes.
+pub async fn App::serve_with_graceful_until(
+  self : App,
+  server : @http.Server,
+  stop~ : async () -> Unit,
+  drain_timeout~ : Int = 0,
+  max_connections? : Int32,
+) -> Unit {
+  let app = self
+  @async.with_task_group(group => {
+    let serving : @async.Task[Unit] = group.spawn(no_wait=true, () => {
+      app.serve_with(server, max_connections?)
+    })
+    stop()
+    server.close()
+    app.draining = true
+    let mut timed_out = false
+    if drain_timeout > 0 {
+      let mut waited = 0
+      while app.in_flight.val > 0 && waited < drain_timeout {
+        @async.sleep(10)
+        waited = waited + 10
+      }
+      if app.in_flight.val > 0 {
+        timed_out = true
+        serving.cancel()
+      }
+    }
+    if !timed_out {
+      let mut waited = 0
+      while app.in_flight.val > 0 && waited < 5000 {
+        @async.sleep(10)
+        waited = waited + 10
+      }
+      // Let idle kept-alive connections observe the drain and receive a
+      // `503` for anything they send before the server task is cancelled.
+      @async.sleep(GRACEFUL_DRAIN_SETTLE_MS)
+      serving.cancel()
+    }
+  })
+}
+
+///|
+/// Listen on `addr` until `stop` resolves, then drain in-flight requests.
+pub async fn App::serve_graceful_until(
+  self : App,
+  addr : @socket.Addr,
+  stop~ : async () -> Unit,
+  drain_timeout~ : Int = 0,
+) -> Unit {
+  self.serve_with_graceful_until(
+    @http.Server(addr),
+    stop~,
+    drain_timeout~,
+  )
+}
+
+///|
 pub fn Feather::listen_address(self : Feather) -> String {
   let host = self.config.host
   let needs_brackets = host.contains(":") &&
@@ -2025,4 +2111,32 @@ pub async fn Feather::serve_until(
   stop~ : async () -> Unit,
 ) -> Unit {
   self.app.serve_until(self.resolve_addr(), stop~)
+}
+
+///|
+/// Serve `server` until `stop` resolves, then drain in-flight requests.
+pub async fn Feather::serve_with_graceful_until(
+  self : Feather,
+  server : @http.Server,
+  stop~ : async () -> Unit,
+  drain_timeout~ : Int = 0,
+  max_connections? : Int32,
+) -> Unit {
+  self.app.serve_with_graceful_until(
+    server,
+    stop~,
+    drain_timeout~,
+    max_connections?,
+  )
+}
+
+///|
+/// Listen on the configured address until `stop` resolves, then drain
+/// in-flight requests.
+pub async fn Feather::serve_graceful_until(
+  self : Feather,
+  stop~ : async () -> Unit,
+  drain_timeout~ : Int = 0,
+) -> Unit {
+  self.app.serve_graceful_until(self.resolve_addr(), stop~, drain_timeout~)
 }

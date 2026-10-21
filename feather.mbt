@@ -7053,6 +7053,8 @@ pub struct App {
   static_lookup_cache : Map[String, (String, String, Bool, StaticMount)?]
   static_lookup_negative : Array[String]
   mut static_lookup_negative_head : Int
+  in_flight : Ref[Int]
+  mut draining : Bool
 }
 
 ///|
@@ -7086,6 +7088,8 @@ fn App::fresh(timeout : Int32) -> App {
     static_lookup_cache: Map([]),
     static_lookup_negative: [],
     static_lookup_negative_head: 0,
+    in_flight: Ref(0),
+    draining: false,
   }
 }
 
