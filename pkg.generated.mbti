@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "cto-new/feather"
+package "183600/feather"
 
 import {
   "moonbitlang/async/http",
@@ -186,6 +186,7 @@ pub fn App::resolve_sse(Self, String) -> (async (Context, Sse) -> Unit, Map[Stri
 pub fn App::resolve_stream(Self, String) -> (async (Context, Stream) -> Unit, Map[String, String])?
 pub fn App::resolve_websocket(Self, String) -> (async (Context, @websocket.Conn) -> Unit, Map[String, String])?
 pub fn App::respond(Self, Request) -> Response
+pub async fn App::respond_async(Self, Request) -> Response
 pub fn App::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn App::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
 pub fn App::route_named_with(Self, String, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
@@ -347,6 +348,7 @@ pub fn Feather::get_json_state(Self, String) -> Json?
 pub fn Feather::get_state(Self, String) -> String
 pub fn Feather::group(Self, String) -> RouteGroup
 pub fn Feather::handle(Self, Request) -> Response
+pub async fn Feather::handle_async(Self, Request) -> Response
 pub fn Feather::has_route(Self, String, String) -> Bool
 pub fn Feather::has_sse(Self, String) -> Bool
 pub fn Feather::has_stream(Self, String) -> Bool

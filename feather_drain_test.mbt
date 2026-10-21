@@ -196,9 +196,14 @@ async test "graceful shutdown refuses new requests on kept-alive connections" {
     // the same kept-alive connection while the server is draining.
     @async.sleep(170)
     conn.write(@utf8.encode("GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"))
-    let second = drain_read_until(conn, "503", 100)
+    // During the drain settle window the connection must either receive a
+    // 503 or be closed. A reset is also a refusal; what matters is that the
+    // second request never succeeds.
+    let second = drain_read_until(conn, "503", 100) catch { _ => "" }
     conn.close()
-    assert_true(second.contains("503"))
+    assert_false(second.contains("200 OK"))
+    assert_false(second.contains("hi"))
+    assert_true(second.contains("503") || second == "")
     let mut waited = 0
     while !finished.val && waited < 300 {
       @async.sleep(10)

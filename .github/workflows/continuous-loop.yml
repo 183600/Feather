@@ -109,7 +109,7 @@ jobs:
             ~/.moon
             ~/.mooncakes
             ~/.npm
-          key: ${{ runner.os }}-moonbit-npm-${{ hashFiles('moon.mod', 'moon.mod.json', 'moon.pkg') }}
+          key: ${{ runner.os }}-moonbit-npm-${{ hashFiles('moon.mod', 'moon.pkg') }}
           restore-keys: |
             ${{ runner.os }}-moonbit-npm-
 
@@ -274,11 +274,11 @@ jobs:
           # ================= 五阶段提示词（perf -> bug -> improve -> complete -> clean） =================
           # improve 阶段承接 ada-squash 原 apply 阶段的位置：任务为「改进这个项目」。
           # complete 阶段：确保项目功能完整（核对已声明的功能是否真的可用并补齐）。
-          PROMPT_PERF='优化代码的性能和资源占用，可以改进算法、数据结构、缓存与内存布局，但不得改变对外的功能语义。每次改动后运行 bash moon test 自检，不通过就自己修好。不要输出或写入“优化了哪些内容”的报告。另外，.github 目录是 CI 配置，绝对不要删除、修改或移动其中任何文件；LICENSE、README*.md（含所有语言版本的 README）同样绝对不能删除、修改或移动；PLAN.md 是项目规划文档，不能删除；测试代码不能删除或削弱。每完成一个可验证的改动就立即 git commit（不要 push、不要 amend），避免阶段被超时中断时丢失进度。'
-          PROMPT_BUG='仔细检查代码中是否存在bug，如果有就修改代码。修复必须保持原有功能语义不变，不得借修复之名做无意义的等价重写；不得削弱或删除测试。每次改动后运行 bash moon test 自检，不通过就自己修好。另外，.github 目录是 CI 配置，绝对不要删除、修改或移动其中任何文件；LICENSE、README*.md（含所有语言版本的 README）同样绝对不能删除、修改或移动；PLAN.md 是项目规划文档，不能删除；测试代码不能删除或削弱。每完成一个可验证的改动就立即 git commit（不要 push、不要 amend），避免阶段被超时中断时丢失进度。'
-          PROMPT_IMPROVE='改进这个项目。先通读 README.md、PLAN.md 和现有代码，理解项目目标与当前进度，然后做出实质性的改进：补全缺失的功能、完善核心实现、提升代码质量与可用性，让项目向目标推进。每次改动后运行 bash moon test 自检，不通过就自己修好。不要输出或写入“改进了哪些内容”的报告。另外，.github 目录是 CI 配置，绝对不要删除、修改或移动其中任何文件；LICENSE、README*.md（含所有语言版本的 README）同样绝对不能删除、修改或移动；PLAN.md 是项目规划文档，不能删除；测试代码不能删除或削弱。每完成一个可验证的改动就立即 git commit（不要 push、不要 amend），避免阶段被超时中断时丢失进度。'
+          PROMPT_PERF='优化 Feather（MoonBit Gin/Express 风格 Web 框架）的性能和资源占用，可以改进路由匹配、头部处理、分配与缓存局部性，但不得改变对外功能语义。先读 README.md、PLAN.md 和现有实现；项目已实现核心与 HTTP 服务器，不要重写已存在的功能。每次改动后运行 ./moon check 与 ./moon test 自检，不通过就自己修好；涉及 server/async 时再跑 ./moon check --target native。禁止提交 zz_/tmp_/scratch/dbg 前缀的临时测试或探针文件，临时脚本写到 /tmp；测试文件名必须描述行为。不要输出或写入“优化了哪些内容”的报告。.github、LICENSE、README*.md、PLAN.md 与所有测试文件不得删除或削弱。'
+          PROMPT_BUG='仔细检查 Feather（MoonBit Web 框架）的代码中是否存在 bug，如果有就修改代码。修复必须保持原有功能语义不变，不得借修复之名做无意义的等价重写；不得削弱或删除测试。先读 README.md、PLAN.md 与相关源码，并针对修复补一个回归测试。每次改动后运行 ./moon check 与 ./moon test 自检，不通过就自己修好；涉及 server/async 时再跑 ./moon check --target native。禁止提交 zz_/tmp_/scratch/dbg 前缀的临时测试或探针文件，临时脚本写到 /tmp。.github、LICENSE、README*.md、PLAN.md 与所有既有测试不得删除或削弱。'
+          PROMPT_IMPROVE='改进 Feather（MoonBit Gin/Express 风格 Web 框架）。先通读 README.md、PLAN.md 和现有代码，理解已实现能力与剩余缺口，然后做实质性增量改进：补全缺失的边界路径、完善中间件/上下文能力、提升测试覆盖或可用性。不要重写已经可用的大块功能，也不要把 README 改回“只有计划”的占位稿。每次改动后运行 ./moon check 与 ./moon test 自检，不通过就自己修好；涉及 server/async 时再跑 ./moon check --target native；新增功能必须带测试。禁止提交 zz_/tmp_/scratch/dbg 前缀的临时测试或探针文件，临时脚本写到 /tmp。.github、LICENSE、README*.md、PLAN.md 与所有测试文件不得删除或削弱。每完成一个可验证的改动就立即 git commit（不要 push、不要 amend）。'
           PROMPT_CLEAN='确保远程仓库里没有实验结果文件、REPORT*.md、临时调试脚本与调试输出等杂物；确保仓库中没有任何关于修复了哪些bug、优化或改进了哪些内容的记录（包括注释）。删除所有其他多余的内容。注意：.github 目录是 CI 配置，必须原样保留，绝对不能删除、修改或移动其中任何文件，它不属于“多余的内容”；LICENSE 是开源许可证文件，同样必须原样保留，也不属于“多余的内容”；README*.md（含所有语言版本的 README）是项目说明文档，同样必须原样保留，不能删除或移动；PLAN.md 是项目规划文档，不能删除；测试代码不能删除或削弱；仍被项目引用的数据文件不属于“多余的内容”，必须保留。'
-          PROMPT_COMPLETE='确保项目功能完整。先通读 README.md、PLAN.md 与现有代码，逐项核对项目声明的功能是否真的完整可用：补齐未实现或只做了一半的路径，修好跑不通的入口，让核心功能端到端可用。每次改动后运行 bash moon test 自检，不通过就自己修好。不要输出或写入“补齐了哪些内容”的报告。另外，.github 目录是 CI 配置，绝对不要删除、修改或移动其中任何文件；LICENSE、README*.md（含所有语言版本的 README）同样绝对不能删除、修改或移动；PLAN.md 是项目规划文档，不能删除；测试代码不能删除或削弱。每完成一个可验证的改动就立即 git commit（不要 push、不要 amend），避免阶段被超时中断时丢失进度。'
+          PROMPT_COMPLETE='确保 Feather（MoonBit Web 框架）的功能完整。先通读 README.md、PLAN.md 与现有代码，逐项核对 README 声明的功能是否真的完整可用：补齐未实现或只做了一半的路径，修好跑不通的入口，让核心功能端到端可用。不要重做已经可用的实现。每次改动后运行 ./moon check 与 ./moon test 自检，不通过就自己修好；涉及 server/async 时再跑 ./moon check --target native。禁止提交 zz_/tmp_/scratch/dbg 前缀的临时测试或探针文件，临时脚本写到 /tmp。.github、LICENSE、README*.md、PLAN.md 与所有测试文件不得删除或削弱。每完成一个可验证的改动就立即 git commit（不要 push、不要 amend）。'
 
           # 每阶段单次调用的最大时长（秒）
           PERF_TIMEOUT=$((3*3600))     # 3h
@@ -551,6 +551,12 @@ jobs:
                 echo "[warn] $f 缺失且找不到可恢复的历史版本"
               fi
             done
+            if [ -f README.md ] && grep -q 'currently contains the design/implementation plan' README.md; then
+              if git show "HEAD:README.md" > /tmp/readme_restore3.md 2>/dev/null && [ -s /tmp/readme_restore3.md ]; then
+                mv /tmp/readme_restore3.md README.md
+                echo "[guard] README 退化成计划稿，已从 HEAD 恢复"
+              fi
+            fi
           }
           ensure_readme
 
@@ -579,7 +585,7 @@ jobs:
           # 门禁按仓库语言适配（编译/测试必须通过）；不通过则整段撤销。
           gate_check() {
             echo "=========== GATE CHECK ==========="
-            bash moon test 2>&1 && python3 -c "import json; json.load(open('moon.mod.json'))" 2>&1
+            bash moon test 2>&1
             local EC=$?
             if [ $EC -eq 0 ]; then
               echo "[gate] PASS"
@@ -615,12 +621,22 @@ jobs:
             return 0
           }
 
+          remove_scratch_files() {
+            # Agent sessions sometimes leave throwaway probes behind. They are
+            # never part of the framework; remove them before every commit.
+            find . -path ./.git -prune -o -type f \
+              \( -name 'zz_*.mbt' -o -name 'tmp_*.mbt' -o -name '_scratch_*.mbt' \
+                 -o -name 'dbg_*.mbt' -o -name '*_probe_*.mbt' -o -name 'probe_*.mbt' \) \
+              -print -delete 2>/dev/null || true
+          }
+
           commit_and_push() {
             ensure_workflow
             ensure_license
             ensure_readme
             ensure_plan
             ensure_tests
+            remove_scratch_files
             rm -f .opencode_issues.md
             git add -A || true
             git commit -m "auto: iteration $1$(model_tag)" || true
@@ -645,6 +661,7 @@ jobs:
               exit 0
             fi
             [ "$SYNTAX_EC" -eq 124 ] && echo "[trap] 语法检查超时（结果未知），保留未提交改动"
+            remove_scratch_files
             rm -f .opencode_issues.md
             git add -A || true
             if ! git diff --cached --quiet; then
@@ -1088,7 +1105,7 @@ jobs:
 
           # 质量门禁：收尾状态必须可运行，否则回退到最后一次已验证状态
           gate_final() {
-            bash moon test 2>&1 && python3 -c "import json; json.load(open('moon.mod.json'))" 2>&1
+            bash moon test 2>&1
           }
           if ! gate_final; then
             echo "[gate] 收尾状态未通过，回退到 HEAD"

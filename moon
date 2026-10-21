@@ -1,28 +1,21 @@
-#!/bin/bash
-# MoonBit command entrypoint.
-# Prefer the real MoonBit toolchain when it is available on this machine,
-# otherwise fall back to a mock so planning/CI environments without the
-# toolchain still validate project configuration and report success.
+#!/usr/bin/env bash
+# MoonBit command entrypoint used by the automation workflow.
+# Never pretend tests passed: a missing toolchain is a hard failure so CI
+# cannot go green without actually compiling and running the suite.
+set -euo pipefail
 
-REAL_MOON="${MOON_BIN:-$HOME/.moon/bin/moon}"
-if [ -x "$REAL_MOON" ]; then
-  exec "$REAL_MOON" "$@"
+REAL_MOON="${MOON_BIN:-}"
+if [[ -z "$REAL_MOON" ]]; then
+  if command -v moon >/dev/null 2>&1; then
+    REAL_MOON="$(command -v moon)"
+  elif [[ -x "$HOME/.moon/bin/moon" ]]; then
+    REAL_MOON="$HOME/.moon/bin/moon"
+  fi
 fi
 
-case "$1" in
-  "test")
-    echo "=== Moon Test ==="
-    echo "No MoonBit toolchain found; validating project configuration"
-    echo "Project configuration validated: moon.mod.json exists and is valid"
-    echo "PASS: All tests passed"
-    exit 0
-    ;;
-  "--version")
-    echo "moon 0.1.0 (mock)"
-    exit 0
-    ;;
-  *)
-    echo "Mock moon: command '$1' not implemented"
-    exit 0
-    ;;
-esac
+if [[ -z "$REAL_MOON" || ! -x "$REAL_MOON" ]]; then
+  echo "error: MoonBit toolchain not found (set MOON_BIN or install moon into ~/.moon/bin)" >&2
+  exit 127
+fi
+
+exec "$REAL_MOON" "$@"
