@@ -37,13 +37,32 @@ long-term design notes are in [PLAN.md](PLAN.md).
 
 ## Install
 
-Add the module to your project (or add it manually to `moon.mod`):
+The module is not yet published to the mooncakes registry, so `moon add
+183600/feather` does not work at the moment. Until it is published, consume
+the module from a git checkout through a MoonBit workspace.
 
-```bash
-moon add 183600/feather
+Declare the dependency in your application's `moon.mod` (version must match
+the module's `moon.mod`):
+
+```toml
+import {
+  "183600/feather@0.1.0",
+  "moonbitlang/async@0.22.5",
+}
 ```
 
-Import the package:
+Clone the repository next to your project and register both modules as
+workspace members:
+
+```bash
+git clone https://github.com/183600/Feather.git
+moon work init                # creates moon.work, skip if it exists
+moon work use ./Feather
+moon work use ./path/to/your-app
+```
+
+The workspace member satisfies the versioned import locally, so no registry
+copy is needed. Then import the package:
 
 ```moonbit
 import {
