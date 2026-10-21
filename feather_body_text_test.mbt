@@ -130,3 +130,22 @@ async test "body charset reports the charset of a server request" {
     assert_eq(client.read_all().text(), "iso-8859-1")
   })
 }
+
+///|
+test "body charset falls back to utf-8 for an empty charset parameter" {
+  assert_eq(
+    @feather.Context::new(
+      body_request("hello", Map([("Content-Type", "text/plain; charset=")])),
+    ).body_charset(),
+    "utf-8",
+  )
+  assert_eq(
+    @feather.Context::new(
+      body_request(
+        "hello",
+        Map([("Content-Type", "text/plain; charset=\"  \"")]),
+      ),
+    ).body_charset(),
+    "utf-8",
+  )
+}

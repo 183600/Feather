@@ -38,7 +38,12 @@ pub fn Context::body_charset(self : Context) -> String {
     return "utf-8"
   }
   match header_parameter(content_type.view(), "charset") {
-    Some(charset) => charset
+    Some(charset) =>
+      if trim_ascii_space(charset.view()).is_empty() {
+        "utf-8"
+      } else {
+        charset
+      }
     None => "utf-8"
   }
 }
