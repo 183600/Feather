@@ -645,6 +645,51 @@ async test "file responses drop stale representation and framing headers" {
 }
 
 ///|
+async test "empty static responses drop stale representation headers" {
+  let dir = @fs.tmpdir(prefix="feather-static-empty-headers")
+  @fs.write_file(dir + "/asset.txt", "0123456789")
+  @fs.mkdir(dir + "/guide")
+  @fs.write_file(dir + "/guide/index.html", "<h1>guide</h1>")
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_header("Content-Type", "application/json")
+        ctx.set_header("Content-Range", "bytes 0-1/2")
+        next(ctx)
+      }
+    })
+    .static_files("/assets", dir)
+  with_server(app, client => {
+    let invalid = client.get(
+      "/assets/asset.txt",
+      extra_headers=Map([(@http.CaseInsensitiveString("Range"), "bytes=99-")]),
+    )
+    assert_eq(invalid.code, 416)
+    assert_eq(
+      invalid.headers.get(@http.CaseInsensitiveString("Content-Type")),
+      None,
+    )
+    assert_eq(
+      invalid.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      Some("bytes */10"),
+    )
+    ignore(client.read_all())
+    let redirect = client.get("/assets/guide")
+    assert_eq(redirect.code, 301)
+    assert_eq(
+      redirect.headers.get(@http.CaseInsensitiveString("Content-Type")),
+      None,
+    )
+    assert_eq(
+      redirect.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      None,
+    )
+    ignore(client.read_all())
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
 async test "dynamic precondition failures drop stale content range" {
   let app = @feather.App::new()
     .use(fn(next) {

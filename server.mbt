@@ -597,6 +597,7 @@ async fn send_file_response(
             }
             ByteRangeInvalid => {
               headers.remove(header_content_length)
+              headers.remove(header_content_type)
               headers.set(header_content_range, "bytes */" + size.to_string())
               send_with_date(
                 conn,
@@ -1274,6 +1275,7 @@ async fn serve_static_file(
         handle.close()
         let location = append_trailing_slash(request.path)
         let headers = static_base_headers(extra_headers, cookies, 1)
+        headers.remove(header_content_type)
         headers.set(header_location, location)
         send_with_date(conn, 301, "Moved Permanently", headers, cookies~)
         conn.end_response()
@@ -1378,6 +1380,7 @@ async fn serve_static_file(
   match range {
     ByteRangeInvalid => {
       let headers = static_base_headers(extra_headers, cookies, 2)
+      headers.remove(content_type_key)
       headers.set(content_range_key, "bytes */" + size.to_string())
       headers.set(accept_ranges_key, "bytes")
       decorate_static_headers(headers, precompressed, false)
