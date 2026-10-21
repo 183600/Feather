@@ -1594,6 +1594,7 @@ pub fn Context::set_header(
 pub fn Context::text(self : Context, status : Int32, body : String) -> Unit {
   self.file = None
   self.response.status = status
+  clear_replaced_body_headers(self.response.headers)
   set_header_ignore_case(
     self.response.headers,
     "Content-Type",
@@ -1612,6 +1613,7 @@ pub fn Context::bytes(
 ) -> Unit {
   self.file = None
   self.response.status = status
+  clear_replaced_body_headers(self.response.headers)
   set_header_ignore_case(self.response.headers, "Content-Type", content_type)
   self.response.body = ""
   self.response.data = Some(data)
@@ -1621,6 +1623,7 @@ pub fn Context::bytes(
 pub fn Context::html(self : Context, status : Int32, body : String) -> Unit {
   self.file = None
   self.response.status = status
+  clear_replaced_body_headers(self.response.headers)
   set_header_ignore_case(
     self.response.headers,
     "Content-Type",
@@ -1711,6 +1714,7 @@ fn json_object_text(data : Map[String, String]) -> String {
 pub fn Context::json_value(self : Context, status : Int32, data : Json) -> Unit {
   self.file = None
   self.response.status = status
+  clear_replaced_body_headers(self.response.headers)
   set_header_ignore_case(
     self.response.headers,
     "Content-Type",
@@ -1732,6 +1736,7 @@ pub fn Context::json(
 ) -> Unit {
   self.file = None
   self.response.status = status
+  clear_replaced_body_headers(self.response.headers)
   set_header_ignore_case(
     self.response.headers,
     "Content-Type",
@@ -3112,6 +3117,7 @@ pub fn Context::file(
   self.response.status = status
   self.response.body = ""
   self.response.data = None
+  clear_replaced_body_headers(self.response.headers)
   set_header_ignore_case(self.response.headers, "Content-Type", resolved_type)
   match download_name {
     Some(name) =>
