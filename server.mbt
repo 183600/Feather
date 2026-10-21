@@ -949,6 +949,10 @@ fn run_async_middleware_chain(chain : Handler, ctx : Context) -> Bool {
       error_response_with_payload(ctx, status, message, payload)
       failed = true
     }
+    HttpProblem(status, type_name, title, detail, instance) => {
+      problem_response(ctx, status, type_name, title, detail, instance)
+      failed = true
+    }
     err => {
       internal_error(ctx, "\{err}")
       failed = true
@@ -1522,6 +1526,10 @@ async fn handle_static(
       error_response_with_payload(ctx, status, message, payload)
       failed = true
     }
+    HttpProblem(status, type_name, title, detail, instance) => {
+      problem_response(ctx, status, type_name, title, detail, instance)
+      failed = true
+    }
     err => {
       internal_error(ctx, "\{err}")
       failed = true
@@ -1581,6 +1589,8 @@ async fn build_response(
     HttpError(status, message) => error_response(ctx, status, message)
     HttpErrorPayload(status, message, payload) =>
       error_response_with_payload(ctx, status, message, payload)
+    HttpProblem(status, type_name, title, detail, instance) =>
+      problem_response(ctx, status, type_name, title, detail, instance)
     err => internal_error(ctx, "\{err}")
   }
   let file = ctx.file_response()

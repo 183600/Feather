@@ -352,6 +352,44 @@ pub fn Context::wants_json(self : Context) -> Bool {
 }
 
 ///|
+/// Whether a parsed `Accept` range is exactly `application/problem+json`.
+fn accept_entry_asks_problem(entry : AcceptEntry) -> Bool {
+  entry.range_type.equal_ignore_ascii_case("application".view()) &&
+  entry.range_subtype.equal_ignore_ascii_case("problem+json".view())
+}
+
+///|
+/// Whether the request prefers an RFC 7807 problem-details document over the
+/// framework's default error rendering.
+///
+/// True only when `Accept` lists `application/problem+json` explicitly with a
+/// non-zero quality that is at least as high as every other listed range, so a
+/// generic `*/*` or a plain `application/json` client keeps receiving the
+/// default error body. Error responses consult this to decide between
+/// `application/json` and `application/problem+json`.
+pub fn Context::wants_problem_details(self : Context) -> Bool {
+  let header = self.header("Accept")
+  if trim_ascii_space(header.view()).is_empty() {
+    return false
+  }
+  let mut problem_best = -1
+  let mut other_best = -1
+  for entry in accept_entries_cached(header) {
+    if entry.quality <= 0 {
+      continue
+    }
+    if accept_entry_asks_problem(entry) {
+      if entry.quality > problem_best {
+        problem_best = entry.quality
+      }
+    } else if entry.quality > other_best {
+      other_best = entry.quality
+    }
+  }
+  problem_best > 0 && problem_best >= other_best
+}
+
+///|
 /// Most recent header/offers pair scored by `preferred_type` and its result.
 /// The inputs are copied so later mutations of the caller's array cannot
 /// change a cached result.
