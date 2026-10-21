@@ -598,7 +598,7 @@ async test "static mounts without an index do not redirect directory requests" {
   @fs.write_file(dir + "/app.css", "body { color: red; }")
   let app = @feather.App::new().static_files("/assets", dir, index="")
   with_server(app, client => {
-    for path in ["/assets", "/assets/", "/assets/guide/"] {
+    for path in ["/assets", "/assets/", "/assets/guide", "/assets/guide/"] {
       let response = client.get(path)
       assert_eq(response.code, 404)
       assert_eq(
@@ -610,6 +610,36 @@ async test "static mounts without an index do not redirect directory requests" {
     let response = client.get("/assets/app.css")
     assert_eq(response.code, 200)
     assert_eq(client.read_all().text(), "body { color: red; }")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "static mounts without an index keep middleware headers on directory 404s" {
+  let dir = @fs.tmpdir(prefix="feather-static-no-index-middleware")
+  @fs.mkdir(dir + "/guide")
+  let app = @feather.App::new()
+    .static_files("/assets", dir, index="")
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_header("X-Static-Chain", "yes")
+        next(ctx)
+      }
+    })
+  with_server(app, client => {
+    for path in ["/assets/guide", "/assets/guide/"] {
+      let response = client.get(path)
+      assert_eq(response.code, 404)
+      assert_eq(
+        response.headers.get(@http.CaseInsensitiveString("Location")),
+        None,
+      )
+      assert_eq(
+        response.headers.get(@http.CaseInsensitiveString("X-Static-Chain")),
+        Some("yes"),
+      )
+      ignore(client.read_all())
+    }
   })
   @fs.rmdir(dir, recursive=true)
 }

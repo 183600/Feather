@@ -1257,6 +1257,7 @@ async fn serve_static_file(
   request : @http.Request,
   cache_control : String,
   precompressed : Bool,
+  redirect_directories : Bool,
   extra_headers : Map[String, String],
   cookies : Array[@http.Cookie],
 ) -> Unit {
@@ -1287,6 +1288,12 @@ async fn serve_static_file(
     Some(handle) =>
       if handle.kind() is @fs.Directory {
         handle.close()
+        if !redirect_directories {
+          send_static_error(
+            conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
+          )
+          return
+        }
         let location = append_trailing_slash(request.path)
         let headers = static_base_headers(extra_headers, cookies, 1)
         headers.remove(header_content_type)
@@ -1491,6 +1498,7 @@ async fn handle_static(
       request,
       cache_control,
       precompressed,
+      !mount.index.is_empty(),
       Map([]),
       [],
     )
@@ -1569,6 +1577,7 @@ async fn handle_static(
       request,
       cache_control,
       precompressed,
+      !mount.index.is_empty(),
       ctx.response.headers,
       ctx.response.cookies,
     )

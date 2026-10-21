@@ -158,12 +158,12 @@ cookie helpers:
 ```moonbit
 app.get("/report", fn(ctx) {
   ctx.cache_public(60)
-  ctx.file("reports/latest.pdf")
+  ctx.file(200, "reports/latest.pdf")
 })
 
 app.get("/api/items/:id", fn(ctx) {
   let etag = "\"v1\""
-  if ctx.fresh(etag=etag) {
+  if ctx.fresh(etag) {
     ctx.not_modified()
   } else {
     ctx.set_header("ETag", etag)
