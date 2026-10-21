@@ -432,6 +432,22 @@ test "custom static index name is honored" {
 }
 
 ///|
+test "static files with an empty index leave directories unresolved" {
+  let app = @feather.App::new().static_files(
+    "/site",
+    "/srv/site",
+    index="",
+  )
+  assert_eq(app.static_file_for("/site"), None)
+  assert_eq(app.static_file_for("/site/"), None)
+  assert_eq(app.static_file_for("/site/nested/"), None)
+  assert_eq(
+    app.static_file_for("/site/app.css"),
+    Some("/srv/site/app.css"),
+  )
+}
+
+///|
 test "mount prefixes ignore redundant slashes" {
   let app = @feather.App::new().static_files("//assets", "/srv/public")
   assert_eq(app.static_file_for("/assets/app.css"), Some("/srv/public/app.css"))
@@ -571,6 +587,29 @@ async test "server serves static index for directory requests" {
       Some("text/html; charset=utf-8"),
     )
     assert_eq(client.read_all().text(), "<h1>home</h1>")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "static mounts without an index do not redirect directory requests" {
+  let dir = @fs.tmpdir(prefix="feather-static-no-index")
+  @fs.mkdir(dir + "/guide")
+  @fs.write_file(dir + "/app.css", "body { color: red; }")
+  let app = @feather.App::new().static_files("/assets", dir, index="")
+  with_server(app, client => {
+    for path in ["/assets", "/assets/", "/assets/guide/"] {
+      let response = client.get(path)
+      assert_eq(response.code, 404)
+      assert_eq(
+        response.headers.get(@http.CaseInsensitiveString("Location")),
+        None,
+      )
+      ignore(client.read_all())
+    }
+    let response = client.get("/assets/app.css")
+    assert_eq(response.code, 200)
+    assert_eq(client.read_all().text(), "body { color: red; }")
   })
   @fs.rmdir(dir, recursive=true)
 }

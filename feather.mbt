@@ -8162,7 +8162,8 @@ fn clean_relative_path(relative : String) -> String? {
 ///
 /// `cache_control` sets the exact `Cache-Control` field value and takes
 /// precedence over the policy derived from `max_age`; an empty value suppresses
-/// the header.
+/// the header. An empty `index` disables directory indexes, so requests for a
+/// directory fall through to the router instead of redirecting to it.
 pub fn App::static_files(
   self : App,
   url_prefix : String,
@@ -8642,7 +8643,11 @@ fn static_lookup_uncached(
     Some(clean) => clean
     None => return None
   }
-  let file_path = if clean.is_empty() || decoded_ends_with_slash {
+  let needs_index = clean.is_empty() || decoded_ends_with_slash
+  if needs_index && mount.index.is_empty() {
+    return None
+  }
+  let file_path = if needs_index {
     join_fs_path(join_fs_path(mount.root, clean), mount.index)
   } else {
     join_fs_path(mount.root, clean)

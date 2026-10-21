@@ -195,7 +195,9 @@ let app = @feather.App::new()
 
 `static_files_with` additionally takes the route middlewares as its fourth
 positional argument (`[]` for none); both accept the same optional `index` /
-`max_age` / `precompressed` / `cache_control` flags.
+`max_age` / `precompressed` / `cache_control` flags. Passing `index=""`
+disables directory indexes, leaving directory requests to the router (usually
+a 404) instead of redirecting them.
 
 Directory traversal outside the mounted root is rejected.
 
