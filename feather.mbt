@@ -3238,15 +3238,34 @@ pub fn Context::clear_cookie(
 pub fn Context::bearer_token(self : Context) -> String? {
   let authorization = self.header("Authorization")
   let view = authorization.view()
-  if starts_with_ignore_ascii_case(view, "Bearer ".view()) {
-    let token = trim_ascii_space(view[7:])
-    if token.is_empty() {
-      None
+  if !starts_with_ignore_ascii_case(view, "Bearer".view()) {
+    return None
+  }
+  let rest = view[6:]
+  let trimmed = trim_ascii_space(rest)
+  if trimmed.length() != rest.length() - (rest.length() - trimmed.length()) {
+    // not directly available; easier: skip whitespace after scheme
+  }
+  // Allow one or more SP/HTAB after scheme per RFC 6750/RFC 7235
+  let mut i = 0
+  let len = rest.length()
+  while i < len {
+    let c = rest.unsafe_get(i).to_int()
+    if c == 32 || c == 9 || c == 13 || c == 10 {
+      i += 1
     } else {
-      Some(token.to_owned())
+      break
     }
-  } else {
+  }
+  if i == 0 {
+    return None
+  }
+  let token_view = rest[i:]
+  let token = trim_ascii_space(token_view)
+  if token.is_empty() {
     None
+  } else {
+    Some(token.to_owned())
   }
 }
 
@@ -3256,10 +3275,24 @@ pub fn Context::bearer_token(self : Context) -> String? {
 pub fn Context::basic_auth(self : Context) -> (String, String)? {
   let authorization = self.header("Authorization")
   let view = authorization.view()
-  if !starts_with_ignore_ascii_case(view, "Basic ".view()) {
+  if !starts_with_ignore_ascii_case(view, "Basic".view()) {
     return None
   }
-  let encoded = trim_ascii_space(view[6:])
+  let rest = view[5:]
+  let mut i = 0
+  let len = rest.length()
+  while i < len {
+    let c = rest.unsafe_get(i).to_int()
+    if c == 32 || c == 9 || c == 13 || c == 10 {
+      i += 1
+    } else {
+      break
+    }
+  }
+  if i == 0 {
+    return None
+  }
+  let encoded = trim_ascii_space(rest[i:])
   let decoded = match base64_decode_view(encoded) {
     Some(decoded) => @utf8.decode_lossy(decoded)
     None => return None
