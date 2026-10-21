@@ -242,6 +242,8 @@ pub fn Context::attachment(Self, String) -> Unit
 pub fn Context::basic_auth(Self) -> (String, String)?
 pub fn Context::bearer_token(Self) -> String?
 pub fn Context::body_bytes(Self) -> Bytes
+pub fn Context::body_charset(Self) -> String
+pub fn Context::body_text(Self, limit? : Int32, charset? : String) -> String raise HttpError
 pub fn Context::bytes(Self, Int32, Bytes, content_type? : String) -> Unit
 pub fn Context::clear_cookie(Self, String, path? : String, domain? : String) -> Unit
 pub fn Context::clear_signed_cookie(Self, String, path? : String, domain? : String) -> Unit
