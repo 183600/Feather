@@ -14,6 +14,9 @@ pub fn App::compress(self : App, min_size~ : Int32 = 1024) -> App {
 ///|
 fn parse_quality(value : StringView) -> Int {
   let length = value.length()
+  if length == 0 {
+    return 0
+  }
   let mut index = 0
   let mut whole = 0
   while index < length {
@@ -22,7 +25,7 @@ fn parse_quality(value : StringView) -> Int {
       break
     }
     whole = whole * 10 + digit
-    if whole > 1 {
+    if whole > 1 || index > 0 {
       return 0
     }
     index = index + 1
@@ -34,17 +37,17 @@ fn parse_quality(value : StringView) -> Int {
   if index < length && value.unsafe_get(index) == ('.' : UInt16) {
     index = index + 1
     let mut scale = 100
-    while index < length && scale > 0 {
+    while index < length {
       let digit = value.unsafe_get(index).to_int() - 48
-      if digit < 0 || digit > 9 {
-        break
+      if digit < 0 || digit > 9 || scale == 0 {
+        return 0
       }
       result = result + digit * scale
       scale = scale / 10
       index = index + 1
     }
   }
-  if result > 1000 {
+  if index != length || result > 1000 {
     return 0
   }
   result

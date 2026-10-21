@@ -65,3 +65,16 @@ test "parse_multipart still prefers crlf headers when crlf comes first" {
   assert_eq(parts.length(), 1)
   assert_eq(parts[0].data, "one\n\ntwo")
 }
+
+///|
+test "parse_quality rejects trailing junk and extra fraction digits" {
+  assert_eq(parse_quality("1x".view()), 0)
+  assert_eq(parse_quality("1.0x".view()), 0)
+  assert_eq(parse_quality("0.5 0.6".view()), 0)
+  assert_eq(parse_quality("0.9999".view()), 0)
+  assert_eq(parse_quality("01".view()), 0)
+  assert_eq(parse_quality("00".view()), 0)
+  assert_eq(parse_quality("1.".view()), 1000)
+  assert_eq(parse_quality("0.".view()), 0)
+  assert_eq(parse_quality("0.5".view()), 500)
+}
