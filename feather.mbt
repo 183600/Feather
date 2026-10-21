@@ -1680,6 +1680,45 @@ pub fn Context::fail_problem(
 }
 
 ///|
+/// Context state key holding a request body that is not valid UTF-8,
+/// base64-encoded. Text handlers keep reading `Request::body`; binary
+/// consumers read the untouched bytes through `Context::body_bytes`.
+const RAW_BODY_STATE_KEY : String = "__feather_raw_body"
+
+///|
+/// Preserve the raw bytes of a request body that UTF-8 could not represent.
+///
+/// `Request::body` keeps the lossy text, because `@utf8.encode` refuses lone
+/// surrogates and would panic if such a body were echoed into a response; the
+/// untouched bytes ride along here instead.
+fn attach_raw_body(ctx : Context, raw : Bytes?) -> Unit {
+  match raw {
+    Some(bytes) =>
+      if bytes.length() > 0 {
+        ctx.state.set(RAW_BODY_STATE_KEY, base64_encode(bytes))
+      }
+    None => ()
+  }
+}
+
+///|
+/// The request body as bytes, exactly as it arrived.
+///
+/// A body that is valid UTF-8 round-trips through `Request::body`; a body
+/// that is not (image uploads, protobuf, arbitrary binary) comes back byte
+/// for byte. Its length is already bounded by `App::max_body_size`.
+pub fn Context::body_bytes(self : Context) -> Bytes {
+  match self.state.get(RAW_BODY_STATE_KEY) {
+    Some(encoded) =>
+      match base64_decode(encoded) {
+        Some(bytes) => bytes
+        None => @utf8.encode(self.request.body)
+      }
+    None => @utf8.encode(self.request.body)
+  }
+}
+
+///|
 pub fn Context::json_body(self : Context) -> Json raise HttpError {
   @json.parse(self.request.body) catch {
     _ => raise HttpError(400, "invalid JSON body")

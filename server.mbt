@@ -290,11 +290,17 @@ fn request_method_to_string(meth : @http.RequestMethod) -> String {
 }
 
 ///|
+/// Build the framework `Request` from an HTTP request and its body stream.
+///
+/// The second component carries the body exactly as received (after gzip
+/// decoding) when those bytes are not valid UTF-8, so binary payloads stay
+/// intact; it is `None` for well-formed UTF-8 bodies, where `Request::body`
+/// already is the exact text.
 async fn request_from_http(
   request : @http.Request,
   body : &@io.Reader,
   max_body_size : Int32,
-) -> Request {
+) -> (Request, Bytes?) {
   let gzip_encoded = match request.headers.get(header_content_encoding) {
     Some(value) =>
       trim_ascii_space(value.view()).equal_ignore_ascii_case("gzip".view())
@@ -327,22 +333,32 @@ async fn request_from_http(
     }
   }
   let body_hint = body_size_hint(request, max_body_size)
-  let body_text = if gzip_encoded {
-    @utf8.decode_lossy(
-      decode_gzip_body(
-        read_body_bytes(body, max_body_size, size_hint=body_hint),
-        max_body_size,
-      ),
+  let raw_body = if gzip_encoded {
+    decode_gzip_body(
+      read_body_bytes(body, max_body_size, size_hint=body_hint),
+      max_body_size,
     )
   } else {
-    read_body(body, max_body_size, size_hint=body_hint)
+    read_body_bytes(body, max_body_size, size_hint=body_hint)
   }
-  {
-    method: request_method_to_string(request.meth),
-    path: request.path,
-    headers,
-    body: body_text,
+  let strict_text : String? = try {
+    Some(@utf8.decode(raw_body))
+  } catch {
+    @utf8.Malformed(_) => None
   }
+  let (body_text, preserved) = match strict_text {
+    Some(text) => (text, None)
+    None => (@utf8.decode_lossy(raw_body), Some(raw_body))
+  }
+  (
+    {
+      method: request_method_to_string(request.meth),
+      path: request.path,
+      headers,
+      body: body_text,
+    },
+    preserved,
+  )
 }
 
 ///|
@@ -1477,7 +1493,7 @@ async fn handle_static(
     )
     return
   }
-  let req = request_from_http(request, body, app.max_body_size) catch {
+  let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
       send_error_and_close(conn, 413, "413 Payload Too Large", head)
       return
@@ -1493,6 +1509,7 @@ async fn handle_static(
   }
   let ctx = app.context_for_request(req)
   defer ctx.run_cleanups()
+  attach_raw_body(ctx, raw_body)
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   let chain = if mount.middlewares.length() == 0 {
     match app.static_chain {
@@ -1588,8 +1605,9 @@ async fn build_response(
   body : &@io.Reader,
   conn : @http.ServerConnection,
 ) -> (Response, FileResponse?) {
-  let req = request_from_http(request, body, app.max_body_size)
+  let (req, raw_body) = request_from_http(request, body, app.max_body_size)
   let ctx = app.context_for_request(req)
+  attach_raw_body(ctx, raw_body)
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   app.handle(ctx) catch {
     HttpError(status, message) => error_response(ctx, status, message)
@@ -1630,7 +1648,7 @@ async fn handle_websocket(
   params : Map[String, String],
   route_chain : Handler,
 ) -> Unit {
-  let req = request_from_http(request, body, app.max_body_size) catch {
+  let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
       send_error_and_close(conn, 413, "413 Payload Too Large", false)
       return
@@ -1646,6 +1664,7 @@ async fn handle_websocket(
   }
   let ctx = app.context_for_request(req)
   defer ctx.run_cleanups()
+  attach_raw_body(ctx, raw_body)
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
@@ -1679,7 +1698,7 @@ async fn handle_sse(
   params : Map[String, String],
   route_chain : Handler,
 ) -> Unit {
-  let req = request_from_http(request, body, app.max_body_size) catch {
+  let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
       send_error_and_close(conn, 413, "413 Payload Too Large", false)
       return
@@ -1695,6 +1714,7 @@ async fn handle_sse(
   }
   let ctx = app.context_for_request(req)
   defer ctx.run_cleanups()
+  attach_raw_body(ctx, raw_body)
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
@@ -1757,7 +1777,7 @@ async fn handle_stream(
   params : Map[String, String],
   route_chain : Handler,
 ) -> Unit {
-  let req = request_from_http(request, body, app.max_body_size) catch {
+  let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
       send_error_and_close(conn, 413, "413 Payload Too Large", false)
       return
@@ -1773,6 +1793,7 @@ async fn handle_stream(
   }
   let ctx = app.context_for_request(req)
   defer ctx.run_cleanups()
+  attach_raw_body(ctx, raw_body)
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
