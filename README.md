@@ -89,9 +89,9 @@ let app = @feather.App::new()
   .get("/files/*path", fn(ctx) {
     ctx.text(200, ctx.param("path"))
   })
-  .group("/api", fn(group) {
-    group.get("/health", fn(ctx) { ctx.json(200, { "ok": "true" }) })
-  })
+
+let api = app.group("/api")
+ignore(api.get("/health", fn(ctx) { ctx.json(200, { "ok": "true" }) }))
 ```
 
 Route matching prefers static segments over parameters, and parameters over
