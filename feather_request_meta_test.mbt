@@ -236,6 +236,28 @@ test "context forwarded_ip parses the Forwarded header" {
 }
 
 ///|
+test "context forwarded helpers skip empty proxy values" {
+  assert_eq(
+    request_with_headers(
+      Map([
+        ("X-Forwarded-Host", " , internal"),
+        ("Host", "fallback.example"),
+      ]),
+    ).forwarded_authority(),
+    "fallback.example",
+  )
+  assert_eq(
+    request_with_headers(
+      Map([
+        ("X-Real-IP", "  "),
+        ("Host", "fallback.example"),
+      ]),
+    ).forwarded_ip(),
+    "127.0.0.1",
+  )
+}
+
+///|
 test "context protocol survives a forwarded value with a dangling escape" {
   assert_false(
     request_with_headers(Map([("Forwarded", "proto=\"https\\")])).is_secure(),

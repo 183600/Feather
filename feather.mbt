@@ -2242,9 +2242,12 @@ pub fn Context::forwarded_authority(self : Context) -> String {
   }
   let xfh = trim_ascii_space(self.header("X-Forwarded-Host").view())
   if xfh != "" {
-    return match xfh.find(",") {
-      Some(index) => trim_ascii_space(xfh[:index]).to_owned()
-      None => xfh.to_owned()
+    let first = match xfh.find(",") {
+      Some(index) => trim_ascii_space(xfh[:index])
+      None => xfh
+    }
+    if !first.is_empty() {
+      return first.to_owned()
     }
   }
   trim_ascii_space(self.header("Host").view()).to_owned()
@@ -2312,9 +2315,9 @@ pub fn Context::forwarded_ip(self : Context) -> String {
       return first.to_owned()
     }
   }
-  let real_ip = self.header("X-Real-IP")
-  if real_ip != "" {
-    return trim_ascii_space(real_ip.view()).to_owned()
+  let real_ip = trim_ascii_space(self.header("X-Real-IP").view())
+  if !real_ip.is_empty() {
+    return real_ip.to_owned()
   }
   self.ip()
 }
