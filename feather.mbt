@@ -4850,6 +4850,8 @@ fn decode_utf8_lossless(bytes : Bytes) -> String {
       }
     } else if b0 >= 0xE0 && b0 <= 0xEF &&
       i + 2 < length &&
+      !(b0 == 0xE0 && bytes[i + 1].to_int() < 0xA0) &&
+      !(b0 == 0xED && bytes[i + 1].to_int() > 0x9F) &&
       bytes[i + 1].to_int() >= 0x80 &&
       bytes[i + 1].to_int() <= 0xBF &&
       bytes[i + 2].to_int() >= 0x80 &&
@@ -4861,6 +4863,8 @@ fn decode_utf8_lossless(bytes : Bytes) -> String {
       i = i + 3
     } else if b0 >= 0xF0 && b0 <= 0xF4 &&
       i + 3 < length &&
+      !(b0 == 0xF0 && bytes[i + 1].to_int() < 0x90) &&
+      !(b0 == 0xF4 && bytes[i + 1].to_int() > 0x8F) &&
       bytes[i + 1].to_int() >= 0x80 &&
       bytes[i + 1].to_int() <= 0xBF &&
       bytes[i + 2].to_int() >= 0x80 &&
