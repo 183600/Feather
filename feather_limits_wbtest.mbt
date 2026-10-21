@@ -19,6 +19,18 @@ test "session store caps the number of retained sessions" {
 }
 
 ///|
+test "static lookup negative fifo is compacted" {
+  let app = App::new().static_files("/assets", "/tmp/feather-static-wbtest")
+  let total = STATIC_LOOKUP_CACHE_LIMIT * 3
+  for i = 0; i < total; i = i + 1 {
+    ignore(app.static_file_for("/assets/%2e%2e/escape-" + i.to_string()))
+  }
+  let queued = app.static_lookup_negative
+  assert_true(queued.length() <= STATIC_LOOKUP_CACHE_LIMIT * 2)
+  assert_true(app.static_lookup_negative_head <= queued.length())
+}
+
+///|
 test "rate limiter sweeps expired buckets before evicting live ones" {
   let limiter = RateLimiter::new(max=1, window=60_000L)
   for i = 0; i < RATE_LIMIT_MAX_BUCKETS; i = i + 1 {

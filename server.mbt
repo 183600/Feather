@@ -289,6 +289,28 @@ fn request_method_to_string(meth : @http.RequestMethod) -> String {
 }
 
 ///|
+/// Whether a request's `Content-Encoding` field describes exactly one `gzip`
+/// coding, optionally combined with `identity`, so the body can be decoded by
+/// a single gzip pass. Repeated or unknown codings are left untouched because
+/// decoding only one of them would corrupt the body.
+fn request_content_encoding_is_gzip(value : StringView) -> Bool {
+  let mut gzip_count = 0
+  let mut unsupported = false
+  for part in value.split(",") {
+    let coding = trim_ascii_space(part)
+    if coding.is_empty() || coding.equal_ignore_ascii_case("identity".view()) {
+      continue
+    }
+    if coding.equal_ignore_ascii_case("gzip".view()) {
+      gzip_count = gzip_count + 1
+    } else {
+      unsupported = true
+    }
+  }
+  gzip_count == 1 && !unsupported
+}
+
+///|
 /// Build the framework `Request` from an HTTP request and its body stream.
 ///
 /// The second component carries the body exactly as received (after gzip
@@ -301,8 +323,7 @@ async fn request_from_http(
   max_body_size : Int32,
 ) -> (Request, Bytes?) {
   let gzip_encoded = match request.headers.get(header_content_encoding) {
-    Some(value) =>
-      trim_ascii_space(value.view()).equal_ignore_ascii_case("gzip".view())
+    Some(value) => request_content_encoding_is_gzip(value.view())
     None => false
   }
   let headers : Map[String, String] = Map([], capacity=request.headers.length())
@@ -640,11 +661,7 @@ async fn send_file_response(
     cookies=response.cookies,
   )
   if !head && body_allowed && length > 0L {
-    if start == 0L && length == size {
-      conn.write_reader(handle)
-    } else {
-      write_file_range(conn, handle, start, length)
-    }
+    write_file_range(conn, handle, start, length)
   }
   conn.end_response()
 }
@@ -1318,7 +1335,14 @@ async fn serve_static_file(
       }
   }
   defer file.close()
-  let size = file.size() catch { _ => 0L }
+  let size = file.size() catch {
+    _ => {
+      send_static_error(
+        conn, extra_headers, cookies, head, 500, "500 Internal Server Error", precompressed,
+      )
+      return
+    }
+  }
   let mtime = file.mtime() catch { _ => (0L, 0) }
   let (mtime_secs, mtime_nanos) = mtime
   let (etag, last_modified, content_type_value) = file_validators(
@@ -1424,7 +1448,7 @@ async fn serve_static_file(
       decorate_static_headers(headers, precompressed, serving_gzip)
       send_with_date(conn, 200, "OK", headers, cookies~)
       if !head {
-        conn.write_reader(file)
+        write_file_range(conn, file, 0L, size)
       }
       conn.end_response()
     }

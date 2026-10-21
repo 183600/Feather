@@ -84,6 +84,26 @@ async test "server body_bytes sees through a gzip encoded binary body" {
 }
 
 ///|
+async test "server body_bytes decodes gzip in a content-encoding list" {
+  let payload : Bytes = b"list gzip\xff\x00body"
+  let compressed = gzip_encode_for_test(payload)
+  let app = @feather.App::new().post("/upload", fn(ctx) {
+    ctx.text(200, if ctx.body_bytes() == payload { "equal" } else { "diff" })
+  })
+  with_server(app, client => {
+    let response = client.post(
+      "/upload",
+      compressed,
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("Content-Encoding"), "gzip, identity"),
+      ]),
+    )
+    assert_eq(response.code, 200)
+    assert_eq(client.read_all().text(), "equal")
+  })
+}
+
+///|
 /// Build a multipart body from a raw byte payload (binary parts included).
 fn binary_multipart_body(payload : Bytes) -> Bytes {
   let head = @utf8.encode(

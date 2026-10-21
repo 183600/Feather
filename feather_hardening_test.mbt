@@ -170,6 +170,55 @@ async test "head and get agree on framing for missing static files" {
 }
 
 ///|
+async test "static responses never write beyond content-length" {
+  // `/proc` files commonly stat as zero bytes while still yielding data.
+  // Static serving must trust the advertised length instead of writing the
+  // stream past it and desynchronizing the connection.
+  let probe = @fs.open("/proc/self/cmdline", mode=@fs.ReadOnly) catch {
+    _ => return
+  }
+  let probe_size = probe.size() catch {
+    _ => {
+      probe.close()
+      return
+    }
+  }
+  probe.close()
+  if probe_size != 0L {
+    return
+  }
+  let app = @feather.App::new().static_files("/assets", "/proc/self")
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "GET /assets/cmdline HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n",
+      ),
+    )
+    let buffer = @buffer.Buffer::Buffer(size_hint=1024)
+    let mut response = ""
+    while !response.contains("\r\n\r\n") {
+      match conn.read_some() {
+        Some(chunk) => {
+          buffer.write_bytes(chunk)
+          response = @utf8.decode_lossy(buffer.to_bytes())
+        }
+        None => break
+      }
+    }
+    let separator = match response.find("\r\n\r\n") {
+      Some(index) => index
+      None => fail("missing response head terminator")
+    }
+    assert_true(response[:separator].contains("Content-Length: 0"))
+    let extra = @async.with_timeout(200, () => conn.read_some()) catch {
+      _ => None
+    }
+    assert_eq(response[separator + 4:], "")
+    assert_true(extra is None)
+  })
+}
+
+///|
 async test "server strips bodies from reset content responses" {
   let app = @feather.App::new().get("/reset", fn(ctx) {
     ctx.text(205, "payload")

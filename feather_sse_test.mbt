@@ -73,6 +73,21 @@ async test "sse events carry event id and retry fields" {
 }
 
 ///|
+async test "sse empty id resets the last event id" {
+  let app = @feather.App::new().sse("/events", async fn(_ctx, sse) {
+    sse.send("first", id="7")
+    sse.send("second", id="")
+  })
+  with_sse_server(app, client => {
+    ignore(client.get("/events"))
+    assert_eq(
+      client.read_all().text(),
+      "id: 7\ndata: first\n\nid: \ndata: second\n\n",
+    )
+  })
+}
+
+///|
 async test "sse data spans multiple lines" {
   let app = @feather.App::new().sse("/events", async fn(_ctx, sse) {
     sse.send("first\r\nsecond\nthird")

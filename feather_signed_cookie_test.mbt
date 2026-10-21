@@ -81,6 +81,17 @@ test "signed_cookie_token honours embedded expiry deadlines" {
 }
 
 ///|
+test "signed_cookie_token rejects a negative expiry deadline" {
+  let token = @feather.signed_cookie_token(
+    "s3cret",
+    "user",
+    "alice",
+    expires_at=-1L,
+  )
+  assert_eq(@feather.verify_signed_cookie_token("s3cret", "user", token), None)
+}
+
+///|
 test "signed_cookie_token preserves arbitrary value text" {
   let value = "héllo wörld/+=;,\u{1F600}"
   let token = @feather.signed_cookie_token("s3cret", "note", value)
@@ -154,6 +165,46 @@ test "signed cookies are rejected after tampering during a request" {
 test "signed cookies expire through Context helpers" {
   let setter = @feather.create_context()
   setter.set_signed_cookie("user", "alice", "s3cret", max_age=-10L)
+  let set_cookie = setter.response.headers.get("Set-Cookie").unwrap()
+  let token = signed_test_cookie_value(set_cookie, "user")
+  let reader = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([("Cookie", "user=" + token)]),
+    body: "",
+  })
+  assert_eq(reader.signed_cookie("user", "s3cret"), None)
+}
+
+///|
+test "signed cookies reject negative max_age values that overflow milliseconds" {
+  let setter = @feather.create_context()
+  setter.set_signed_cookie(
+    "user",
+    "alice",
+    "s3cret",
+    max_age=-9223372036854775804L,
+  )
+  let set_cookie = setter.response.headers.get("Set-Cookie").unwrap()
+  let token = signed_test_cookie_value(set_cookie, "user")
+  let reader = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([("Cookie", "user=" + token)]),
+    body: "",
+  })
+  assert_eq(reader.signed_cookie("user", "s3cret"), None)
+}
+
+///|
+test "signed cookies reject negative expires values that overflow milliseconds" {
+  let setter = @feather.create_context()
+  setter.set_signed_cookie(
+    "user",
+    "alice",
+    "s3cret",
+    expires=-9223372034854775808L,
+  )
   let set_cookie = setter.response.headers.get("Set-Cookie").unwrap()
   let token = signed_test_cookie_value(set_cookie, "user")
   let reader = @feather.Context::new({

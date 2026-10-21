@@ -150,11 +150,12 @@ pub async fn Sse::send(
   match id {
     Some(value) => {
       let clean = sanitize_sse_field(value)
-      if clean != "" {
-        builder.write_string("id: ")
-        builder.write_string(clean)
-        builder.write_char('\n')
-      }
+      // An explicitly empty `id` resets the client's last event id
+      // (WHATWG HTML living standard, server-sent events), so it is sent even
+      // though there is no value to carry.
+      builder.write_string("id: ")
+      builder.write_string(clean)
+      builder.write_char('\n')
     }
     None => ()
   }

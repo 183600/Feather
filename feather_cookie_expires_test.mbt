@@ -69,6 +69,22 @@ test "signed cookies honor an absolute expiry" {
 }
 
 ///|
+test "signed cookies reject an epoch absolute expiry" {
+  let expired = @feather.create_context()
+  expired.set_signed_cookie("user", "alice", "s3cret", expires=0L)
+  let expired_header = expired.response.headers.get("Set-Cookie").unwrap()
+  let expired_reader = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([
+      ("Cookie", "user=" + signed_test_cookie_value(expired_header, "user")),
+    ]),
+    body: "",
+  })
+  assert_eq(expired_reader.signed_cookie("user", "s3cret"), None)
+}
+
+///|
 async test "server sends a Date-formatted cookie expiry" {
   let app = @feather.App::new().get("/set", fn(ctx) {
     ctx.set_cookie("sid", "1", path="/", expires=0L)

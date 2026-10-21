@@ -537,6 +537,12 @@ pub fn verify_signed_cookie_token(
   if deadline.to_string().view() != expiry_view {
     return None
   }
+  // A negative deadline can only come from an overflow or an explicit
+  // already-expired value. Treat it as expired instead of letting the
+  // `deadline > 0` check below turn it into a never-expiring token.
+  if deadline < 0L {
+    return None
+  }
   if deadline > 0L {
     let current = match now {
       Some(value) => value
@@ -573,6 +579,27 @@ pub fn verify_signed_cookie_token(
 }
 
 ///|
+const MAX_SIGNED_COOKIE_DELTA_SECONDS : Int64 = 9223372036854775L
+
+///|
+const MAX_SIGNED_COOKIE_DEADLINE : Int64 = 9223372036854775807L
+
+///|
+fn signed_cookie_deadline(seconds : Int64, base : Int64) -> Int64 {
+  if seconds <= 0L {
+    return -1L
+  }
+  if seconds > MAX_SIGNED_COOKIE_DELTA_SECONDS {
+    return MAX_SIGNED_COOKIE_DEADLINE
+  }
+  let delta = seconds * 1000L
+  if delta > MAX_SIGNED_COOKIE_DEADLINE - base {
+    return MAX_SIGNED_COOKIE_DEADLINE
+  }
+  base + delta
+}
+
+///|
 /// Set a cookie whose value is signed with `secret`.
 ///
 /// The cookie is readable by the client (base64 is not encryption), but it
@@ -598,11 +625,11 @@ pub fn Context::set_signed_cookie(
   partitioned~ : Bool = false,
 ) -> Unit {
   let by_max_age = match max_age {
-    Some(seconds) => Some(@async.now() + seconds * 1000L)
+    Some(seconds) => Some(signed_cookie_deadline(seconds, @async.now()))
     None => None
   }
   let by_expires = match expires {
-    Some(seconds) => Some(seconds * 1000L)
+    Some(seconds) => Some(signed_cookie_deadline(seconds, 0L))
     None => None
   }
   let expires_at = match (by_max_age, by_expires) {
@@ -611,7 +638,17 @@ pub fn Context::set_signed_cookie(
     (None, Some(b)) => Some(b)
     (None, None) => None
   }
-  let token = signed_cookie_token(secret, name, value, expires_at?)
+  // `0` is the token's "no expiry" sentinel, but an explicit epoch expiry (or
+  // an overflowed deadline) must not turn into a token that never expires.
+  let token = match expires_at {
+    Some(deadline) =>
+      if deadline <= 0L {
+        signed_cookie_token(secret, name, value, expires_at=-1L)
+      } else {
+        signed_cookie_token(secret, name, value, expires_at=deadline)
+      }
+    None => signed_cookie_token(secret, name, value)
+  }
   self.set_cookie(
     name,
     token,

@@ -112,6 +112,34 @@ test "parse_multipart accepts transport padding after delimiters" {
 }
 
 ///|
+test "parse_multipart ignores a malformed closing delimiter" {
+  let body = "--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\none\r\n--X--garbage\r\n--X\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\ntwo\r\n--X--\r\n"
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=X").unwrap()
+  assert_eq(parts.length(), 2)
+  assert_eq(parts[0].data, "one\r\n--X--garbage")
+  assert_eq(parts[1].name, "b")
+  assert_eq(parts[1].data, "two")
+}
+
+///|
+test "parse_multipart skips malformed delimiters in the preamble" {
+  let body = "--X--garbage\r\n--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\none\r\n--X--\r\n"
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=X").unwrap()
+  assert_eq(parts.length(), 1)
+  assert_eq(parts[0].name, "a")
+  assert_eq(parts[0].data, "one")
+}
+
+///|
+test "parse_multipart ignores an inline boundary in the preamble" {
+  let body = "pre--X\r\nContent-Disposition: form-data; name=\"fake\"\r\n\r\nfake\r\n--X\r\nContent-Disposition: form-data; name=\"real\"\r\n\r\nreal\r\n--X--\r\n"
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=X").unwrap()
+  assert_eq(parts.length(), 1)
+  assert_eq(parts[0].name, "real")
+  assert_eq(parts[0].data, "real")
+}
+
+///|
 test "parse_multipart returns none without a boundary" {
   assert_eq(@feather.parse_multipart("body", "text/plain"), None)
   assert_eq(@feather.parse_multipart("body", "multipart/form-data"), None)

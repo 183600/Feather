@@ -5290,7 +5290,22 @@ fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
     return true
   }
   if code == ('-' : UInt16) {
-    return index + 1 < length && view.unsafe_get(index + 1) == ('-' : UInt16)
+    if index + 1 >= length || view.unsafe_get(index + 1) != ('-' : UInt16) {
+      return false
+    }
+    let mut tail = index + 2
+    while tail < length &&
+          (
+            view.unsafe_get(tail) == (' ' : UInt16) ||
+            view.unsafe_get(tail) == ('\t' : UInt16)
+          ) {
+      tail = tail + 1
+    }
+    if tail >= length {
+      return true
+    }
+    let tail_code = view.unsafe_get(tail)
+    return tail_code == ('\r' : UInt16) || tail_code == ('\n' : UInt16)
   }
   false
 }
@@ -5317,9 +5332,9 @@ fn delimiter_match_table(needle : StringView) -> Array[Int32] {
 }
 
 ///|
-/// First index at or after `start` where `needle` appears and is terminated by
-/// whitespace, a line break or `--`. The precomputed prefix-function `table`
-/// guides a single forward scan.
+/// First index at or after `start` where `needle` starts a line and is
+/// terminated by whitespace, a line break or `--`. The precomputed
+/// prefix-function `table` guides a single forward scan.
 fn find_terminated_delimiter(
   view : StringView,
   needle : StringView,
@@ -5343,7 +5358,9 @@ fn find_terminated_delimiter(
     }
     if matched == needle_length {
       let match_start = index + 1 - needle_length
-      if delimiter_is_terminated(view, index + 1) {
+      if (match_start == 0 ||
+          view.unsafe_get(match_start - 1) == ('\n' : UInt16)) &&
+        delimiter_is_terminated(view, index + 1) {
         return Some(match_start)
       }
       matched = table[matched - 1]
@@ -8462,6 +8479,35 @@ fn App::best_static_mount(self : App, path_view : StringView) -> StaticMount? {
 const STATIC_LOOKUP_CACHE_LIMIT : Int32 = 256
 
 ///|
+/// Consumed entries a negative FIFO may accumulate before it is compacted.
+const STATIC_LOOKUP_COMPACT_THRESHOLD : Int32 = 64
+
+///|
+/// Drop the consumed prefix of `static_lookup_negative` so the FIFO cannot
+/// grow without bound while negative entries keep being evicted and appended.
+fn App::static_lookup_compact(self : App) -> Unit {
+  let queued = self.static_lookup_negative
+  let head = self.static_lookup_negative_head
+  if head <= 0 {
+    return
+  }
+  if head >= queued.length() {
+    queued.clear()
+    self.static_lookup_negative_head = 0
+    return
+  }
+  let remaining : Array[String] = Array(capacity=queued.length() - head)
+  let mut index = head
+  while index < queued.length() {
+    remaining.push(queued[index])
+    index = index + 1
+  }
+  queued.clear()
+  queued.append(remaining)
+  self.static_lookup_negative_head = 0
+}
+
+///|
 /// Drop one entry from `static_lookup_cache`. Negative results are drained from
 /// the FIFO first; the FIFO is keyed independently and stale keys are skipped.
 /// Falls back to evicting an arbitrary entry.
@@ -8478,6 +8524,9 @@ fn App::static_lookup_evict(self : App) -> Unit {
         if head == queued.length() {
           queued.clear()
           self.static_lookup_negative_head = 0
+        } else if head >= STATIC_LOOKUP_COMPACT_THRESHOLD &&
+          head * 2 >= queued.length() {
+          self.static_lookup_compact()
         }
         return
       }
