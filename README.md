@@ -137,7 +137,7 @@ cookie helpers:
 
 ```moonbit
 app.get("/report", fn(ctx) {
-  ctx.set_header("Cache-Control", "public, max-age=60")
+  ctx.cache_public(60)
   ctx.file("reports/latest.pdf")
 })
 
@@ -151,6 +151,9 @@ app.get("/api/items/:id", fn(ctx) {
   }
 })
 ```
+
+`cache_public` and `cache_private` accept `immutable=true`; `no_store` and
+`no_cache` cover the common non-storable and revalidate-first cases.
 
 `app.compress(min_size=1024)` enables gzip compression for eligible responses.
 `app.etag()` enables automatic ETag generation for responses that do not set

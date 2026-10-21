@@ -1880,6 +1880,62 @@ pub fn Context::set_header(
 }
 
 ///|
+fn Context::set_cache_control_scope(
+  self : Context,
+  scope : String,
+  max_age : Int32,
+  immutable : Bool,
+) -> Unit {
+  let seconds = if max_age > 0 { max_age } else { 0 }
+  let value = if immutable {
+    "\{scope}, max-age=\{seconds}, immutable"
+  } else {
+    "\{scope}, max-age=\{seconds}"
+  }
+  set_header_ignore_case(self.response.headers, "Cache-Control", value)
+}
+
+///|
+/// Allow shared caches to store the response for `max_age` seconds
+/// (`Cache-Control: public, max-age=N`). Negative lifetimes are clamped to
+/// zero; pass `immutable=true` to advertise that the representation at this
+/// URL never changes while it is fresh.
+pub fn Context::cache_public(
+  self : Context,
+  max_age : Int32,
+  immutable~ : Bool = false,
+) -> Unit {
+  self.set_cache_control_scope("public", max_age, immutable)
+}
+
+///|
+/// Allow only the end user's private cache to store the response for
+/// `max_age` seconds (`Cache-Control: private, max-age=N`). Negative
+/// lifetimes are clamped to zero; `immutable` behaves as for
+/// `Context::cache_public`.
+pub fn Context::cache_private(
+  self : Context,
+  max_age : Int32,
+  immutable~ : Bool = false,
+) -> Unit {
+  self.set_cache_control_scope("private", max_age, immutable)
+}
+
+///|
+/// Mark the response as not storable by any cache
+/// (`Cache-Control: no-store`).
+pub fn Context::no_store(self : Context) -> Unit {
+  set_header_ignore_case(self.response.headers, "Cache-Control", "no-store")
+}
+
+///|
+/// Require caches to revalidate the response before reusing it
+/// (`Cache-Control: no-cache`).
+pub fn Context::no_cache(self : Context) -> Unit {
+  set_header_ignore_case(self.response.headers, "Cache-Control", "no-cache")
+}
+
+///|
 pub fn Context::text(self : Context, status : Int32, body : String) -> Unit {
   self.file = None
   self.response.status = status

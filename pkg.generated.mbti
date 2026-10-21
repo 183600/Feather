@@ -246,6 +246,8 @@ pub fn Context::body_bytes(Self) -> Bytes
 pub fn Context::body_charset(Self) -> String
 pub fn Context::body_text(Self, limit? : Int32, charset? : String) -> String raise HttpError
 pub fn Context::bytes(Self, Int32, Bytes, content_type? : String) -> Unit
+pub fn Context::cache_private(Self, Int32, immutable? : Bool) -> Unit
+pub fn Context::cache_public(Self, Int32, immutable? : Bool) -> Unit
 pub fn Context::clear_cookie(Self, String, path? : String, domain? : String) -> Unit
 pub fn Context::clear_signed_cookie(Self, String, path? : String, domain? : String) -> Unit
 pub fn Context::content_type(Self) -> String
@@ -292,7 +294,9 @@ pub fn Context::multipart(Self) -> Array[MultipartPart]
 pub fn Context::multipart_file(Self, String) -> MultipartPart?
 pub fn Context::multipart_value(Self, String) -> String
 pub fn Context::new(Request) -> Self
+pub fn Context::no_cache(Self) -> Unit
 pub fn Context::no_content(Self) -> Unit
+pub fn Context::no_store(Self) -> Unit
 pub fn Context::not_modified(Self, etag? : String, last_modified? : String) -> Unit
 pub fn Context::param(Self, String) -> String
 pub fn Context::param_bool(Self, String) -> Bool?
