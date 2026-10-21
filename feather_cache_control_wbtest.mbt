@@ -25,13 +25,19 @@ test "cache control directive matching around plain quoted arguments" {
     cache_control_has_directive("max-age=0, no-store".view(), "no-store".view()),
   )
   assert_true(
-    cache_control_has_directive("foo=\"a,b\", no-store".view(), "no-store".view()),
+    cache_control_has_directive(
+      "foo=\"a,b\", no-store".view(),
+      "no-store".view(),
+    ),
   )
   assert_false(
     cache_control_has_directive("foo=\"no-store\"".view(), "no-store".view()),
   )
   assert_false(
-    cache_control_has_directive("private=\"no-store\"".view(), "no-store".view()),
+    cache_control_has_directive(
+      "private=\"no-store\"".view(),
+      "no-store".view(),
+    ),
   )
   assert_false(
     cache_control_has_directive("no-storex".view(), "no-store".view()),

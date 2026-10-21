@@ -47,11 +47,7 @@ test "App::routes includes mounted routes" {
 
 ///|
 test "Feather::routes forwards to the application" {
-  let feather = create_feather({
-    host: "127.0.0.1",
-    port: 0,
-    timeout: 0,
-  })
+  let feather = create_feather({ host: "127.0.0.1", port: 0, timeout: 0, })
   ignore(feather.post("/submit", fn(ctx) { ctx.text(201, "ok") }))
   let routes = feather.routes()
   assert_eq(routes.length(), 1)
@@ -61,11 +57,7 @@ test "Feather::routes forwards to the application" {
 
 ///|
 test "Feather facade exposes route queries" {
-  let feather = create_feather({
-    host: "127.0.0.1",
-    port: 0,
-    timeout: 0,
-  })
+  let feather = create_feather({ host: "127.0.0.1", port: 0, timeout: 0, })
   ignore(feather.get("/hello", fn(ctx) { ctx.text(200, "hi") }))
   ignore(feather.websocket("/ws", async fn(_ctx, _ws) { () }))
   ignore(feather.sse("/events", async fn(_ctx, _sse) { () }))

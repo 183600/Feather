@@ -1,11 +1,6 @@
 ///|
 fn raw_body_ctx(body : String) -> Context {
-  Context::new({
-    method: "POST",
-    path: "/",
-    headers: Map([]),
-    body,
-  })
+  Context::new({ method: "POST", path: "/", headers: Map([]), body, })
 }
 
 ///|

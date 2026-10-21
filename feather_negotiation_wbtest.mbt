@@ -17,7 +17,10 @@ test "accept negotiation" {
     500,
   )
   assert_eq(accept_quality_for("", "text/html".view()), 1000)
-  assert_eq(accept_encoding_quality("gzip;q=0.5, *;q=0.8".view(), "gzip".view()), 500)
+  assert_eq(
+    accept_encoding_quality("gzip;q=0.5, *;q=0.8".view(), "gzip".view()),
+    500,
+  )
   assert_eq(accept_encoding_quality("br, *;q=0.5".view(), "gzip".view()), 500)
   assert_eq(accept_encoding_quality("br".view(), "gzip".view()), 0)
 }

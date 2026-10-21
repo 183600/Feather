@@ -405,7 +405,10 @@ test "static_file_for treats a trailing dot segment as a directory" {
 test "static_files with empty prefix mounts at root" {
   let app = @feather.App::new().static_files("", "/srv/www")
   assert_eq(app.static_file_for("/app.css"), Some("/srv/www/app.css"))
-  assert_eq(app.static_file_for("/nested/app.js"), Some("/srv/www/nested/app.js"))
+  assert_eq(
+    app.static_file_for("/nested/app.js"),
+    Some("/srv/www/nested/app.js"),
+  )
   assert_eq(app.static_file_for("/"), Some("/srv/www/index.html"))
 }
 

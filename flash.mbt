@@ -10,16 +10,16 @@ const FLASH_DEFAULT_CATEGORY : String = "default"
 /// Upper bound on messages retained per category. Extra messages are dropped
 /// so a handler that never drains its flashes cannot grow the session value
 /// without bound.
-const FLASH_MAX_MESSAGES_PER_CATEGORY : Int = 32
+const FLASH_MAX_MESSAGES_PER_CATEGORY : Int32 = 32
 
 ///|
 /// Upper bound on flash categories retained for one session.
-const FLASH_MAX_CATEGORIES : Int = 16
+const FLASH_MAX_CATEGORIES : Int32 = 16
 
 ///|
 /// Approximate upper bound, in encoded characters, on the flash additions one
 /// request may queue.
-const FLASH_MAX_ENCODED_BYTES : Int = 8192
+const FLASH_MAX_ENCODED_BYTES : Int32 = 8192
 
 ///|
 /// Encode a list of flash messages as a JSON array, the representation stored
@@ -37,9 +37,7 @@ fn flash_encode(messages : Array[String]) -> String {
 /// so a hand-edited session cannot take the request down.
 fn flash_decode(text : String) -> Array[String] {
   let messages : Array[String] = []
-  let parsed : Json = @json.parse(text) catch {
-    _ => Json::null()
-  }
+  let parsed : Json = @json.parse(text) catch { _ => Json::null() }
   if parsed is Json::Array(items) {
     for item in items {
       if item is Json::String(value) {
@@ -67,7 +65,7 @@ fn Session::flash_pending_map(self : Session) -> Map[String, Array[String]] {
 
 ///|
 /// Approximate encoded size of one category's messages.
-fn flash_message_bytes(messages : Array[String]) -> Int {
+fn flash_message_bytes(messages : Array[String]) -> Int32 {
   let mut total = 0
   for message in messages {
     total = total + message.length() + 8
@@ -78,7 +76,7 @@ fn flash_message_bytes(messages : Array[String]) -> Int {
 ///|
 /// Encoded size of the messages already stored under `key`, which are not part
 /// of the current request's additions.
-fn Session::flash_stored_bytes(self : Session, key : String) -> Int {
+fn Session::flash_stored_bytes(self : Session, key : String) -> Int32 {
   match self.data.get(key) {
     Some(text) => flash_message_bytes(flash_decode(text))
     None => 0
@@ -89,7 +87,7 @@ fn Session::flash_stored_bytes(self : Session, key : String) -> Int {
 /// Flash categories the session would retain if the current request's pending
 /// additions were flushed: the keys already in the data plus the pending
 /// categories that are new to it.
-fn Session::flash_retained_categories(self : Session) -> Int {
+fn Session::flash_retained_categories(self : Session) -> Int32 {
   let mut categories = 0
   for key, _ in self.data {
     if key.has_prefix(FLASH_PREFIX) {
@@ -230,7 +228,11 @@ pub fn Context::flash_take(
               ignore(session.data.remove_and_get(key))
               let added = flash_message_bytes(messages) - stored_bytes
               let remaining = session.flash_pending_bytes - added
-              session.flash_pending_bytes = if remaining < 0 { 0 } else { remaining }
+              session.flash_pending_bytes = if remaining < 0 {
+                0
+              } else {
+                remaining
+              }
               session.modified = true
               taken = Some(messages)
             }
@@ -287,7 +289,11 @@ pub fn Context::flash_take_all(self : Context) -> Map[String, Array[String]] {
                 ignore(session.data.remove_and_get(FLASH_PREFIX + category))
                 let added = flash_message_bytes(messages) - stored_bytes
                 let remaining = session.flash_pending_bytes - added
-                session.flash_pending_bytes = if remaining < 0 { 0 } else { remaining }
+                session.flash_pending_bytes = if remaining < 0 {
+                  0
+                } else {
+                  remaining
+                }
                 taken = Some(messages)
               }
               None => ()

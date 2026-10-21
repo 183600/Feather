@@ -13,13 +13,11 @@ async test "static mounts never escape their root over the wire" {
   @fs.write_file(dir + "/assets/ok.txt", "ok")
   @fs.write_file(dir + "/secret.txt", "secret")
   let app = @feather.App::new().static_files("/assets", dir + "/assets")
-  for path in [
-    "/assets/../secret.txt",
-    "/assets/%2e%2e/secret.txt",
-    "/assets/..%2fsecret.txt",
-    "/assets/%2e%2e%2fsecret.txt",
-    "/assets//../secret.txt",
-  ] {
+  for
+    path in [
+      "/assets/../secret.txt", "/assets/%2e%2e/secret.txt", "/assets/..%2fsecret.txt",
+      "/assets/%2e%2e%2fsecret.txt", "/assets//../secret.txt",
+    ] {
     with_raw_server(app, conn => {
       conn.write(
         @utf8.encode(
@@ -49,13 +47,11 @@ async test "static mounts survive hostile percent escapes" {
   @fs.mkdir(dir + "/assets")
   @fs.write_file(dir + "/assets/ok.txt", "ok")
   let app = @feather.App::new().static_files("/assets", dir + "/assets")
-  for path in [
-    "/assets/ok%00.txt",
-    "/assets/%80.txt",
-    "/assets/%c0%af.txt",
-    "/assets/ok.txt%",
-    "/assets/%2e%2e%2e%2fok.txt",
-  ] {
+  for
+    path in [
+      "/assets/ok%00.txt", "/assets/%80.txt", "/assets/%c0%af.txt", "/assets/ok.txt%",
+      "/assets/%2e%2e%2e%2fok.txt",
+    ] {
     with_raw_server(app, conn => {
       conn.write(
         @utf8.encode(

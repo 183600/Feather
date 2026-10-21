@@ -130,13 +130,27 @@ test "tmp urlencoded differential" {
 
 ///|
 test "tmp sha and hmac vectors" {
-  assert_eq(base64_encode(sha256(@utf8.encode("abc"))), "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=")
+  assert_eq(
+    base64_encode(sha256(@utf8.encode("abc"))),
+    "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=",
+  )
   let long = StringBuilder::new()
   for _ in 0..<1000000 {
     long.write_char('a')
   }
-  assert_eq(base64_encode(sha256(@utf8.encode(long.to_string()))), "zcduXJkU+5KBocfihNc+Z/GAmkiklyAOBG05zMcRLNA=")
-  assert_eq(base64_encode(hmac_sha256(@utf8.encode("key"), @utf8.encode("The quick brown fox jumps over the lazy dog"))), "97yD9DBThCSxMpjmqm+xQ+9NWaFJRhdZl0edvC0aPNg=")
+  assert_eq(
+    base64_encode(sha256(@utf8.encode(long.to_string()))),
+    "zcduXJkU+5KBocfihNc+Z/GAmkiklyAOBG05zMcRLNA=",
+  )
+  assert_eq(
+    base64_encode(
+      hmac_sha256(
+        @utf8.encode("key"),
+        @utf8.encode("The quick brown fox jumps over the lazy dog"),
+      ),
+    ),
+    "97yD9DBThCSxMpjmqm+xQ+9NWaFJRhdZl0edvC0aPNg=",
+  )
   let key = StringBuilder::new()
   for _ in 0..<100 {
     key.write_char('k')
@@ -145,5 +159,10 @@ test "tmp sha and hmac vectors" {
   for _ in 0..<300 {
     msg.write_char('m')
   }
-  assert_eq(base64_encode(hmac_sha256(@utf8.encode(key.to_string()), @utf8.encode(msg.to_string()))), "CRQUDeZ6doBJj/eYCYLUWy+YHXF105ef7S4QBf4Ytqg=")
+  assert_eq(
+    base64_encode(
+      hmac_sha256(@utf8.encode(key.to_string()), @utf8.encode(msg.to_string())),
+    ),
+    "CRQUDeZ6doBJj/eYCYLUWy+YHXF105ef7S4QBf4Ytqg=",
+  )
 }

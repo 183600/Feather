@@ -1,10 +1,10 @@
 ///|
-fn zzref_alpha(rng : FuzzRng, pool : Array[String], max_len : Int) -> String {
+fn zzref_alpha(rng : FuzzRng, pool : Array[String], max_len : Int32) -> String {
   fuzz_random_string(rng, pool, max_len)
 }
 
 ///|
-fn zzref_b64_value(code : Int, url : Bool) -> Int {
+fn zzref_b64_value(code : Int32, url : Bool) -> Int32 {
   if code >= 65 && code <= 90 {
     code - 65
   } else if code >= 97 && code <= 122 {
@@ -232,8 +232,8 @@ fn zzref_find_part_delimiter_old(
   view : StringView,
   crlf_delimiter : StringView,
   lf_delimiter : StringView,
-  crlf_table : Array[Int],
-  lf_table : Array[Int],
+  crlf_table : Array[Int32],
+  lf_table : Array[Int32],
   start : Int32,
 ) -> Int32? {
   let lf = find_terminated_delimiter(view, lf_delimiter, lf_table, start)
@@ -258,31 +258,21 @@ test "zzref multipart delimiter single pass matches two searches" {
   let lf_delimiter = delimiters.lf_delimiter.view()
   let crlf_table = delimiters.crlf_delimiter_table
   let lf_table = delimiters.lf_delimiter_table
-  let pool : Array[String] = ["\r", "\n", "-", "X", "Y", "a", "\r\n", "--", "--XY", "\n--XY", "\r\n--XY", " "]
+  let pool : Array[String] = [
+    "\r", "\n", "-", "X", "Y", "a", "\r\n", "--", "--XY", "\n--XY", "\r\n--XY", " ",
+  ]
   let mut iterations = 0
   while iterations < 20000 {
     let body = zzref_alpha(rng, pool, 12)
     let view = body.view()
     let current = find_part_delimiter(
-      view,
-      crlf_delimiter,
-      lf_delimiter,
-      crlf_table,
-      lf_table,
-      0,
+      view, crlf_delimiter, lf_delimiter, crlf_table, lf_table, 0,
     )
     let old = zzref_find_part_delimiter_old(
-      view,
-      crlf_delimiter,
-      lf_delimiter,
-      crlf_table,
-      lf_table,
-      0,
+      view, crlf_delimiter, lf_delimiter, crlf_table, lf_table, 0,
     )
     if current != old {
-      fail(
-        "delimiter mismatch for \{body}: current=\{current} old=\{old}",
-      )
+      fail("delimiter mismatch for \{body}: current=\{current} old=\{old}")
     }
     iterations = iterations + 1
   }
@@ -334,20 +324,8 @@ fn zzref_disposition_old(value : StringView) -> (String, String) {
 test "zzref disposition parser matches old parameter helpers" {
   let rng = FuzzRng::new(31337L)
   let pool : Array[String] = [
-    "form-data",
-    ";",
-    " ",
-    "name",
-    "filename",
-    "filename*",
-    "=",
-    "\"",
-    "'",
-    "utf-8",
-    "%20",
-    "a.txt",
-    "x",
-    "\"quoted\"",
+    "form-data", ";", " ", "name", "filename", "filename*", "=", "\"", "'", "utf-8",
+    "%20", "a.txt", "x", "\"quoted\"",
   ]
   let mut iterations = 0
   while iterations < 20000 {
@@ -367,8 +345,8 @@ test "zzref disposition parser matches old parameter helpers" {
 test "zzref json_object_text matches json stringify" {
   let rng = FuzzRng::new(4242L)
   let pool : Array[String] = [
-    "", "a", "\"", "\\", "\n", "\r", "\t", "\u0008", "\u000c", "\u0000",
-    "\u001f", "é", "中", "😀", "x y", "0", "ABC", "<>&", "\\u0041",
+    "", "a", "\"", "\\", "\n", "\r", "\t", "\u0008", "\u000c", "\u0000", "\u001f",
+    "é", "中", "😀", "x y", "0", "ABC", "<>&", "\\u0041",
   ]
   let mut iterations = 0
   while iterations < 5000 {
@@ -416,7 +394,9 @@ test "zzref hmac key cache stale after caller mutation" {
   if constant_time_bytes_equal(reference_jefe, reference_kefe) {
     fail("reference digests unexpectedly equal")
   }
-  let backing : FixedArray[Byte] = FixedArray::from_array([b'J', b'e', b'f', b'e'])
+  let backing : FixedArray[Byte] = FixedArray::from_array([
+    b'J', b'e', b'f', b'e',
+  ])
   let key = backing.unsafe_reinterpret_as_bytes()
   ignore(hmac_sha256(key, b"msg"))
   backing[0] = b'K'

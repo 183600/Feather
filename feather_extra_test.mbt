@@ -1,9 +1,7 @@
 ///|
 test "parse_multipart extracts fields and files" {
   let body = "--X\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nHello\r\n--X\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nfile-data\r\n--X--\r\n"
-  let parts = @feather
-    .parse_multipart(body, "multipart/form-data; boundary=X")
-    .unwrap()
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=X").unwrap()
   assert_eq(parts.length(), 2)
   assert_eq(parts[0].name, "title")
   assert_eq(parts[0].filename, "")
@@ -17,9 +15,7 @@ test "parse_multipart extracts fields and files" {
 ///|
 test "parse_multipart accepts a part with an empty header block" {
   let body = "--X\r\n\r\nbare\r\n--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nvalue\r\n--X--\r\n"
-  let parts = @feather
-    .parse_multipart(body, "multipart/form-data; boundary=X")
-    .unwrap()
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=X").unwrap()
   assert_eq(parts.length(), 2)
   assert_eq(parts[0].name, "")
   assert_eq(parts[0].data, "bare")
@@ -30,10 +26,7 @@ test "parse_multipart accepts a part with an empty header block" {
 ///|
 test "parse_multipart requires the multipart/form-data media type" {
   let body = "--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--X--\r\n"
-  assert_eq(
-    @feather.parse_multipart(body, "text/plain; boundary=X"),
-    None,
-  )
+  assert_eq(@feather.parse_multipart(body, "text/plain; boundary=X"), None)
   assert_eq(
     @feather.parse_multipart(body, "multipart/form-dataz; boundary=X"),
     None,
@@ -43,9 +36,7 @@ test "parse_multipart requires the multipart/form-data media type" {
 ///|
 test "parse_multipart reads attributes around quoted separators" {
   let body = "--X\r\nContent-Disposition: form-data; filename=\"a; name=evil.txt\"; name=\"real\"\r\n\r\n1\r\n--X--\r\n"
-  let parts = @feather
-    .parse_multipart(body, "multipart/form-data; boundary=X")
-    .unwrap()
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=X").unwrap()
   assert_eq(parts.length(), 1)
   assert_eq(parts[0].name, "real")
   assert_eq(parts[0].filename, "a; name=evil.txt")
@@ -54,9 +45,7 @@ test "parse_multipart reads attributes around quoted separators" {
 ///|
 test "parse_multipart unescapes quoted parameter pairs" {
   let body = "--X\r\nContent-Disposition: form-data; name=\"a\\\"b\"; filename=\"c\\\\d.txt\"\r\n\r\n1\r\n--X--\r\n"
-  let parts = @feather
-    .parse_multipart(body, "multipart/form-data; boundary=X")
-    .unwrap()
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=X").unwrap()
   assert_eq(parts.length(), 1)
   assert_eq(parts[0].name, "a\"b")
   assert_eq(parts[0].filename, "c\\d.txt")
@@ -65,9 +54,9 @@ test "parse_multipart unescapes quoted parameter pairs" {
 ///|
 test "parse_multipart accepts quoted boundary and ignores trailing data" {
   let body = "--b0\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--b0--\r\nepilogue"
-  let parts = @feather
-    .parse_multipart(body, "multipart/form-data; boundary=\"b0\"; charset=utf-8")
-    .unwrap()
+  let parts = @feather.parse_multipart(
+    body, "multipart/form-data; boundary=\"b0\"; charset=utf-8",
+  ).unwrap()
   assert_eq(parts.length(), 1)
   assert_eq(parts[0].data, "1")
 }
@@ -75,9 +64,7 @@ test "parse_multipart accepts quoted boundary and ignores trailing data" {
 ///|
 test "parse_multipart preserves utf8 payloads and empty values" {
   let body = "--z\r\nContent-Disposition: form-data; name=\"greeting\"\r\n\r\n你好\r\n--z\r\nContent-Disposition: form-data; name=\"empty\"\r\n\r\n\r\n--z--\r\n"
-  let parts = @feather
-    .parse_multipart(body, "multipart/form-data; boundary=z")
-    .unwrap()
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=z").unwrap()
   assert_eq(parts[0].data, "你好")
   assert_eq(parts[1].name, "empty")
   assert_eq(parts[1].data, "")
@@ -86,9 +73,7 @@ test "parse_multipart preserves utf8 payloads and empty values" {
 ///|
 test "parse_multipart keeps boundary prefixes inside part data" {
   let body = "--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nhello\r\n--Xtra world\r\n--X--\r\n"
-  let parts = @feather
-    .parse_multipart(body, "multipart/form-data; boundary=X")
-    .unwrap()
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=X").unwrap()
   assert_eq(parts.length(), 1)
   assert_eq(parts[0].data, "hello\r\n--Xtra world")
 }
@@ -96,9 +81,7 @@ test "parse_multipart keeps boundary prefixes inside part data" {
 ///|
 test "parse_multipart resumes after boundary prefixes in data" {
   let body = "--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\none\r\n--Xtwo\r\n--X\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\ntwo\r\n--X--\r\n"
-  let parts = @feather
-    .parse_multipart(body, "multipart/form-data; boundary=X")
-    .unwrap()
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=X").unwrap()
   assert_eq(parts.length(), 2)
   assert_eq(parts[0].data, "one\r\n--Xtwo")
   assert_eq(parts[1].name, "b")
@@ -108,9 +91,7 @@ test "parse_multipart resumes after boundary prefixes in data" {
 ///|
 test "parse_multipart keeps boundary prefixes with lf separators" {
   let body = "--X\nContent-Disposition: form-data; name=\"a\"\n\nhello\n--Xtra\n--X--\n"
-  let parts = @feather
-    .parse_multipart(body, "multipart/form-data; boundary=X")
-    .unwrap()
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=X").unwrap()
   assert_eq(parts.length(), 1)
   assert_eq(parts[0].data, "hello\n--Xtra")
 }
@@ -118,18 +99,14 @@ test "parse_multipart keeps boundary prefixes with lf separators" {
 ///|
 test "parse_multipart accepts transport padding after delimiters" {
   let body = "--X \t\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--X \t\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\n2\r\n--X-- \t\r\n"
-  let parts = @feather
-    .parse_multipart(body, "multipart/form-data; boundary=X")
-    .unwrap()
+  let parts = @feather.parse_multipart(body, "multipart/form-data; boundary=X").unwrap()
   assert_eq(parts.length(), 2)
   assert_eq(parts[0].name, "a")
   assert_eq(parts[0].data, "1")
   assert_eq(parts[1].name, "b")
   assert_eq(parts[1].data, "2")
   let lf = "--X \t\nContent-Disposition: form-data; name=\"c\"\n\n3\n--X--"
-  let lf_parts = @feather
-    .parse_multipart(lf, "multipart/form-data; boundary=X")
-    .unwrap()
+  let lf_parts = @feather.parse_multipart(lf, "multipart/form-data; boundary=X").unwrap()
   assert_eq(lf_parts.length(), 1)
   assert_eq(lf_parts[0].data, "3")
 }
@@ -264,16 +241,15 @@ test "method not allowed lists sorted methods" {
   router.add_route("POST", "/res", fn(ctx) { ctx.text(200, "p") })
   router.add_route("GET", "/res", fn(ctx) { ctx.text(200, "g") })
   match router.route("DELETE", "/res") {
-    @feather.RouteMethodNotAllowed(methods) => assert_eq(methods.join(","), "GET,POST")
+    @feather.RouteMethodNotAllowed(methods) =>
+      assert_eq(methods.join(","), "GET,POST")
     _ => fail("expected 405")
   }
 }
 
 ///|
 test "App websocket registry resolves paths and params" {
-  let app = @feather.App::new().websocket("/ws/room/:room", fn(_ctx, _ws) {
-    ()
-  })
+  let app = @feather.App::new().websocket("/ws/room/:room", fn(_ctx, _ws) { () })
   assert_true(app.has_websocket("/ws/room/42"))
   assert_false(app.has_websocket("/ws/room/42/extra"))
   assert_false(app.has_websocket("/other"))
@@ -582,25 +558,15 @@ test "Feather facade exposes verb and configuration helpers" {
     .request_timeout(1500),
   )
   assert_eq(
-    feather.handle({ method: "PUT", path: "/p", headers: Map([]), body: "" }).body,
+    feather.handle({ method: "PUT", path: "/p", headers: Map([]), body: "", }).body,
     "put",
   )
   assert_eq(
-    feather.handle({
-      method: "PATCH",
-      path: "/p",
-      headers: Map([]),
-      body: "",
-    }).body,
+    feather.handle({ method: "PATCH", path: "/p", headers: Map([]), body: "", }).body,
     "patch",
   )
   assert_eq(
-    feather.handle({
-      method: "DELETE",
-      path: "/p",
-      headers: Map([]),
-      body: "",
-    }).body,
+    feather.handle({ method: "DELETE", path: "/p", headers: Map([]), body: "", }).body,
     "delete",
   )
   assert_eq(
@@ -613,12 +579,7 @@ test "Feather facade exposes verb and configuration helpers" {
     "options",
   )
   assert_eq(
-    feather.handle({
-      method: "POST",
-      path: "/any",
-      headers: Map([]),
-      body: "",
-    }).body,
+    feather.handle({ method: "POST", path: "/any", headers: Map([]), body: "", }).body,
     "POST",
   )
   assert_eq(feather.app.max_body_size, 8)
@@ -685,10 +646,7 @@ test "static_file_for decodes url escaped paths" {
     app.static_file_for("/assets/f%C3%BCr.txt"),
     Some("/srv/public/für.txt"),
   )
-  assert_eq(
-    app.static_file_for("/assets/a+b.txt"),
-    Some("/srv/public/a+b.txt"),
-  )
+  assert_eq(app.static_file_for("/assets/a+b.txt"), Some("/srv/public/a+b.txt"))
   assert_eq(app.static_file_for("/assets/%2e%2e/secret"), None)
   assert_eq(app.static_file_for("/assets/..%2fsecret"), None)
   assert_eq(app.static_file_for("/assets/a%00b"), None)
@@ -700,9 +658,7 @@ async test "explicit routes take precedence over static mounts" {
   @fs.write_file(dir + "/hello.txt", "from disk")
   let app = @feather.App::new()
     .static_files("/assets", dir)
-    .get("/assets/hello.txt", fn(ctx) {
-      ctx.text(200, "from route")
-    })
+    .get("/assets/hello.txt", fn(ctx) { ctx.text(200, "from route") })
   with_server(app, client => {
     let response = client.get("/assets/hello.txt")
     assert_eq(response.code, 200)

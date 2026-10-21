@@ -661,9 +661,7 @@ async test "dynamic precondition failures drop stale content range" {
   with_server(app, client => {
     let response = client.get(
       "/item",
-      extra_headers=Map([
-        (@http.CaseInsensitiveString("If-Match"), "\"stale\""),
-      ]),
+      extra_headers=Map([(@http.CaseInsensitiveString("If-Match"), "\"stale\"")]),
     )
     assert_eq(response.code, 412)
     assert_eq(

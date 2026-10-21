@@ -143,18 +143,18 @@ async fn send_with_date(
 
 ///|
 /// Size of the chunks read from a request body.
-const BODY_READ_CHUNK_SIZE : Int = 65536
+const BODY_READ_CHUNK_SIZE : Int32 = 65536
 
 ///|
 /// Upper bound on the buffer pre-sized from `Content-Length`.
-const BODY_SIZE_HINT_LIMIT : Int = 1048576
+const BODY_SIZE_HINT_LIMIT : Int32 = 1048576
 
 ///|
 /// `Content-Length` clamped to the body limit and the pre-size cap, or `0` when
 /// the header is absent or malformed.
-fn body_size_hint(request : @http.Request, limit : Int32) -> Int {
+fn body_size_hint(request : @http.Request, limit : Int32) -> Int32 {
   let limit_int = limit
-  let cap : Int = if limit_int < BODY_SIZE_HINT_LIMIT {
+  let cap : Int32 = if limit_int < BODY_SIZE_HINT_LIMIT {
     limit_int
   } else {
     BODY_SIZE_HINT_LIMIT
@@ -189,7 +189,7 @@ fn body_size_hint(request : @http.Request, limit : Int32) -> Int {
 async fn read_body_bytes(
   reader : &@io.Reader,
   limit : Int32,
-  size_hint~ : Int = 0,
+  size_hint~ : Int32 = 0,
 ) -> Bytes {
   let first = match reader.read_some(max_len=BODY_READ_CHUNK_SIZE) {
     None => return b""
@@ -201,8 +201,12 @@ async fn read_body_bytes(
   }
   let limit_int = limit
   let first_length = first.length()
-  let hint : Int = if size_hint > first_length {
-    if size_hint < limit_int { size_hint } else { limit_int }
+  let hint : Int32 = if size_hint > first_length {
+    if size_hint < limit_int {
+      size_hint
+    } else {
+      limit_int
+    }
   } else if first_length < limit_int {
     first_length
   } else {
@@ -230,7 +234,7 @@ async fn read_body_bytes(
 async fn read_body(
   reader : &@io.Reader,
   limit : Int32,
-  size_hint~ : Int = 0,
+  size_hint~ : Int32 = 0,
 ) -> String {
   @utf8.decode_lossy(read_body_bytes(reader, limit, size_hint~))
 }
@@ -242,13 +246,11 @@ async fn read_body(
 /// cannot expand without bound; a corrupt stream raises
 /// `MalformedRequestBody`.
 async fn decode_gzip_body(data : Bytes, limit : Int32) -> Bytes {
-  let reader = @io.MemoryReader(async fn(writer) {
-    writer.write(data)
-  })
+  let reader = @io.MemoryReader(async fn(writer) { writer.write(data) })
   defer reader.close()
   let decoder = @gzip.Decoder::Decoder(reader)
   let limit_int = limit
-  let hint : Int = if data.length() * 4 < limit_int {
+  let hint : Int32 = if data.length() * 4 < limit_int {
     data.length() * 4
   } else {
     limit_int
@@ -326,8 +328,10 @@ async fn request_from_http(
       }
     }
     let stale_length = gzip_encoded &&
-      (text.view().equal_ignore_ascii_case("content-encoding".view()) ||
-        text.view().equal_ignore_ascii_case("content-length".view()))
+      (
+        text.view().equal_ignore_ascii_case("content-encoding".view()) ||
+        text.view().equal_ignore_ascii_case("content-length".view())
+      )
     if !stale_length {
       headers.set(text, value)
     }
@@ -341,9 +345,7 @@ async fn request_from_http(
   } else {
     read_body_bytes(body, max_body_size, size_hint=body_hint)
   }
-  let strict_text : String? = try {
-    Some(@utf8.decode(raw_body))
-  } catch {
+  let strict_text : String? = Some(@utf8.decode(raw_body)) catch {
     @utf8.Malformed(_) => None
   }
   let (body_text, preserved) = match strict_text {
@@ -369,27 +371,27 @@ async fn request_from_http(
 /// but keeps the `Content-Type` derived from the original path.
 let validators_cache : Map[
   String,
-  (Int64, Int64, Int, (String, String), String),
+  (Int64, Int64, Int32, (String, String), String),
 ] = Map([])
 
 ///|
 /// Recency ticks for `validators_cache`, driving the shared LRU eviction.
-let validators_cache_ages : Map[String, Int] = Map([])
+let validators_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 /// Validators for precompressed representations, keyed by the source path.
 let gzip_validators_cache : Map[
   String,
-  (Int64, Int64, Int, (String, String), String),
+  (Int64, Int64, Int32, (String, String), String),
 ] = Map([])
 
 ///|
 /// Recency ticks for `gzip_validators_cache`.
-let gzip_validators_cache_ages : Map[String, Int] = Map([])
+let gzip_validators_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 /// Maximum number of files tracked by each validators cache.
-const VALIDATORS_CACHE_LIMIT : Int = 64
+const VALIDATORS_CACHE_LIMIT : Int32 = 64
 
 ///|
 /// Build the `ETag`, `Last-Modified` and `Content-Type` for a file from its
@@ -398,12 +400,16 @@ fn file_validators(
   path : String,
   size : Int64,
   mtime_secs : Int64,
-  mtime_nanos : Int,
+  mtime_nanos : Int32,
   cache_key~ : String,
   gzip~ : Bool = false,
 ) -> (String, String, String) {
   let cache = if gzip { gzip_validators_cache } else { validators_cache }
-  let ages = if gzip { gzip_validators_cache_ages } else { validators_cache_ages }
+  let ages = if gzip {
+    gzip_validators_cache_ages
+  } else {
+    validators_cache_ages
+  }
   match cache.get(cache_key) {
     Some((cached_size, cached_secs, cached_nanos, value, content_type)) =>
       if cached_size == size &&
@@ -512,9 +518,7 @@ async fn send_file_response(
       return
     }
   }
-  let mtime = handle.mtime() catch {
-    _ => (0L, 0)
-  }
+  let mtime = handle.mtime() catch { _ => (0L, 0) }
   let (mtime_secs, mtime_nanos) = mtime
   let (etag, last_modified, _) = file_validators(
     file.path,
@@ -544,12 +548,13 @@ async fn send_file_response(
       }
     None => mtime_secs
   }
-  match evaluate_preconditions(
-    request,
-    effective_etag,
-    effective_mtime,
-    head || request.meth is @http.Get,
-  ) {
+  match
+    evaluate_preconditions(
+      request,
+      effective_etag,
+      effective_mtime,
+      head || request.meth is @http.Get,
+    ) {
     PreconditionFailed => {
       send_static_error(
         conn,
@@ -652,11 +657,11 @@ let peer_host_cache : Map[@socket.Addr, String] = Map([])
 
 ///|
 /// Recency ticks for `peer_host_cache`.
-let peer_host_cache_ages : Map[@socket.Addr, Int] = Map([])
+let peer_host_cache_ages : Map[@socket.Addr, Int32] = Map([])
 
 ///|
 /// Maximum number of peer addresses tracked by `peer_host_cache`.
-const PEER_HOST_CACHE_LIMIT : Int = 64
+const PEER_HOST_CACHE_LIMIT : Int32 = 64
 
 ///|
 /// Host part of a peer address, without the ephemeral port.
@@ -695,7 +700,7 @@ fn socket_addr_host(addr : @socket.Addr) -> String {
 ///|
 /// UTF-8 byte length of a string, matching the size of `@utf8.encode`'s
 /// output. Invalid surrogate pairs abort, exactly like `@utf8.encode`.
-fn utf8_byte_length(view : StringView) -> Int {
+fn utf8_byte_length(view : StringView) -> Int32 {
   let length = view.length()
   let mut total = 0
   let mut i = 0
@@ -729,21 +734,19 @@ let header_name_cache : Map[String, @http.CaseInsensitiveString] = Map([])
 
 ///|
 /// Recency ticks for `header_name_cache`.
-let header_name_cache_ages : Map[String, Int] = Map([])
+let header_name_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 /// Maximum number of header names tracked by `header_name_cache`.
-const HEADER_NAME_CACHE_LIMIT : Int = 128
+const HEADER_NAME_CACHE_LIMIT : Int32 = 128
 
 ///|
 /// Request header name spellings, keyed case-insensitively.
-let request_header_name_cache : Map[@http.CaseInsensitiveString, String] = Map(
-  [],
-)
+let request_header_name_cache : Map[@http.CaseInsensitiveString, String] = Map([])
 
 ///|
 /// Recency ticks for `request_header_name_cache`.
-let request_header_name_ages : Map[@http.CaseInsensitiveString, Int] = Map([])
+let request_header_name_ages : Map[@http.CaseInsensitiveString, Int32] = Map([])
 
 ///|
 fn header_key(name : String) -> @http.CaseInsensitiveString {
@@ -1032,8 +1035,8 @@ async fn send_continue_if_expected(
   match request.headers.get(header_expect) {
     Some(value) =>
       if trim_ascii_space(value.view()).equal_ignore_ascii_case(
-        "100-continue".view(),
-      ) {
+          "100-continue".view(),
+        ) {
         conn.send_response(100, "Continue") catch {
           _ => ()
         }
@@ -1060,11 +1063,11 @@ let file_range_buffers : Array[FixedArray[Byte]] = []
 
 ///|
 /// Maximum number of range buffers retained.
-const FILE_RANGE_POOL_LIMIT : Int = 4
+const FILE_RANGE_POOL_LIMIT : Int32 = 4
 
 ///|
 /// Size of the range buffers.
-const FILE_RANGE_CHUNK_SIZE : Int = 65536
+const FILE_RANGE_CHUNK_SIZE : Int32 = 65536
 
 ///|
 fn acquire_file_range_buffer() -> FixedArray[Byte] {
@@ -1106,9 +1109,7 @@ async fn write_file_range(
     } else {
       chunk_size
     }
-    let read = file.read_at(buffer, position=position, len=want) catch {
-      _ => 0
-    }
+    let read = file.read_at(buffer, position~, len=want) catch { _ => 0 }
     if read <= 0 {
       break
     }
@@ -1155,7 +1156,7 @@ fn add_vary_header(headers : @http.Headers, value : String) -> Unit {
 fn static_base_headers(
   extra_headers : Map[String, String],
   cookies : Array[@http.Cookie],
-  capacity : Int,
+  capacity : Int32,
 ) -> @http.Headers {
   let headers : @http.Headers = Map(
     [],
@@ -1260,13 +1261,7 @@ async fn serve_static_file(
       }
       if gzip_handle is None {
         send_static_error(
-          conn,
-          extra_headers,
-          cookies,
-          head,
-          404,
-          "404 Not Found",
-          precompressed,
+          conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
         )
         return
       }
@@ -1317,25 +1312,15 @@ async fn serve_static_file(
         Some(base_file) => base_file
         None => {
           send_static_error(
-            conn,
-            extra_headers,
-            cookies,
-            head,
-            404,
-            "404 Not Found",
-            precompressed,
+            conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
           )
           return
         }
       }
   }
   defer file.close()
-  let size = file.size() catch {
-    _ => 0L
-  }
-  let mtime = file.mtime() catch {
-    _ => (0L, 0)
-  }
+  let size = file.size() catch { _ => 0L }
+  let mtime = file.mtime() catch { _ => (0L, 0) }
   let (mtime_secs, mtime_nanos) = mtime
   let (etag, last_modified, content_type_value) = file_validators(
     file_path,
@@ -1351,13 +1336,7 @@ async fn serve_static_file(
   match evaluate_preconditions(request, etag, mtime_secs, true) {
     PreconditionFailed => {
       send_static_error(
-        conn,
-        extra_headers,
-        cookies,
-        head,
-        412,
-        "412 Precondition Failed",
-        precompressed,
+        conn, extra_headers, cookies, head, 412, "412 Precondition Failed", precompressed,
       )
       return
     }
@@ -1461,7 +1440,7 @@ const STATIC_CHAIN_PASS_KEY : String = "__feather_static_pass"
 /// How long a graceful shutdown keeps serving (answering `503`) after all
 /// in-flight requests have finished, so idle kept-alive connections have a
 /// chance to observe the drain before the server task is cancelled.
-const GRACEFUL_DRAIN_SETTLE_MS : Int = 250
+const GRACEFUL_DRAIN_SETTLE_MS : Int32 = 250
 
 ///|
 /// Serve a static mount after running the application middleware chain.
@@ -1673,9 +1652,7 @@ async fn handle_websocket(
     send_context_response(conn, ctx, false, request)
     return
   }
-  let socket = @websocket.from_http_server(request, conn) catch {
-    _ => return
-  }
+  let socket = @websocket.from_http_server(request, conn) catch { _ => return }
   defer conn.close()
   defer socket.close()
   handler(ctx, socket) catch {
@@ -1839,7 +1816,12 @@ async fn handle_request(
   conn : @http.ServerConnection,
 ) -> Unit {
   if app.draining {
-    send_simple(conn, 503, "503 Service Unavailable", request.meth is @http.Head)
+    send_simple(
+      conn,
+      503,
+      "503 Service Unavailable",
+      request.meth is @http.Head,
+    )
     conn.close()
     return
   }
@@ -1865,13 +1847,7 @@ async fn handle_request(
             match app.resolve_stream_full(request.path) {
               Some((handler, params, middlewares)) => {
                 handle_stream(
-                  app,
-                  request,
-                  body,
-                  conn,
-                  handler,
-                  params,
-                  middlewares,
+                  app, request, body, conn, handler, params, middlewares,
                 )
                 return
               }
@@ -1899,14 +1875,7 @@ async fn handle_request(
     match app.static_lookup(request.path) {
       Some((file_path, cache_control, precompressed, mount)) => {
         handle_static(
-          app,
-          request,
-          body,
-          conn,
-          file_path,
-          cache_control,
-          precompressed,
-          mount,
+          app, request, body, conn, file_path, cache_control, precompressed, mount,
           head,
         )
         return
@@ -1966,11 +1935,9 @@ pub async fn App::serve_with(
   max_connections? : Int32,
 ) -> Unit {
   server.run_forever(
-    (
-      request : @http.Request,
-      body : &@io.Reader,
-      conn : @http.ServerConnection,
-    ) => handle_request(self, request, body, conn),
+    (request : @http.Request, body : &@io.Reader, conn : @http.ServerConnection) => {
+      handle_request(self, request, body, conn)
+    },
     max_connections?,
   )
 }
@@ -2030,7 +1997,7 @@ pub async fn App::serve_with_graceful_until(
   self : App,
   server : @http.Server,
   stop~ : async () -> Unit,
-  drain_timeout~ : Int = 0,
+  drain_timeout~ : Int32 = 0,
   max_connections? : Int32,
 ) -> Unit {
   let app = self
@@ -2087,13 +2054,9 @@ pub async fn App::serve_graceful_until(
   self : App,
   addr : @socket.Addr,
   stop~ : async () -> Unit,
-  drain_timeout~ : Int = 0,
+  drain_timeout~ : Int32 = 0,
 ) -> Unit {
-  self.serve_with_graceful_until(
-    @http.Server(addr),
-    stop~,
-    drain_timeout~,
-  )
+  self.serve_with_graceful_until(@http.Server(addr), stop~, drain_timeout~)
 }
 
 ///|
@@ -2154,7 +2117,7 @@ pub async fn Feather::serve_with_graceful_until(
   self : Feather,
   server : @http.Server,
   stop~ : async () -> Unit,
-  drain_timeout~ : Int = 0,
+  drain_timeout~ : Int32 = 0,
   max_connections? : Int32,
 ) -> Unit {
   self.app.serve_with_graceful_until(
@@ -2171,7 +2134,7 @@ pub async fn Feather::serve_with_graceful_until(
 pub async fn Feather::serve_graceful_until(
   self : Feather,
   stop~ : async () -> Unit,
-  drain_timeout~ : Int = 0,
+  drain_timeout~ : Int32 = 0,
 ) -> Unit {
   self.app.serve_graceful_until(self.resolve_addr(), stop~, drain_timeout~)
 }

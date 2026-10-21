@@ -31,18 +31,13 @@ test "context host strips the port" {
 
 ///|
 test "context protocol honors forwarded proto" {
-  assert_eq(
-    request_with_headers(Map([])).protocol(),
-    "http",
-  )
+  assert_eq(request_with_headers(Map([])).protocol(), "http")
   assert_eq(
     request_with_headers(Map([("X-Forwarded-Proto", "https")])).protocol(),
     "https",
   )
   assert_eq(
-    request_with_headers(
-      Map([("X-Forwarded-Proto", "https, http")]),
-    ).protocol(),
+    request_with_headers(Map([("X-Forwarded-Proto", "https, http")])).protocol(),
     "https",
   )
   assert_eq(
@@ -71,10 +66,7 @@ test "context full_url rebuilds the absolute url" {
     request_with_headers(Map([("Host", "example.com:8080")])).full_url(),
     "http://example.com:8080/users/42?tab=posts",
   )
-  assert_eq(
-    request_with_headers(Map([])).full_url(),
-    "/users/42?tab=posts",
-  )
+  assert_eq(request_with_headers(Map([])).full_url(), "/users/42?tab=posts")
 }
 
 ///|
@@ -86,9 +78,7 @@ test "context protocol honors forwarded params" {
     "https",
   )
   assert_eq(
-    request_with_headers(
-      Map([("Forwarded", "FOR=192.0.2.60;Proto=\"https\"")]),
-    ).protocol(),
+    request_with_headers(Map([("Forwarded", "FOR=192.0.2.60;Proto=\"https\"")])).protocol(),
     "https",
   )
   assert_eq(
@@ -113,9 +103,7 @@ test "context protocol honors forwarded params" {
     "https",
   )
   assert_eq(
-    request_with_headers(
-      Map([("Forwarded", "for=192.0.2.60;proto=")]),
-    ).protocol(),
+    request_with_headers(Map([("Forwarded", "for=192.0.2.60;proto=")])).protocol(),
     "http",
   )
 }
@@ -123,17 +111,13 @@ test "context protocol honors forwarded params" {
 ///|
 test "context is_secure honors forwarded params" {
   assert_true(
-    request_with_headers(
-      Map([("Forwarded", "for=192.0.2.60;proto=https")]),
-    ).is_secure(),
+    request_with_headers(Map([("Forwarded", "for=192.0.2.60;proto=https")])).is_secure(),
   )
   assert_true(
     request_with_headers(Map([("Forwarded", "proto=HTTPS")])).is_secure(),
   )
   assert_false(
-    request_with_headers(
-      Map([("Forwarded", "for=192.0.2.60;proto=http")]),
-    ).is_secure(),
+    request_with_headers(Map([("Forwarded", "for=192.0.2.60;proto=http")])).is_secure(),
   )
 }
 
@@ -158,15 +142,10 @@ test "context forwarded_authority honors proxy host headers" {
     "public.example:9443",
   )
   assert_eq(
-    request_with_headers(
-      Map([("Host", "example.com:8080")]),
-    ).forwarded_authority(),
+    request_with_headers(Map([("Host", "example.com:8080")])).forwarded_authority(),
     "example.com:8080",
   )
-  assert_eq(
-    request_with_headers(Map([])).forwarded_authority(),
-    "",
-  )
+  assert_eq(request_with_headers(Map([])).forwarded_authority(), "")
 }
 
 ///|
@@ -194,21 +173,15 @@ test "context full_url honors forwarded host" {
 ///|
 test "context forwarded_ip parses the Forwarded header" {
   assert_eq(
-    request_with_headers(
-      Map([("Forwarded", "for=192.0.2.60:8080;proto=http")]),
-    ).forwarded_ip(),
+    request_with_headers(Map([("Forwarded", "for=192.0.2.60:8080;proto=http")])).forwarded_ip(),
     "192.0.2.60",
   )
   assert_eq(
-    request_with_headers(
-      Map([("Forwarded", "for=\"[2001:db8::1]:4711\"")]),
-    ).forwarded_ip(),
+    request_with_headers(Map([("Forwarded", "for=\"[2001:db8::1]:4711\"")])).forwarded_ip(),
     "[2001:db8::1]",
   )
   assert_eq(
-    request_with_headers(
-      Map([("Forwarded", "for=\"192\\.0\\.2\\.60\"")]),
-    ).forwarded_ip(),
+    request_with_headers(Map([("Forwarded", "for=\"192\\.0\\.2\\.60\"")])).forwarded_ip(),
     "192.0.2.60",
   )
   assert_eq(
@@ -239,19 +212,13 @@ test "context forwarded_ip parses the Forwarded header" {
 test "context forwarded helpers skip empty proxy values" {
   assert_eq(
     request_with_headers(
-      Map([
-        ("X-Forwarded-Host", " , internal"),
-        ("Host", "fallback.example"),
-      ]),
+      Map([("X-Forwarded-Host", " , internal"), ("Host", "fallback.example")]),
     ).forwarded_authority(),
     "fallback.example",
   )
   assert_eq(
     request_with_headers(
-      Map([
-        ("X-Real-IP", "  "),
-        ("Host", "fallback.example"),
-      ]),
+      Map([("X-Real-IP", "  "), ("Host", "fallback.example")]),
     ).forwarded_ip(),
     "127.0.0.1",
   )

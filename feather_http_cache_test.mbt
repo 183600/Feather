@@ -29,42 +29,84 @@ test "parse_http_date rejects malformed values" {
 
 ///|
 test "parse_byte_range handles the single range forms" {
-  assert_eq(@feather.parse_byte_range("bytes=0-4", 10L) is @feather.ByteRangeSpec(0L, 4L), true)
-  assert_eq(@feather.parse_byte_range("bytes=5-", 10L) is @feather.ByteRangeSpec(5L, 9L), true)
-  assert_eq(@feather.parse_byte_range("bytes=-3", 10L) is @feather.ByteRangeSpec(7L, 9L), true)
-  assert_eq(@feather.parse_byte_range("bytes=-100", 10L) is @feather.ByteRangeSpec(0L, 9L), true)
-  assert_eq(@feather.parse_byte_range("bytes=0-100", 10L) is @feather.ByteRangeSpec(0L, 9L), true)
-  assert_eq(@feather.parse_byte_range("bytes=10-", 10L) is @feather.ByteRangeInvalid, true)
-  assert_eq(@feather.parse_byte_range("bytes=12-14", 10L) is @feather.ByteRangeInvalid, true)
-  assert_eq(@feather.parse_byte_range("bytes=-0", 10L) is @feather.ByteRangeInvalid, true)
-  assert_eq(@feather.parse_byte_range("bytes=-1", 0L) is @feather.ByteRangeInvalid, true)
-  assert_eq(@feather.parse_byte_range("bytes=0-", 0L) is @feather.ByteRangeInvalid, true)
-  assert_eq(@feather.parse_byte_range("bytes=5-3", 10L) is @feather.ByteRangeFull, true)
-  assert_eq(@feather.parse_byte_range("items=0-4", 10L) is @feather.ByteRangeFull, true)
-  assert_eq(@feather.parse_byte_range("bytes=0-1,4-5", 10L) is @feather.ByteRangeFull, true)
+  assert_eq(
+    @feather.parse_byte_range("bytes=0-4", 10L)
+    is @feather.ByteRangeSpec(0L, 4L),
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=5-", 10L) is @feather.ByteRangeSpec(5L, 9L),
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=-3", 10L) is @feather.ByteRangeSpec(7L, 9L),
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=-100", 10L)
+    is @feather.ByteRangeSpec(0L, 9L),
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=0-100", 10L)
+    is @feather.ByteRangeSpec(0L, 9L),
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=10-", 10L) is @feather.ByteRangeInvalid,
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=12-14", 10L) is @feather.ByteRangeInvalid,
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=-0", 10L) is @feather.ByteRangeInvalid,
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=-1", 0L) is @feather.ByteRangeInvalid,
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=0-", 0L) is @feather.ByteRangeInvalid,
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=5-3", 10L) is @feather.ByteRangeFull,
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("items=0-4", 10L) is @feather.ByteRangeFull,
+    true,
+  )
+  assert_eq(
+    @feather.parse_byte_range("bytes=0-1,4-5", 10L) is @feather.ByteRangeFull,
+    true,
+  )
 }
 
 ///|
 test "parse_byte_range handles offsets beyond 100MB" {
   let total = 1_000_000_000L
   assert_eq(
-    @feather.parse_byte_range("bytes=500000000-", total) is
-    @feather.ByteRangeSpec(500000000L, 999999999L),
+    @feather.parse_byte_range("bytes=500000000-", total)
+    is @feather.ByteRangeSpec(500000000L, 999999999L),
     true,
   )
   assert_eq(
-    @feather.parse_byte_range("bytes=200000000-300000000", total) is
-    @feather.ByteRangeSpec(200000000L, 300000000L),
+    @feather.parse_byte_range("bytes=200000000-300000000", total)
+    is @feather.ByteRangeSpec(200000000L, 300000000L),
     true,
   )
   assert_eq(
-    @feather.parse_byte_range("bytes=-600000000", total) is
-    @feather.ByteRangeSpec(400000000L, 999999999L),
+    @feather.parse_byte_range("bytes=-600000000", total)
+    is @feather.ByteRangeSpec(400000000L, 999999999L),
     true,
   )
   assert_eq(
-    @feather.parse_byte_range("bytes=1000000000-", total) is
-    @feather.ByteRangeInvalid,
+    @feather.parse_byte_range("bytes=1000000000-", total)
+    is @feather.ByteRangeInvalid,
     true,
   )
 }
@@ -124,15 +166,15 @@ test "Context add_cookie records several cookies" {
 test "middleware logger with duration reports timing" {
   let lines : Array[String] = []
   let app = @feather.App::new()
-    .use(@feather.middleware_logger(log=line => lines.push(line), with_duration=true))
+    .use(
+      @feather.middleware_logger(
+        log=line => lines.push(line),
+        with_duration=true,
+      ),
+    )
     .get("/timed", fn(ctx) { ctx.text(200, "ok") })
   ignore(
-    app.respond({
-      method: "GET",
-      path: "/timed",
-      headers: Map([]),
-      body: "",
-    }),
+    app.respond({ method: "GET", path: "/timed", headers: Map([]), body: "", }),
   )
   assert_eq(lines.length(), 1)
   assert_true(lines[0].has_prefix("[200] GET /timed ("))
@@ -180,7 +222,10 @@ test "middleware cors supports credentials and preflight options" {
     ctx.response.headers.get("Access-Control-Allow-Credentials"),
     Some("true"),
   )
-  assert_eq(ctx.response.headers.get("Access-Control-Expose-Headers"), Some("X-Total"))
+  assert_eq(
+    ctx.response.headers.get("Access-Control-Expose-Headers"),
+    Some("X-Total"),
+  )
   assert_eq(ctx.response.headers.get("Vary"), Some("Origin"))
   let preflight = @feather.Context::new({
     method: "OPTIONS",
@@ -252,9 +297,8 @@ async test "server serves conditional static responses" {
       Some(etag) => etag
       None => fail("missing ETag")
     }
-    let last_modified = match first.headers.get(
-      @http.CaseInsensitiveString("Last-Modified"),
-    ) {
+    let last_modified = match
+      first.headers.get(@http.CaseInsensitiveString("Last-Modified")) {
       Some(value) => value
       None => fail("missing Last-Modified")
     }
@@ -391,9 +435,18 @@ test "mime_type_for covers modern asset types" {
     @feather.mime_type_for("app.webmanifest"),
     "application/manifest+json; charset=utf-8",
   )
-  assert_eq(@feather.mime_type_for("bundle.js.map"), "application/json; charset=utf-8")
-  assert_eq(@feather.mime_type_for("config.yaml"), "application/yaml; charset=utf-8")
-  assert_eq(@feather.mime_type_for("config.toml"), "application/toml; charset=utf-8")
+  assert_eq(
+    @feather.mime_type_for("bundle.js.map"),
+    "application/json; charset=utf-8",
+  )
+  assert_eq(
+    @feather.mime_type_for("config.yaml"),
+    "application/yaml; charset=utf-8",
+  )
+  assert_eq(
+    @feather.mime_type_for("config.toml"),
+    "application/toml; charset=utf-8",
+  )
   assert_eq(@feather.mime_type_for("clip.webm"), "video/webm")
   assert_eq(@feather.mime_type_for("song.ogg"), "audio/ogg")
   assert_eq(@feather.mime_type_for("photo.avif"), "image/avif")
@@ -402,7 +455,10 @@ test "mime_type_for covers modern asset types" {
 ///|
 test "mime_type_for covers office media and archive types" {
   assert_eq(@feather.mime_type_for("movie.mkv"), "video/x-matroska")
-  assert_eq(@feather.mime_type_for("clip.m3u8"), "application/vnd.apple.mpegurl")
+  assert_eq(
+    @feather.mime_type_for("clip.m3u8"),
+    "application/vnd.apple.mpegurl",
+  )
   assert_eq(@feather.mime_type_for("track.flac"), "audio/flac")
   assert_eq(@feather.mime_type_for("voice.opus"), "audio/ogg")
   assert_eq(@feather.mime_type_for("scan.TIFF"), "image/tiff")
@@ -415,13 +471,19 @@ test "mime_type_for covers office media and archive types" {
     @feather.mime_type_for("sheet.xlsx"),
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   )
-  assert_eq(@feather.mime_type_for("slides.pptx"), "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+  assert_eq(
+    @feather.mime_type_for("slides.pptx"),
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  )
   assert_eq(@feather.mime_type_for("book.epub"), "application/epub+zip")
   assert_eq(@feather.mime_type_for("events.ics"), "text/calendar")
   assert_eq(@feather.mime_type_for("subs.vtt"), "text/vtt")
   assert_eq(@feather.mime_type_for("bundle.7z"), "application/x-7z-compressed")
   assert_eq(@feather.mime_type_for("archive.zst"), "application/zstd")
-  assert_eq(@feather.mime_type_for("fonts.eot"), "application/vnd.ms-fontobject")
+  assert_eq(
+    @feather.mime_type_for("fonts.eot"),
+    "application/vnd.ms-fontobject",
+  )
 }
 
 ///|
@@ -517,9 +579,8 @@ async test "server keeps representation headers on revalidated queued files" {
       Some("public, max-age=60"),
     )
     assert_true(
-      revalidated.headers.get(
-        @http.CaseInsensitiveString("Last-Modified"),
-      ) is Some(_),
+      revalidated.headers.get(@http.CaseInsensitiveString("Last-Modified"))
+      is Some(_),
     )
     assert_eq(
       revalidated.headers.get(@http.CaseInsensitiveString("Content-Type")),
@@ -566,18 +627,20 @@ test "Router url_for appends sorted query parameters" {
     }),
   )
   assert_eq(
-    app.url_for(
-      "user_posts",
-      params={ "id": "7" },
-      query={ "page": "2", "q": "hello world" },
-    ),
+    app.url_for("user_posts", params={ "id": "7" }, query={
+      "page": "2",
+      "q": "hello world",
+    }),
     Some("/users/7/posts?page=2&q=hello%20world"),
   )
   assert_eq(
     app.url_for("user_posts", params={ "id": "7" }),
     Some("/users/7/posts"),
   )
-  assert_eq(app.url_for("user_posts", params={ "id": "7" }, query={}), Some("/users/7/posts"))
+  assert_eq(
+    app.url_for("user_posts", params={ "id": "7" }, query={}),
+    Some("/users/7/posts"),
+  )
 }
 
 ///|

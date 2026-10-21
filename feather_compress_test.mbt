@@ -1,8 +1,6 @@
 ///|
 async fn decode_gzip_body(data : Bytes) -> Bytes {
-  let reader = @io.MemoryReader(async fn(writer) {
-    writer.write(data)
-  })
+  let reader = @io.MemoryReader(async fn(writer) { writer.write(data) })
   defer reader.close()
   let decoder = @gzip.Decoder::Decoder(reader)
   decoder.read_all().binary()
@@ -73,9 +71,9 @@ test "base64 round trips every byte value" {
 ///|
 async test "server compresses responses for gzip clients" {
   let payload = "feather compression payload ".repeat(128)
-  let app = @feather.App::new().compress(min_size=16).get("/big", fn(ctx) {
-    ctx.text(200, payload)
-  })
+  let app = @feather.App::new()
+    .compress(min_size=16)
+    .get("/big", fn(ctx) { ctx.text(200, payload) })
   with_server(app, client => {
     let response = client.get(
       "/big",
@@ -101,9 +99,14 @@ async test "server compresses responses for gzip clients" {
 
 ///|
 async test "server compresses json responses" {
-  let app = @feather.App::new().compress(min_size=16).get("/json", fn(ctx) {
-    ctx.json_value(200, Json::object({ "data": Json::string("v".repeat(512)) }))
-  })
+  let app = @feather.App::new()
+    .compress(min_size=16)
+    .get("/json", fn(ctx) {
+      ctx.json_value(
+        200,
+        Json::object({ "data": Json::string("v".repeat(512)) }),
+      )
+    })
   with_server(app, client => {
     let response = client.get(
       "/json",
@@ -122,9 +125,9 @@ async test "server compresses json responses" {
 ///|
 async test "server leaves bodies plain for identity clients" {
   let payload = "plain body ".repeat(128)
-  let app = @feather.App::new().compress(min_size=16).get("/big", fn(ctx) {
-    ctx.text(200, payload)
-  })
+  let app = @feather.App::new()
+    .compress(min_size=16)
+    .get("/big", fn(ctx) { ctx.text(200, payload) })
   with_server(app, client => {
     let response = client.get(
       "/big",
@@ -140,10 +143,12 @@ async test "server leaves bodies plain for identity clients" {
 ///|
 async test "compression merges into a case-insensitively spelled Vary" {
   let payload = "vary merge payload ".repeat(128)
-  let app = @feather.App::new().compress(min_size=16).get("/big", fn(ctx) {
-    ctx.set_header("vary", "Origin")
-    ctx.text(200, payload)
-  })
+  let app = @feather.App::new()
+    .compress(min_size=16)
+    .get("/big", fn(ctx) {
+      ctx.set_header("vary", "Origin")
+      ctx.text(200, payload)
+    })
   with_server(app, client => {
     let response = client.get(
       "/big",
@@ -158,9 +163,9 @@ async test "compression merges into a case-insensitively spelled Vary" {
 
 ///|
 async test "server honors gzip rejection quality value" {
-  let app = @feather.App::new().compress(min_size=16).get("/big", fn(ctx) {
-    ctx.text(200, "body ".repeat(128))
-  })
+  let app = @feather.App::new()
+    .compress(min_size=16)
+    .get("/big", fn(ctx) { ctx.text(200, "body ".repeat(128)) })
   with_server(app, client => {
     let response = client.get(
       "/big",
@@ -174,9 +179,9 @@ async test "server honors gzip rejection quality value" {
 
 ///|
 async test "server skips compression below the configured size" {
-  let app = @feather.App::new().compress(min_size=4096).get("/small", fn(ctx) {
-    ctx.text(200, "tiny body")
-  })
+  let app = @feather.App::new()
+    .compress(min_size=4096)
+    .get("/small", fn(ctx) { ctx.text(200, "tiny body") })
   with_server(app, client => {
     let response = client.get(
       "/small",
@@ -191,13 +196,10 @@ async test "server skips compression below the configured size" {
 
 ///|
 async test "server skips compression for binary content types" {
-  let binary = Bytes::from_fixedarray(
-    FixedArray::make(768, b'\x07'),
-    len=768,
-  )
-  let app = @feather.App::new().compress(min_size=1).get("/bin", fn(ctx) {
-    ctx.bytes(200, binary)
-  })
+  let binary = Bytes::from_fixedarray(FixedArray::make(768, b'\x07'), len=768)
+  let app = @feather.App::new()
+    .compress(min_size=1)
+    .get("/bin", fn(ctx) { ctx.bytes(200, binary) })
   with_server(app, client => {
     let response = client.get(
       "/bin",
@@ -213,9 +215,7 @@ async test "server skips compression for binary content types" {
 ///|
 async test "server does not compress when disabled" {
   let payload = "uncompressed ".repeat(128)
-  let app = @feather.App::new().get("/plain", fn(ctx) {
-    ctx.text(200, payload)
-  })
+  let app = @feather.App::new().get("/plain", fn(ctx) { ctx.text(200, payload) })
   with_server(app, client => {
     let response = client.get(
       "/plain",
@@ -232,10 +232,12 @@ async test "server does not compress when disabled" {
 async test "feather facade can enable compression" {
   let payload = "facade compression ".repeat(128)
   let feather = @feather.create_feather({
-    host: "127.0.0.1",
-    port: 0,
-    timeout: 0,
-  }).compress(min_size=16).get("/big", fn(ctx) { ctx.text(200, payload) })
+      host: "127.0.0.1",
+      port: 0,
+      timeout: 0,
+    })
+    .compress(min_size=16)
+    .get("/big", fn(ctx) { ctx.text(200, payload) })
   with_server(feather.app, client => {
     let response = client.get(
       "/big",

@@ -46,9 +46,7 @@ test "Context inline encodes non-ascii file names too" {
   ctx.inline("图片.png")
   assert_eq(
     ctx.response.headers.get("Content-Disposition"),
-    Some(
-      "inline; filename=\"__.png\"; filename*=UTF-8''%E5%9B%BE%E7%89%87.png",
-    ),
+    Some("inline; filename=\"__.png\"; filename*=UTF-8''%E5%9B%BE%E7%89%87.png"),
   )
 }
 

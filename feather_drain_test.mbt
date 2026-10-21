@@ -9,7 +9,7 @@ fn drain_block_ms(ms : Int64) -> Unit {
 }
 
 ///|
-async fn drain_port_refuses(port : Int) -> Bool {
+async fn drain_port_refuses(port : Int32) -> Bool {
   try {
     @async.with_timeout(2000, () => {
       let conn = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{port}"))
@@ -24,7 +24,11 @@ async fn drain_port_refuses(port : Int) -> Bool {
 
 ///|
 /// Read from `conn` until `needle` shows up or `max_iters` read attempts pass.
-async fn drain_read_until(conn : @socket.Tcp, needle : String, max_iters : Int) -> String {
+async fn drain_read_until(
+  conn : @socket.Tcp,
+  needle : String,
+  max_iters : Int32,
+) -> String {
   let mut received = ""
   let mut iters = 0
   while !received.contains(needle) && iters < max_iters {
@@ -101,7 +105,7 @@ async test "graceful shutdown waits for in-flight requests to finish" {
     group.spawn_bg(no_wait=true, () => {
       app.serve_with_graceful_until(
         server,
-        stop=() => { @async.sleep(120) },
+        stop=() => @async.sleep(120),
         drain_timeout=3000,
       )
       finished.val = true
@@ -143,7 +147,7 @@ async test "graceful shutdown cancels a stalled request after the drain timeout"
       started.val = true
       app.serve_with_graceful_until(
         server,
-        stop=() => { @async.sleep(150) },
+        stop=() => @async.sleep(150),
         drain_timeout=200,
       )
       finished.val = true
@@ -177,25 +181,21 @@ async test "graceful shutdown refuses new requests on kept-alive connections" {
     group.spawn_bg(no_wait=true, () => {
       app.serve_with_graceful_until(
         server,
-        stop=() => { @async.sleep(150) },
+        stop=() => @async.sleep(150),
         drain_timeout=2000,
       )
       finished.val = true
     })
     @async.sleep(50)
     let conn = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{port}"))
-    conn.write(
-      @utf8.encode("GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"),
-    )
+    conn.write(@utf8.encode("GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"))
     let first = drain_read_until(conn, "hi", 100)
     assert_true(first.contains("200 OK"))
     assert_true(first.contains("hi"))
     // The drain starts once `stop` (150ms) resolves; send a second request on
     // the same kept-alive connection while the server is draining.
     @async.sleep(170)
-    conn.write(
-      @utf8.encode("GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"),
-    )
+    conn.write(@utf8.encode("GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"))
     let second = drain_read_until(conn, "503", 100)
     conn.close()
     assert_true(second.contains("503"))
@@ -220,7 +220,7 @@ async test "graceful shutdown closes the listener before draining" {
     group.spawn_bg(no_wait=true, () => {
       app.serve_with_graceful_until(
         server,
-        stop=() => { @async.sleep(120) },
+        stop=() => @async.sleep(120),
         drain_timeout=3000,
       )
       finished.val = true

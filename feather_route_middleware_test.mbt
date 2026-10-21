@@ -43,7 +43,9 @@ test "route middleware only guards its own route" {
     }
   }
   let app = @feather.App::new()
-    .route_with("GET", "/private", [auth_gate], fn(ctx) { ctx.text(200, "secret") })
+    .route_with("GET", "/private", [auth_gate], fn(ctx) {
+      ctx.text(200, "secret")
+    })
     .get("/public", fn(ctx) { ctx.text(200, "public") })
   let denied = app.respond({
     method: "GET",
@@ -110,18 +112,23 @@ test "group middleware wraps route middleware" {
     }),
   )
   ignore(
-    api.route_with("GET", "/items", [
-      fn(next) {
-        fn(ctx) raise {
-          order.push("route")
-          next(ctx)
-          order.push("route_end")
-        }
+    api.route_with(
+      "GET",
+      "/items",
+      [
+        fn(next) {
+          fn(ctx) raise {
+            order.push("route")
+            next(ctx)
+            order.push("route_end")
+          }
+        },
+      ],
+      fn(ctx) {
+        order.push("handler")
+        ctx.text(200, "items")
       },
-    ], fn(ctx) {
-      order.push("handler")
-      ctx.text(200, "items")
-    }),
+    ),
   )
   let response = app.respond({
     method: "GET",
@@ -136,8 +143,9 @@ test "group middleware wraps route middleware" {
 
 ///|
 test "route_with without middleware behaves like route" {
-  let app = @feather.App::new()
-    .route_with("GET", "/ping", [], fn(ctx) { ctx.text(200, "pong") })
+  let app = @feather.App::new().route_with("GET", "/ping", [], fn(ctx) {
+    ctx.text(200, "pong")
+  })
   let response = app.respond({
     method: "GET",
     path: "/ping",
@@ -150,7 +158,11 @@ test "route_with without middleware behaves like route" {
 
 ///|
 test "Feather facade route_with registers guarded routes" {
-  let feather = @feather.create_feather({ host: "127.0.0.1", port: 0, timeout: 0, })
+  let feather = @feather.create_feather({
+    host: "127.0.0.1",
+    port: 0,
+    timeout: 0,
+  })
   let auth_gate : @feather.Middleware = fn(next) {
     fn(ctx) raise {
       if ctx.header("Authorization") == "Bearer token" {
@@ -205,9 +217,7 @@ async test "sse route middleware can reject or decorate the stream" {
           }
         },
       ],
-      async fn(_ctx, sse) {
-        sse.send("live")
-      },
+      async fn(_ctx, sse) { sse.send("live") },
     )
   with_sse_server(app, client => {
     let rejected = client.get("/events")
@@ -283,9 +293,7 @@ async test "stream route middleware can reject or tailor the stream" {
         }
       },
     ],
-    async fn(_ctx, stream) {
-      stream.write("live")
-    },
+    async fn(_ctx, stream) { stream.write("live") },
   )
   with_stream_server(app, client => {
     let rejected = client.get("/feed")

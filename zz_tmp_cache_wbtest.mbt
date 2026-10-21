@@ -153,8 +153,12 @@ test "tmp route cache randomized invalidation" {
   let methods : Array[String] = ["GET", "POST", "HEAD"]
   let routes : Array[(String, String)] = []
   let router = create_router()
-  let templates : Array[String] = ["/a", "/b", "/p/:id", "/p/:id/x", "/f/*rest", "/"]
-  let paths : Array[String] = ["/a", "/b", "/p/1", "/p/1/x", "/f/a/b", "/none", "/"]
+  let templates : Array[String] = [
+    "/a", "/b", "/p/:id", "/p/:id/x", "/f/*rest", "/",
+  ]
+  let paths : Array[String] = [
+    "/a", "/b", "/p/1", "/p/1/x", "/f/a/b", "/none", "/",
+  ]
   let mut seed = 13579
   let next = fn() {
     seed = (seed * 1103515245 + 12345) & 0x7fffffff
@@ -165,20 +169,23 @@ test "tmp route cache randomized invalidation" {
       let method = methods[next() % methods.length()]
       let template = templates[next() % templates.length()]
       routes.push((method, template))
-      router.add_route(method, template, fn(_ctx) { })
+      router.add_route(method, template, fn(_ctx) {  })
     }
     let query_method = methods[next() % methods.length()]
     let query_path = paths[next() % paths.length()]
     let actual = tmp_route_snapshot(router.route(query_method, query_path))
     let fresh = create_router()
     for route in routes {
-      fresh.add_route(route.0, route.1, fn(_ctx) { })
+      fresh.add_route(route.0, route.1, fn(_ctx) {  })
     }
     let expected = tmp_route_snapshot(fresh.route(query_method, query_path))
     if actual != expected {
-      fail("mismatch after \{routes.length()} routes for \{query_method} \{query_path}: \{actual} vs \{expected}")
+      fail(
+        "mismatch after \{routes.length()} routes for \{query_method} \{query_path}: \{actual} vs \{expected}",
+      )
     }
-    let dispatch_actual = match router.match_route(query_method, query_path.view()) {
+    let dispatch_actual = match
+      router.match_route(query_method, query_path.view()) {
       MatchFound(node, params, wildcard) => {
         let keys : Array[String] = []
         match params {
@@ -194,7 +201,8 @@ test "tmp route cache randomized invalidation" {
       MatchMethods(methods) => "methods|\{methods.join(",")}"
       MatchMissing => "missing"
     }
-    let dispatch_expected = match fresh.match_route(query_method, query_path.view()) {
+    let dispatch_expected = match
+      fresh.match_route(query_method, query_path.view()) {
       MatchFound(node, params, wildcard) => {
         let keys : Array[String] = []
         match params {
@@ -211,7 +219,9 @@ test "tmp route cache randomized invalidation" {
       MatchMissing => "missing"
     }
     if dispatch_actual != dispatch_expected {
-      fail("dispatch mismatch for \{query_method} \{query_path}: \{dispatch_actual} vs \{dispatch_expected}")
+      fail(
+        "dispatch mismatch for \{query_method} \{query_path}: \{dispatch_actual} vs \{dispatch_expected}",
+      )
     }
   }
 }

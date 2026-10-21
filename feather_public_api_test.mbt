@@ -1,11 +1,6 @@
 ///|
 fn api_ctx(method : String, path : String) -> @feather.Context {
-  @feather.Context::new({
-    method,
-    path,
-    headers: Map([]),
-    body: "",
-  })
+  @feather.Context::new({ method, path, headers: Map([]), body: "", })
 }
 
 ///|
@@ -47,12 +42,11 @@ test "multipart_boundary reads quoted and bare boundary parameters" {
 
 ///|
 test "multipart_boundary requires the exact multipart/form-data media type" {
+  assert_eq(@feather.multipart_boundary("text/plain; boundary=abc"), None)
   assert_eq(
-    @feather.multipart_boundary("text/plain; boundary=abc"),
-    None,
-  )
-  assert_eq(
-    @feather.multipart_boundary("text/plain; x=multipart/form-data; boundary=abc"),
+    @feather.multipart_boundary(
+      "text/plain; x=multipart/form-data; boundary=abc",
+    ),
     None,
   )
   assert_eq(

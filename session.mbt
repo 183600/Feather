@@ -13,7 +13,7 @@ pub(all) struct Session {
   mut destroyed : Bool
   mut regenerate : Bool
   mut flash_pending : Map[String, Array[String]]?
-  mut flash_pending_bytes : Int
+  mut flash_pending_bytes : Int32
   mut json_cache : Map[String, (String, Json)]?
 }
 
@@ -30,7 +30,7 @@ const SESSION_SWEEP_INTERVAL : Int64 = 60_000L
 /// session has expired yet, an arbitrary session is dropped so
 /// unauthenticated traffic cannot grow the store without bound within a TTL
 /// window.
-const SESSION_STORE_MAX_SESSIONS : Int = 10_000
+const SESSION_STORE_MAX_SESSIONS : Int32 = 10_000
 
 ///|
 /// In-memory session storage for a single server process.
@@ -63,7 +63,7 @@ fn time_seed() -> Bytes {
     state = state * 6364136223846793005L + 1442695040888963407L
     let value = state
     for j = 0; j < 8; j = j + 1 {
-      out[i * 8 + j] = (((value >> (j * 8)) & 255L).to_int()).to_byte()
+      out[i * 8 + j] = ((value >> (j * 8)) & 255L).to_int().to_byte()
     }
   }
   out.unsafe_reinterpret_as_bytes()
@@ -107,7 +107,11 @@ pub fn SessionStore::new(ttl~ : Int64 = DEFAULT_SESSION_TTL) -> SessionStore {
   {
     sessions: Map([]),
     rng: platform_rand(),
-    ttl: if ttl <= 0L { DEFAULT_SESSION_TTL } else { ttl },
+    ttl: if ttl <= 0L {
+      DEFAULT_SESSION_TTL
+    } else {
+      ttl
+    },
     last_sweep: 0L,
   }
 }
@@ -259,7 +263,7 @@ pub fn SessionStore::destroy(self : SessionStore, id : String) -> Unit {
 
 ///|
 /// Number of live (and not yet swept) sessions in the store.
-pub fn SessionStore::count(self : SessionStore) -> Int {
+pub fn SessionStore::count(self : SessionStore) -> Int32 {
   self.sessions.length()
 }
 
@@ -408,9 +412,7 @@ fn session_parse_json_into_cache(
   key : String,
   text : String,
 ) -> Json? {
-  let parsed : Json = @json.parse(text) catch {
-    _ => return None
-  }
+  let parsed : Json = @json.parse(text) catch { _ => return None }
   let cache = match session.json_cache {
     Some(cache) => cache
     None => {

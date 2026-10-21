@@ -58,7 +58,12 @@ priv struct ResponseValidators {
 #inline
 fn response_validators(headers : Map[String, String]) -> ResponseValidators {
   if headers.is_empty() {
-    return { etag: None, cache_control: None, last_modified: None, content_range: false }
+    return {
+      etag: None,
+      cache_control: None,
+      last_modified: None,
+      content_range: false,
+    }
   }
   let mut etag : String? = None
   let mut cache_control : String? = None
@@ -78,7 +83,7 @@ fn response_validators(headers : Map[String, String]) -> ResponseValidators {
       content_range = true
     }
   })
-  { etag, cache_control, last_modified, content_range }
+  { etag, cache_control, last_modified, content_range, }
 }
 
 ///|
@@ -102,7 +107,8 @@ fn apply_etag(response : Response) -> Unit {
   }
   let validators = response_validators(response.headers)
   let no_store = match validators.cache_control {
-    Some(control) => cache_control_has_directive(control.view(), "no-store".view())
+    Some(control) =>
+      cache_control_has_directive(control.view(), "no-store".view())
     None => false
   }
   if validators.etag is Some(_) || validators.content_range || no_store {
@@ -196,7 +202,8 @@ fn apply_preconditions_input(
       }
     }
   }
-  match evaluate_preconditions_input(input, etag, mtime_secs, allows_not_modified) {
+  match
+    evaluate_preconditions_input(input, etag, mtime_secs, allows_not_modified) {
     PreconditionPass => ()
     PreconditionNotModified => {
       response.status = 304
@@ -238,9 +245,7 @@ fn precondition_input_http(
 /// Parse the precondition headers of a facade request (the offline
 /// `App::respond` path) once, together with whether the method allows a
 /// `304 Not Modified` answer.
-fn precondition_input_facade(
-  request : Request,
-) -> (PreconditionInput, Bool) {
+fn precondition_input_facade(request : Request) -> (PreconditionInput, Bool) {
   let method = normalize_method(request.method)
   (
     precondition_input_from_map(request.headers),
@@ -324,12 +329,8 @@ fn precheck_preconditions(
   if response_etag is None && input.if_match is Some(_) {
     return (false, input)
   }
-  match evaluate_preconditions_input(
-    input,
-    etag,
-    mtime_secs,
-    allows_not_modified,
-  ) {
+  match
+    evaluate_preconditions_input(input, etag, mtime_secs, allows_not_modified) {
     PreconditionFailed => {
       apply_preconditions_input(input, allows_not_modified, response)
       (true, input)

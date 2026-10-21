@@ -244,10 +244,7 @@ async test "generated etag satisfies if-match next to last-modified" {
     let first = client.get("/lm")
     let etag = first.headers.get(etag_key).unwrap()
     assert_eq(client.read_all().text(), "hello world")
-    let matched = client.get(
-      "/lm",
-      extra_headers=Map([(if_match_key, etag)]),
-    )
+    let matched = client.get("/lm", extra_headers=Map([(if_match_key, etag)]))
     assert_eq(matched.code, 200)
     assert_eq(client.read_all().text(), "hello world")
     let stale = client.get(
@@ -340,10 +337,7 @@ async test "generated etags evaluate if-match before if-none-match" {
     ignore(client.read_all())
     let stale = client.get(
       "/guard",
-      extra_headers=Map([
-        (if_match_key, "\"stale\""),
-        (if_none_match_key, "*"),
-      ]),
+      extra_headers=Map([(if_match_key, "\"stale\""), (if_none_match_key, "*")]),
     )
     assert_eq(stale.code, 412)
     assert_eq(client.read_all().text(), "412 Precondition Failed")

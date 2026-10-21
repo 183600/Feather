@@ -1,6 +1,9 @@
 ///|
 test "decode_utf8_lossless keeps valid utf8 intact" {
-  assert_eq(decode_utf8_lossless(@utf8.encode("héllo 世界")), "héllo 世界")
+  assert_eq(
+    decode_utf8_lossless(@utf8.encode("héllo 世界")),
+    "héllo 世界",
+  )
 }
 
 ///|
@@ -15,19 +18,12 @@ test "decode_utf8_lossless escapes invalid bytes as code units" {
 
 ///|
 test "lossless codec round trips arbitrary bytes" {
-  for bytes in [
-    b"",
-    b"\x00\x01\x02\x7f",
-    b"\x80\xbf\xc0\xc1\xf5\xff",
-    b"\xe4\xb8\x96\xe7\x95\x8c",
-    b"\xf0\x9f\x98\x80",
-    b"\xff\xfe\x00binary\x80",
-    b"\xe0\x80\x80",
-    b"\xed\xa0\x80\xed\xb0\x80",
-    b"\xf0\x80\x80\x80",
-    b"\xf4\x90\x80\x80",
-    b"\xe0\xa0\x80\xf0\x90\x80\x80",
-  ] {
+  for
+    bytes in [
+      b"", b"\x00\x01\x02\x7f", b"\x80\xbf\xc0\xc1\xf5\xff", b"\xe4\xb8\x96\xe7\x95\x8c",
+      b"\xf0\x9f\x98\x80", b"\xff\xfe\x00binary\x80", b"\xe0\x80\x80", b"\xed\xa0\x80\xed\xb0\x80",
+      b"\xf0\x80\x80\x80", b"\xf4\x90\x80\x80", b"\xe0\xa0\x80\xf0\x90\x80\x80",
+    ] {
     assert_eq(encode_utf8_lossless(decode_utf8_lossless(bytes)), bytes)
   }
 }

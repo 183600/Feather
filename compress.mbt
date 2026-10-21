@@ -12,7 +12,7 @@ pub fn App::compress(self : App, min_size~ : Int32 = 1024) -> App {
 }
 
 ///|
-fn parse_quality(value : StringView) -> Int {
+fn parse_quality(value : StringView) -> Int32 {
   let length = value.length()
   if length == 0 {
     return 0
@@ -111,12 +111,16 @@ fn content_type_is_compressible(content_type : StringView) -> Bool {
   }
 }
 
+///|
 let header_accept_encoding : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
   "Accept-Encoding",
 )
 
 ///|
-fn contains_ignore_ascii_case(haystack : StringView, needle : StringView) -> Bool {
+fn contains_ignore_ascii_case(
+  haystack : StringView,
+  needle : StringView,
+) -> Bool {
   find_view_ignore_ascii_case(haystack, needle, 0) is Some(_)
 }
 
@@ -143,8 +147,8 @@ priv struct ChunkSink {
 }
 
 ///|
-fn ChunkSink::new(size_hint : Int) -> ChunkSink {
-  { buffer: @buffer.Buffer::Buffer(size_hint=size_hint) }
+fn ChunkSink::new(size_hint : Int32) -> ChunkSink {
+  { buffer: @buffer.Buffer::Buffer(size_hint~), }
 }
 
 ///|
@@ -162,7 +166,7 @@ fn ChunkSink::to_bytes(self : ChunkSink) -> Bytes {
 
 ///|
 /// Input chunk size fed to the gzip encoder between scheduler yields.
-const GZIP_CHUNK_SIZE : Int = 65536
+const GZIP_CHUNK_SIZE : Int32 = 65536
 
 ///|
 async fn gzip_compress(data : Bytes) -> Bytes {
@@ -208,7 +212,8 @@ async fn compress_response(
     return
   }
   // Without a compressible `Content-Type` there is nothing else to decide.
-  let content_type = match get_header_ignore_case(response.headers, "Content-Type") {
+  let content_type = match
+    get_header_ignore_case(response.headers, "Content-Type") {
     Some(value) => value.view()
     None => return
   }

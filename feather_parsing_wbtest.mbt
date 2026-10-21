@@ -29,10 +29,7 @@ test "accept quality ignores fractional values above one" {
 
 ///|
 test "accept encoding quality rejects fractional values above one" {
-  assert_eq(
-    accept_encoding_quality("gzip;q=1.5".view(), "gzip".view()),
-    0,
-  )
+  assert_eq(accept_encoding_quality("gzip;q=1.5".view(), "gzip".view()), 0)
   assert_true(accept_encoding_allows_gzip("gzip;q=1.0".view()))
   assert_false(accept_encoding_allows_gzip("gzip;q=1.5".view()))
 }

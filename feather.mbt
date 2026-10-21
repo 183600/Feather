@@ -72,13 +72,13 @@ pub type Handler = (Context) -> Unit raise
 pub type Middleware = (Handler) -> Handler
 
 ///|
-pub type WebSocketHandler = async (Context, @websocket.Conn) -> Unit raise
+pub type WebSocketHandler = async (Context, @websocket.Conn) -> Unit
 
 ///|
-pub type SseHandler = async (Context, Sse) -> Unit raise
+pub type SseHandler = async (Context, Sse) -> Unit
 
 ///|
-pub type StreamHandler = async (Context, Stream) -> Unit raise
+pub type StreamHandler = async (Context, Stream) -> Unit
 
 ///|
 pub(all) struct Route {
@@ -100,7 +100,7 @@ pub struct RouteNode {
   mut has_dynamic : Bool
   mut param_names : Array[String]
   mut param_keys : Array[String]
-  mut pattern_kinds : Array[Int]
+  mut pattern_kinds : Array[Int32]
   mut route_wildcard_name : String
   mut route_wildcard_key : String
   mut exact_cache : Map[String, RouteNode]?
@@ -116,11 +116,14 @@ pub(all) struct NamedRoute {
 pub(all) struct Router {
   trees : Map[String, RouteNode]
   named : Map[String, NamedRoute]
-  dynamic_caches : Map[String, Map[String, (RouteNode, Map[String, String]?, String)]]
+  dynamic_caches : Map[
+    String,
+    Map[String, (RouteNode, Map[String, String]?, String)],
+  ]
   miss_caches : Map[String, Map[String, String]]
   miss_method_caches : Map[String, Map[String, Array[String]]]
-  dynamic_cache_ages : Map[String, Map[String, Int]]
-  miss_cache_ages : Map[String, Map[String, Int]]
+  dynamic_cache_ages : Map[String, Map[String, Int32]]
+  miss_cache_ages : Map[String, Map[String, Int32]]
 }
 
 ///|
@@ -287,10 +290,10 @@ fn match_dynamic_node(
   let start = skip_slashes(path, pos)
   if start >= path.length() {
     if node.handler is Some(_) {
-      return Some({ node, wildcard_start: -1 })
+      return Some({ node, wildcard_start: -1, })
     }
     return match node.wildcard_child {
-      Some(child) => Some({ node: child, wildcard_start: pos })
+      Some(child) => Some({ node: child, wildcard_start: pos, })
       None => None
     }
   }
@@ -316,7 +319,7 @@ fn match_dynamic_node(
     None => ()
   }
   match node.wildcard_child {
-    Some(child) => Some({ node: child, wildcard_start: pos })
+    Some(child) => Some({ node: child, wildcard_start: pos, })
     None => None
   }
 }
@@ -440,7 +443,7 @@ pub fn Router::add_route(
   let root = node
   let param_names : Array[String] = []
   let param_keys : Array[String] = []
-  let pattern_kinds : Array[Int] = []
+  let pattern_kinds : Array[Int32] = []
   let mut route_wildcard_name = ""
   let mut route_wildcard_key = ""
   let mut is_static = true
@@ -817,11 +820,17 @@ fn render_allow_header_value(allowed : Array[String]) -> String {
 /// Most recent method/path pair resolved for a router and its node/bindings.
 /// `add_route` invalidates it.
 let last_route_trees : Ref[Map[String, RouteNode]?] = Ref(None)
+
+///|
 let last_route_method : Ref[String] = Ref("")
+
+///|
 let last_route_path : Ref[String] = Ref("")
-let last_route_hit : Ref[(RouteNode, Map[String, String]?, String)?] = Ref(
-  None,
-)
+
+///|
+let last_route_hit : Ref[(RouteNode, Map[String, String]?, String)?] = Ref(None)
+
+///|
 let last_route_valid : Ref[Bool] = Ref(false)
 
 ///|
@@ -913,7 +922,7 @@ fn Router::find_node_raw(
   let ages = match self.dynamic_cache_ages.get(tree_key) {
     Some(ages) => ages
     None => {
-      let ages : Map[String, Int] = Map([])
+      let ages : Map[String, Int32] = Map([])
       self.dynamic_cache_ages.set(tree_key, ages)
       ages
     }
@@ -952,14 +961,14 @@ fn Router::find_node_raw(
 
 ///|
 /// Maximum number of paths kept by a per-method dynamic dispatch cache.
-const DYNAMIC_CACHE_LIMIT : Int = 256
+const DYNAMIC_CACHE_LIMIT : Int32 = 256
 
 ///|
 /// Insert into a per-method dynamic dispatch cache, evicting the least recently
 /// used entry when the cache is full.
 fn remember_dynamic_hit(
   cache : Map[String, (RouteNode, Map[String, String]?, String)],
-  ages : Map[String, Int],
+  ages : Map[String, Int32],
   clean_path : StringView,
   hit : (RouteNode, Map[String, String]?, String),
 ) -> Unit {
@@ -1040,7 +1049,7 @@ fn Router::find_miss_cache(
 
 ///|
 /// Maximum number of method/path entries kept by the negative caches.
-const MISS_CACHE_LIMIT : Int = 256
+const MISS_CACHE_LIMIT : Int32 = 256
 
 ///|
 fn Router::remember_miss(
@@ -1060,7 +1069,7 @@ fn Router::remember_miss(
   let ages = match self.miss_cache_ages.get(meth) {
     Some(ages) => ages
     None => {
-      let ages : Map[String, Int] = Map([])
+      let ages : Map[String, Int32] = Map([])
       self.miss_cache_ages.set(meth, ages)
       ages
     }
@@ -1100,12 +1109,18 @@ fn Router::remember_miss_methods(
   let ages = match self.miss_cache_ages.get(meth) {
     Some(ages) => ages
     None => {
-      let ages : Map[String, Int] = Map([])
+      let ages : Map[String, Int32] = Map([])
       self.miss_cache_ages.set(meth, ages)
       ages
     }
   }
-  cache_set(cache, ages, MISS_CACHE_LIMIT, clean_path.to_owned(), methods.copy())
+  cache_set(
+    cache,
+    ages,
+    MISS_CACHE_LIMIT,
+    clean_path.to_owned(),
+    methods.copy(),
+  )
 }
 
 ///|
@@ -1233,16 +1248,15 @@ fn Router::match_route(
       result
     }
     MatchMethods(methods) => {
-      last_route_miss.val = Some((
-        self.trees,
-        meth,
-        clean_path.to_owned(),
-        Some(methods.copy()),
-      ))
+      last_route_miss.val = Some(
+        (self.trees, meth, clean_path.to_owned(), Some(methods.copy())),
+      )
       result
     }
     MatchMissing => {
-      last_route_miss.val = Some((self.trees, meth, clean_path.to_owned(), None))
+      last_route_miss.val = Some(
+        (self.trees, meth, clean_path.to_owned(), None),
+      )
       result
     }
   }
@@ -1385,9 +1399,15 @@ pub fn problem_response(
   ctx.file = None
   ctx.response.status = status
   clear_replaced_body_headers(ctx.response.headers)
-  set_header_ignore_case(ctx.response.headers, "Content-Type", PROBLEM_CONTENT_TYPE)
+  set_header_ignore_case(
+    ctx.response.headers,
+    "Content-Type",
+    PROBLEM_CONTENT_TYPE,
+  )
   ctx.response.data = None
-  ctx.response.body = build_problem_document(status, type_name, title, detail, instance)
+  ctx.response.body = build_problem_document(
+    status, type_name, title, detail, instance,
+  )
 }
 
 ///|
@@ -1404,7 +1424,11 @@ fn negotiated_error_body(
 ) -> Unit {
   clear_replaced_body_headers(ctx.response.headers)
   if ctx.wants_problem_details() {
-    set_header_ignore_case(ctx.response.headers, "Content-Type", PROBLEM_CONTENT_TYPE)
+    set_header_ignore_case(
+      ctx.response.headers,
+      "Content-Type",
+      PROBLEM_CONTENT_TYPE,
+    )
     ctx.response.data = None
     ctx.response.body = build_problem_document(
       status,
@@ -1414,7 +1438,11 @@ fn negotiated_error_body(
       "",
     )
   } else {
-    set_header_ignore_case(ctx.response.headers, "Content-Type", plain_content_type)
+    set_header_ignore_case(
+      ctx.response.headers,
+      "Content-Type",
+      plain_content_type,
+    )
     ctx.response.data = None
     ctx.response.body = plain_body
   }
@@ -1425,11 +1453,7 @@ pub fn not_found(ctx : Context) -> Unit {
   ctx.file = None
   ctx.response.status = 404
   negotiated_error_body(
-    ctx,
-    404,
-    "text/plain; charset=utf-8",
-    "404 Not Found",
-    "",
+    ctx, 404, "text/plain; charset=utf-8", "404 Not Found", "",
   )
 }
 
@@ -1439,11 +1463,7 @@ fn method_not_allowed_with_allow(ctx : Context, allow : String) -> Unit {
   ctx.response.status = 405
   set_header_ignore_case(ctx.response.headers, "Allow", allow)
   negotiated_error_body(
-    ctx,
-    405,
-    "text/plain; charset=utf-8",
-    "405 Method Not Allowed",
-    "",
+    ctx, 405, "text/plain; charset=utf-8", "405 Method Not Allowed", "",
   )
 }
 
@@ -1478,11 +1498,7 @@ pub fn internal_error(ctx : Context, detail : String) -> Unit {
   ctx.state.set("error", detail)
   ctx.response.status = 500
   negotiated_error_body(
-    ctx,
-    500,
-    "text/plain; charset=utf-8",
-    "Internal Server Error",
-    "",
+    ctx, 500, "text/plain; charset=utf-8", "Internal Server Error", "",
   )
 }
 
@@ -1491,7 +1507,7 @@ let error_body_cache : Map[Int32, Map[String, String]] = Map([])
 
 ///|
 /// Recency ticks for the cached error bodies, keyed by status and message.
-let error_body_cache_ages : Map[Int32, Map[String, Int]] = Map([])
+let error_body_cache_ages : Map[Int32, Map[String, Int32]] = Map([])
 
 ///|
 /// Cache of the problem-details rendering of the same errors, kept apart from
@@ -1499,7 +1515,7 @@ let error_body_cache_ages : Map[Int32, Map[String, Int]] = Map([])
 let problem_body_cache : Map[Int32, Map[String, String]] = Map([])
 
 ///|
-let problem_body_cache_ages : Map[Int32, Map[String, Int]] = Map([])
+let problem_body_cache_ages : Map[Int32, Map[String, Int32]] = Map([])
 
 ///|
 /// Look up `status`/`message` in `cache`, building and storing the body on a
@@ -1507,7 +1523,7 @@ let problem_body_cache_ages : Map[Int32, Map[String, Int]] = Map([])
 /// and the whole cache past 32 statuses; `build` renders on demand either way.
 fn error_body_from_cache(
   cache : Map[Int32, Map[String, String]],
-  ages_by_status : Map[Int32, Map[String, Int]],
+  ages_by_status : Map[Int32, Map[String, Int32]],
   status : Int32,
   message : String,
   build : () -> String,
@@ -1527,7 +1543,7 @@ fn error_body_from_cache(
   let ages = match ages_by_status.get(status) {
     Some(ages) => ages
     None => {
-      let ages : Map[String, Int] = Map([], capacity=4)
+      let ages : Map[String, Int32] = Map([], capacity=4)
       ages_by_status.set(status, ages)
       ages
     }
@@ -1549,12 +1565,18 @@ fn error_body_from_cache(
 
 ///|
 fn cached_error_body(status : Int32, message : String) -> String {
-  error_body_from_cache(error_body_cache, error_body_cache_ages, status, message, fn() {
-    let payload : Map[String, Json] = Map([], capacity=2)
-    payload.set("status", Json::number(status.to_double()))
-    payload.set("error", Json::string(message))
-    Json::object(payload).stringify()
-  })
+  error_body_from_cache(
+    error_body_cache,
+    error_body_cache_ages,
+    status,
+    message,
+    fn() {
+      let payload : Map[String, Json] = Map([], capacity=2)
+      payload.set("status", Json::number(status.to_double()))
+      payload.set("error", Json::string(message))
+      Json::object(payload).stringify()
+    },
+  )
 }
 
 ///|
@@ -1566,7 +1588,9 @@ fn cached_problem_body(status : Int32, message : String) -> String {
     problem_body_cache_ages,
     status,
     message,
-    fn() { build_problem_document(status, "", status_text(status), message, "") },
+    fn() {
+      build_problem_document(status, "", status_text(status), message, "")
+    },
   )
 }
 
@@ -1576,11 +1600,19 @@ pub fn error_response(ctx : Context, status : Int32, message : String) -> Unit {
   ctx.response.status = status
   clear_replaced_body_headers(ctx.response.headers)
   if ctx.wants_problem_details() {
-    set_header_ignore_case(ctx.response.headers, "Content-Type", PROBLEM_CONTENT_TYPE)
+    set_header_ignore_case(
+      ctx.response.headers,
+      "Content-Type",
+      PROBLEM_CONTENT_TYPE,
+    )
     ctx.response.data = None
     ctx.response.body = cached_problem_body(status, message)
   } else {
-    set_header_ignore_case(ctx.response.headers, "Content-Type", "application/json; charset=utf-8")
+    set_header_ignore_case(
+      ctx.response.headers,
+      "Content-Type",
+      "application/json; charset=utf-8",
+    )
     ctx.response.data = None
     ctx.response.body = cached_error_body(status, message)
   }
@@ -1615,15 +1647,21 @@ pub fn error_response_with_payload(
   ctx.response.status = status
   clear_replaced_body_headers(ctx.response.headers)
   if problem {
-    set_header_ignore_case(ctx.response.headers, "Content-Type", PROBLEM_CONTENT_TYPE)
+    set_header_ignore_case(
+      ctx.response.headers,
+      "Content-Type",
+      PROBLEM_CONTENT_TYPE,
+    )
   } else {
-    set_header_ignore_case(ctx.response.headers, "Content-Type", "application/json; charset=utf-8")
+    set_header_ignore_case(
+      ctx.response.headers,
+      "Content-Type",
+      "application/json; charset=utf-8",
+    )
   }
   ctx.response.data = None
   ctx.response.body = Json::object(body).stringify()
 }
-
-
 
 ///|
 pub fn Context::fail(
@@ -1753,7 +1791,7 @@ let param_key_cache : Map[String, String] = Map([])
 
 ///|
 /// Recency ticks for `param_key_cache`.
-let param_key_cache_ages : Map[String, Int] = Map([])
+let param_key_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 fn param_state_key(name : String) -> String {
@@ -1869,9 +1907,7 @@ pub fn Context::html(self : Context, status : Int32, body : String) -> Unit {
 ///|
 pub fn json_object(data : Map[String, String]) -> Json {
   let object : Map[String, Json] = Map([], capacity=data.length())
-  data.each(fn(key, value) {
-    object.set(key, Json::string(value))
-  })
+  data.each(fn(key, value) { object.set(key, Json::string(value)) })
   Json::object(object)
 }
 
@@ -2036,7 +2072,7 @@ let host_cache : Map[StringView, String] = Map([])
 
 ///|
 /// Recency ticks for `host_cache`.
-let host_cache_ages : Map[StringView, Int] = Map([])
+let host_cache_ages : Map[StringView, Int32] = Map([])
 
 ///|
 /// The host name from the `Host` header, without the port.
@@ -2296,12 +2332,11 @@ pub fn Context::forwarded_ip(self : Context) -> String {
   let forwarded = self.header("Forwarded")
   if forwarded != "" {
     match forwarded_first_param(forwarded.view(), "for".view()) {
-      Some(value) => {
+      Some(value) =>
         match normalize_forwarded_for(value.view()) {
           Some(ip) => return ip
           None => ()
         }
-      }
       None => ()
     }
   }
@@ -2355,14 +2390,15 @@ fn parse_cookie_map(header : StringView) -> Map[String, String] {
       }
       if eq < stop {
         let mut name_end = eq
-        while name_end > start && is_cookie_whitespace(header.unsafe_get(name_end - 1)) {
+        while name_end > start &&
+              is_cookie_whitespace(header.unsafe_get(name_end - 1)) {
           name_end = name_end - 1
         }
         if name_end > start {
           let name = header[start:name_end].to_owned()
           let mut raw_start = eq + 1
           while raw_start < stop &&
-            is_cookie_whitespace(header.unsafe_get(raw_start)) {
+                is_cookie_whitespace(header.unsafe_get(raw_start)) {
             raw_start = raw_start + 1
           }
           let value = if stop - raw_start >= 2 &&
@@ -2386,28 +2422,28 @@ fn parse_cookie_map(header : StringView) -> Map[String, String] {
 
 ///|
 /// Maximum number of entries kept in the parse caches.
-const PARSE_CACHE_LIMIT : Int = 128
+const PARSE_CACHE_LIMIT : Int32 = 128
 
 ///|
 /// Maximum key length stored in the parse caches.
-const PARSE_CACHE_MAX_KEY : Int = 4096
+const PARSE_CACHE_MAX_KEY : Int32 = 4096
 
 ///|
 /// Monotonic tick used by the bounded caches to approximate LRU eviction.
-let cache_clock : Ref[Int] = Ref(0)
+let cache_clock : Ref[Int32] = Ref(0)
 
 ///|
 /// How many entries an eviction samples before dropping the oldest one seen.
-const CACHE_EVICT_SAMPLE : Int = 4
+const CACHE_EVICT_SAMPLE : Int32 = 4
 
 ///|
 /// Refresh a hit entry's recency tick only once the clock has moved this far
 /// past it.
-const CACHE_TOUCH_INTERVAL : Int = 16
+const CACHE_TOUCH_INTERVAL : Int32 = 16
 
 ///|
 /// Return a fresh tick, marking the entry that uses it as most recent.
-fn cache_advance() -> Int {
+fn cache_advance() -> Int32 {
   cache_clock.val = cache_clock.val + 1
   cache_clock.val
 }
@@ -2415,13 +2451,10 @@ fn cache_advance() -> Int {
 ///|
 /// Record `key` as recently used unless its recorded tick is still close to the
 /// current clock.
-fn[K : Hash + Eq] cache_touch(ages : Map[K, Int], key : K) -> Unit {
+fn[K : Hash + Eq] cache_touch(ages : Map[K, Int32], key : K) -> Unit {
   let now = cache_clock.val
   match ages.get(key) {
-    Some(tick) =>
-      if now - tick < CACHE_TOUCH_INTERVAL {
-        return
-      }
+    Some(tick) => if now - tick < CACHE_TOUCH_INTERVAL { return }
     None => ()
   }
   ages.set(key, cache_advance())
@@ -2430,7 +2463,10 @@ fn[K : Hash + Eq] cache_touch(ages : Map[K, Int], key : K) -> Unit {
 ///|
 /// Evict one entry, sampling a few candidates and dropping the one with the
 /// oldest tick. The victim is approximate rather than exact LRU.
-fn[K : Hash + Eq, V] cache_evict(cache : Map[K, V], ages : Map[K, Int]) -> Unit {
+fn[K : Hash + Eq, V] cache_evict(
+  cache : Map[K, V],
+  ages : Map[K, Int32],
+) -> Unit {
   let mut oldest : K? = None
   let mut oldest_tick = 0
   let mut sampled = 0
@@ -2466,8 +2502,8 @@ fn[K : Hash + Eq, V] cache_evict(cache : Map[K, V], ages : Map[K, Int]) -> Unit 
 /// the cache is full.
 fn[K : Hash + Eq, V] cache_set(
   cache : Map[K, V],
-  ages : Map[K, Int],
-  limit : Int,
+  ages : Map[K, Int32],
+  limit : Int32,
   key : K,
   value : V,
 ) -> Unit {
@@ -2482,7 +2518,7 @@ fn[K : Hash + Eq, V] cache_set(
 /// Insert into one of the parse caches.
 fn[K : Hash + Eq, V] parse_cache_set(
   cache : Map[K, V],
-  ages : Map[K, Int],
+  ages : Map[K, Int32],
   key : K,
   value : V,
 ) -> Unit {
@@ -2495,7 +2531,7 @@ let cookies_cache : Map[String, Map[String, String]] = Map([])
 
 ///|
 /// Recency ticks for `cookies_cache`.
-let cookies_cache_ages : Map[String, Int] = Map([])
+let cookies_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 /// Last parsed query strings, keyed by the raw text after `?`.
@@ -2503,11 +2539,13 @@ let queries_cache : Map[StringView, Map[String, String]] = Map([])
 
 ///|
 /// Recency ticks for `queries_cache`.
-let queries_cache_ages : Map[StringView, Int] = Map([])
+let queries_cache_ages : Map[StringView, Int32] = Map([])
 
 ///|
 /// Most recently resolved `Cookie` header and its parsed map.
 let last_cookie_header : Ref[String?] = Ref(None)
+
+///|
 let last_cookie_map : Ref[Map[String, String]?] = Ref(None)
 
 ///|
@@ -2543,11 +2581,13 @@ fn cookie_map_lookup(header : String) -> Map[String, String] {
 ///|
 /// Most recently scanned path and the position of its `?`.
 let last_query_index_path : Ref[String?] = Ref(None)
-let last_query_index : Ref[Int] = Ref(-1)
+
+///|
+let last_query_index : Ref[Int32] = Ref(-1)
 
 ///|
 /// Position of `?` in `path` for the most recent path.
-fn path_query_index(path : String) -> Int? {
+fn path_query_index(path : String) -> Int32? {
   match last_query_index_path.val {
     Some(cached) =>
       if physical_equal(cached, path) {
@@ -2573,11 +2613,15 @@ fn path_query_index(path : String) -> Int? {
 ///|
 /// Most recently resolved query string and its parsed map.
 let last_query_path : Ref[String?] = Ref(None)
-let last_query_start : Ref[Int] = Ref(-1)
+
+///|
+let last_query_start : Ref[Int32] = Ref(-1)
+
+///|
 let last_query_map : Ref[Map[String, String]?] = Ref(None)
 
 ///|
-fn query_map_lookup(path : String, index : Int) -> Map[String, String] {
+fn query_map_lookup(path : String, index : Int32) -> Map[String, String] {
   match last_query_path.val {
     Some(cached_path) =>
       if physical_equal(cached_path, path) && last_query_start.val == index {
@@ -2611,7 +2655,11 @@ fn query_map_lookup(path : String, index : Int) -> Map[String, String] {
 ///|
 /// Most recently resolved multi-value query string and its parsed map.
 let last_query_multi_path : Ref[String?] = Ref(None)
-let last_query_multi_start : Ref[Int] = Ref(-1)
+
+///|
+let last_query_multi_start : Ref[Int32] = Ref(-1)
+
+///|
 let last_query_multi_map : Ref[Map[String, Array[String]]?] = Ref(None)
 
 ///|
@@ -2620,13 +2668,17 @@ let queries_multi_cache : Map[StringView, Map[String, Array[String]]] = Map([])
 
 ///|
 /// Recency ticks for `queries_multi_cache`.
-let queries_multi_cache_ages : Map[StringView, Int] = Map([])
+let queries_multi_cache_ages : Map[StringView, Int32] = Map([])
 
 ///|
-fn query_multi_lookup(path : String, index : Int) -> Map[String, Array[String]] {
+fn query_multi_lookup(
+  path : String,
+  index : Int32,
+) -> Map[String, Array[String]] {
   match last_query_multi_path.val {
     Some(cached_path) =>
-      if physical_equal(cached_path, path) && last_query_multi_start.val == index {
+      if physical_equal(cached_path, path) &&
+        last_query_multi_start.val == index {
         match last_query_multi_map.val {
           Some(cached_map) => return cached_map
           None => ()
@@ -2643,7 +2695,9 @@ fn query_multi_lookup(path : String, index : Int) -> Map[String, Array[String]] 
     None => {
       let parsed = parse_urlencoded_multi(source)
       if source.length() <= PARSE_CACHE_MAX_KEY {
-        parse_cache_set(queries_multi_cache, queries_multi_cache_ages, source, parsed)
+        parse_cache_set(
+          queries_multi_cache, queries_multi_cache_ages, source, parsed,
+        )
       }
       parsed
     }
@@ -2657,6 +2711,8 @@ fn query_multi_lookup(path : String, index : Int) -> Map[String, Array[String]] 
 ///|
 /// Most recently resolved url-encoded form body and its parsed map.
 let last_form_body : Ref[String?] = Ref(None)
+
+///|
 let last_form_map : Ref[Map[String, String]?] = Ref(None)
 
 ///|
@@ -2683,6 +2739,8 @@ fn form_map_lookup(body : String) -> Map[String, String] {
 /// Most recently resolved multi-value url-encoded form body and its parsed map.
 /// Kept under the same size guard as `form_map_lookup`.
 let last_form_values_body : Ref[String?] = Ref(None)
+
+///|
 let last_form_values_map : Ref[Map[String, Array[String]]?] = Ref(None)
 
 ///|
@@ -2709,7 +2767,11 @@ fn form_values_lookup(body : String) -> Map[String, Array[String]] {
 /// Most recently resolved multipart body, the content type it was parsed with
 /// and its parsed parts.
 let last_multipart_body : Ref[String?] = Ref(None)
+
+///|
 let last_multipart_content_type : Ref[String?] = Ref(None)
+
+///|
 let last_multipart_parts : Ref[Array[MultipartPart]?] = Ref(None)
 
 ///|
@@ -3015,7 +3077,11 @@ fn build_cookie(
   let clean_domain = match domain {
     Some(value) => {
       let cleaned = sanitize_cookie_domain(value)
-      if cleaned == "" { None } else { Some(cleaned) }
+      if cleaned == "" {
+        None
+      } else {
+        Some(cleaned)
+      }
     }
     None => None
   }
@@ -3035,10 +3101,10 @@ fn build_cookie(
     sanitize_cookie_token(name, true),
     sanitize_cookie_token(value, false),
     path?=clean_path,
-    max_age?=max_age,
+    max_age?,
     domain?=clean_domain,
-    http_only=http_only,
-    secure=secure,
+    http_only~,
+    secure~,
     extensions~,
   )
 }
@@ -3201,7 +3267,7 @@ pub fn Context::request_id(self : Context) -> String {
 }
 
 ///|
-fn parse_int_value(value : StringView) -> Int? {
+fn parse_int_value(value : StringView) -> Int32? {
   let length = value.length()
   if length == 0 {
     return None
@@ -3249,7 +3315,7 @@ fn parse_bool_value(value : StringView) -> Bool? {
 }
 
 ///|
-pub fn Context::param_int(self : Context, name : String) -> Int? {
+pub fn Context::param_int(self : Context, name : String) -> Int32? {
   parse_int_value(self.param(name).view())
 }
 
@@ -3259,7 +3325,7 @@ pub fn Context::param_bool(self : Context, name : String) -> Bool? {
 }
 
 ///|
-pub fn Context::query_int(self : Context, name : String) -> Int? {
+pub fn Context::query_int(self : Context, name : String) -> Int32? {
   parse_int_value(self.query(name).view())
 }
 
@@ -3282,7 +3348,10 @@ pub fn Context::get_json(self : Context, key : String) -> Json? {
 /// Register `cleanup` to run when the request finishes, whether the handler
 /// succeeded or failed. Cleanups run in reverse registration order and are
 /// best-effort: a cleanup that raises does not stop the others.
-pub fn Context::defer_cleanup(self : Context, cleanup : () -> Unit raise) -> Unit {
+pub fn Context::defer_cleanup(
+  self : Context,
+  cleanup : () -> Unit raise,
+) -> Unit {
   self.cleanups.push(cleanup)
 }
 
@@ -3337,9 +3406,7 @@ fn content_disposition_attachment(name : String) -> String {
 pub fn Context::run_cleanups(self : Context) -> Unit {
   while self.cleanups.length() > 0 {
     match self.cleanups.pop() {
-      Some(cleanup) => cleanup() catch {
-        _ => ()
-      }
+      Some(cleanup) => cleanup() catch { _ => () }
       None => ()
     }
   }
@@ -3477,7 +3544,7 @@ fn trim_ascii_space(view : StringView) -> StringView {
 
 ///|
 #inline
-fn hex_digit(value : Int) -> Int {
+fn hex_digit(value : Int32) -> Int32 {
   if value >= 48 && value <= 57 {
     value - 48
   } else if value >= 65 && value <= 70 {
@@ -3597,7 +3664,7 @@ fn is_url_unreserved(value : Int32) -> Bool {
 
 ///|
 #inline
-fn percent_hex_byte(value : Int) -> Byte {
+fn percent_hex_byte(value : Int32) -> Byte {
   if value < 10 {
     (b'0'.to_int() + value).to_byte()
   } else {
@@ -3607,7 +3674,11 @@ fn percent_hex_byte(value : Int) -> Byte {
 
 ///|
 #inline
-fn write_percent_to(out : FixedArray[Byte], offset : Int, value : Int) -> Unit {
+fn write_percent_to(
+  out : FixedArray[Byte],
+  offset : Int32,
+  value : Int32,
+) -> Unit {
   out[offset] = b'%'
   out[offset + 1] = percent_hex_byte(value / 16)
   out[offset + 2] = percent_hex_byte(value % 16)
@@ -3616,6 +3687,8 @@ fn write_percent_to(out : FixedArray[Byte], offset : Int, value : Int) -> Unit {
 ///|
 /// Most recently encoded source string and its result.
 let last_url_encode_source : Ref[String?] = Ref(None)
+
+///|
 let last_url_encode_value : Ref[String] = Ref("")
 
 ///|
@@ -3724,7 +3797,7 @@ let base64_alphabet : Bytes = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 ///|
 /// Character code (0-255) to 6-bit value for standard base64; `-1` marks every
 /// character outside the alphabet.
-let base64_lookup : FixedArray[Int] = {
+let base64_lookup : FixedArray[Int32] = {
   let table = FixedArray::make(256, -1)
   for i = 0; i < 26; i = i + 1 {
     table[65 + i] = i
@@ -3776,7 +3849,7 @@ pub fn base64_encode(data : Bytes) -> String {
 
 ///|
 /// Hand `length` leading bytes of `out` over as an owned `Bytes`.
-fn own_bytes_prefix(out : FixedArray[Byte], length : Int) -> Bytes {
+fn own_bytes_prefix(out : FixedArray[Byte], length : Int32) -> Bytes {
   if length == out.length() {
     out.unsafe_reinterpret_as_bytes()
   } else {
@@ -3787,7 +3860,11 @@ fn own_bytes_prefix(out : FixedArray[Byte], length : Int) -> Bytes {
 ///|
 /// Most recently decoded base64 text and its result.
 let last_base64_text : Ref[String?] = Ref(None)
+
+///|
 let last_base64_result : Ref[Bytes?] = Ref(None)
+
+///|
 let last_base64_valid : Ref[Bool] = Ref(false)
 
 ///|
@@ -3816,7 +3893,7 @@ pub fn base64_decode(text : String) -> Bytes? {
 /// table (anything past Latin-1) are not part of any base64 alphabet, so they
 /// map to `-1` instead of indexing out of bounds.
 #inline
-fn base64_table_value(table : FixedArray[Int], code : UInt16) -> Int {
+fn base64_table_value(table : FixedArray[Int32], code : UInt16) -> Int32 {
   let index = code.to_int()
   if index < table.length() {
     table[index]
@@ -3828,10 +3905,7 @@ fn base64_table_value(table : FixedArray[Int], code : UInt16) -> Int {
 ///|
 /// `base64_decode` core: `table` maps a character code to its 6-bit value, or
 /// `-1` when the character is not in the alphabet.
-fn base64_decode_core(
-  view : StringView,
-  table : FixedArray[Int],
-) -> Bytes? {
+fn base64_decode_core(view : StringView, table : FixedArray[Int32]) -> Bytes? {
   let length = view.length()
   if length == 0 {
     return Some(b"")
@@ -4060,18 +4134,13 @@ let mime_table : Map[String, String] = Map([
   ("epub", "application/epub+zip"),
   ("doc", "application/msword"),
   (
-    "docx",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ),
   ("xls", "application/vnd.ms-excel"),
-  (
-    "xlsx",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  ),
+  ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
   ("ppt", "application/vnd.ms-powerpoint"),
   (
-    "pptx",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   ),
   ("odt", "application/vnd.oasis.opendocument.text"),
   ("ods", "application/vnd.oasis.opendocument.spreadsheet"),
@@ -4102,6 +4171,8 @@ fn mime_for_extension(extension : StringView) -> String {
 ///|
 /// Most recently resolved file path and its media type.
 let last_mime_path : Ref[String?] = Ref(None)
+
+///|
 let last_mime_value : Ref[String] = Ref("")
 
 ///|
@@ -4145,7 +4216,7 @@ pub fn mime_type_for(path : String) -> String {
 
 ///|
 /// Estimated capacity for a url-encoded result map, based on the source length.
-fn urlencoded_capacity(source : StringView) -> Int {
+fn urlencoded_capacity(source : StringView) -> Int32 {
   let estimate = source.length() >> 3
   if estimate < 4 {
     4
@@ -4158,7 +4229,10 @@ fn urlencoded_capacity(source : StringView) -> Int {
 
 ///|
 fn parse_urlencoded_view(source : StringView) -> Map[String, String] {
-  let result : Map[String, String] = Map([], capacity=urlencoded_capacity(source))
+  let result : Map[String, String] = Map(
+    [],
+    capacity=urlencoded_capacity(source),
+  )
   let length = source.length()
   let mut pos = 0
   while pos <= length {
@@ -4218,7 +4292,11 @@ fn parse_urlencoded_view(source : StringView) -> Map[String, String] {
 /// Most recently parsed url-encoded text and the owned map it produced.
 /// Callers always receive a copy so the cached parse cannot be mutated.
 let last_parsed_urlencoded_source : Ref[String?] = Ref(None)
+
+///|
 let last_parsed_urlencoded_map : Ref[Map[String, String]?] = Ref(None)
+
+///|
 let last_parsed_urlencoded_valid : Ref[Bool] = Ref(false)
 
 ///|
@@ -4323,8 +4401,8 @@ fn parse_urlencoded_multi(source : StringView) -> Map[String, Array[String]] {
 ///|
 fn query_key_matches(
   source : StringView,
-  start : Int,
-  end : Int,
+  start : Int32,
+  end : Int32,
   name : StringView,
 ) -> Bool {
   let name_length = name.length()
@@ -4605,6 +4683,8 @@ pub fn Context::form_map(self : Context) -> Map[String, String] {
 ///|
 /// Most recently normalized `Content-Type` header value.
 let last_content_type_header : Ref[String?] = Ref(None)
+
+///|
 let last_content_type_value : Ref[String] = Ref("")
 
 ///|
@@ -4613,7 +4693,7 @@ let content_type_cache : Map[String, String] = Map([])
 
 ///|
 /// Recency ticks for `content_type_cache`.
-let content_type_cache_ages : Map[String, Int] = Map([])
+let content_type_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 fn parsed_content_type(header : String) -> String {
@@ -4714,22 +4794,26 @@ fn disposition_names(value : StringView) -> DispositionNames {
   while pos < length {
     pos = pos + 1
     while pos < length &&
-      (value.unsafe_get(pos) == (' ' : UInt16) ||
-        value.unsafe_get(pos) == ('\t' : UInt16)) {
+          (
+            value.unsafe_get(pos) == (' ' : UInt16) ||
+            value.unsafe_get(pos) == ('\t' : UInt16)
+          ) {
       pos = pos + 1
     }
     let name_start = pos
     while pos < length &&
-      value.unsafe_get(pos) != ('=' : UInt16) &&
-      value.unsafe_get(pos) != (';' : UInt16) {
+          value.unsafe_get(pos) != ('=' : UInt16) &&
+          value.unsafe_get(pos) != (';' : UInt16) {
       pos = pos + 1
     }
     let attribute = trim_ascii_space(value[name_start:pos])
     if pos < length && value.unsafe_get(pos) == ('=' : UInt16) {
       pos = pos + 1
       while pos < length &&
-        (value.unsafe_get(pos) == (' ' : UInt16) ||
-          value.unsafe_get(pos) == ('\t' : UInt16)) {
+            (
+              value.unsafe_get(pos) == (' ' : UInt16) ||
+              value.unsafe_get(pos) == ('\t' : UInt16)
+            ) {
         pos = pos + 1
       }
       let parsed : String? = if pos < length &&
@@ -4856,7 +4940,8 @@ fn decode_utf8_lossless(bytes : Bytes) -> String {
         result.write_char((0xDC00 + b0).unsafe_to_char())
         i = i + 1
       }
-    } else if b0 >= 0xE0 && b0 <= 0xEF &&
+    } else if b0 >= 0xE0 &&
+      b0 <= 0xEF &&
       i + 2 < length &&
       !(b0 == 0xE0 && bytes[i + 1].to_int() < 0xA0) &&
       !(b0 == 0xED && bytes[i + 1].to_int() > 0x9F) &&
@@ -4869,7 +4954,8 @@ fn decode_utf8_lossless(bytes : Bytes) -> String {
       let code = ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F)
       result.write_char(code.unsafe_to_char())
       i = i + 3
-    } else if b0 >= 0xF0 && b0 <= 0xF4 &&
+    } else if b0 >= 0xF0 &&
+      b0 <= 0xF4 &&
       i + 3 < length &&
       !(b0 == 0xF0 && bytes[i + 1].to_int() < 0x90) &&
       !(b0 == 0xF4 && bytes[i + 1].to_int() > 0x8F) &&
@@ -4887,7 +4973,7 @@ fn decode_utf8_lossless(bytes : Bytes) -> String {
         ((b2 & 0x3F) << 6) |
         (b3 & 0x3F)
       let code = code - 0x10000
-      result.write_char((((code >> 10) + 0xD800)).unsafe_to_char())
+      result.write_char(((code >> 10) + 0xD800).unsafe_to_char())
       result.write_char(((code & 0x3FF) + 0xDC00).unsafe_to_char())
       i = i + 4
     } else {
@@ -4912,10 +4998,7 @@ fn decode_utf8_lossless(bytes : Bytes) -> String {
 /// units intact, invalid bytes escaped), so the bytes come back byte for byte
 /// while the text is the lossy view handlers already expect. A part parsed
 /// without a raw body falls back to re-encoding its text.
-fn resolve_part_bytes(
-  data : String,
-  raw_data : String?,
-) -> (Bytes, String) {
+fn resolve_part_bytes(data : String, raw_data : String?) -> (Bytes, String) {
   match raw_data {
     Some(raw) => {
       let bytes = encode_utf8_lossless(raw)
@@ -4925,7 +5008,7 @@ fn resolve_part_bytes(
   }
 }
 
-///
+///|
 /// A high surrogate followed by a low surrogate is a supplementary character;
 /// any other code unit in `0xDC00..=0xDCFF` stands for the single byte
 /// `code - 0xDC00`. Valid text that contains no such escape encodes to its
@@ -4936,7 +5019,8 @@ fn encode_utf8_lossless(text : String) -> Bytes {
   let mut i = 0
   while i < length {
     let code = text.unsafe_get(i).to_int()
-    if code >= 0xD800 && code <= 0xDBFF &&
+    if code >= 0xD800 &&
+      code <= 0xDBFF &&
       i + 1 < length &&
       text.unsafe_get(i + 1).to_int() >= 0xDC00 &&
       text.unsafe_get(i + 1).to_int() <= 0xDFFF {
@@ -5048,8 +5132,10 @@ fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
   let length = view.length()
   let mut index = after
   while index < length &&
-    (view.unsafe_get(index) == (' ' : UInt16) ||
-      view.unsafe_get(index) == ('\t' : UInt16)) {
+        (
+          view.unsafe_get(index) == (' ' : UInt16) ||
+          view.unsafe_get(index) == ('\t' : UInt16)
+        ) {
     index = index + 1
   }
   if index >= length {
@@ -5068,9 +5154,9 @@ fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
 ///|
 /// Prefix-function table for the delimiter scans below: entry `i` is the length
 /// of the longest proper prefix of `needle[:i+1]` that is also a suffix of it.
-fn delimiter_match_table(needle : StringView) -> Array[Int] {
+fn delimiter_match_table(needle : StringView) -> Array[Int32] {
   let length = needle.length()
-  let table : Array[Int] = Array::make(length, 0)
+  let table : Array[Int32] = Array::make(length, 0)
   let mut matched = 0
   let mut index = 1
   while index < length {
@@ -5093,7 +5179,7 @@ fn delimiter_match_table(needle : StringView) -> Array[Int] {
 fn find_terminated_delimiter(
   view : StringView,
   needle : StringView,
-  table : Array[Int],
+  table : Array[Int32],
   start : Int32,
 ) -> Int32? {
   let needle_length = needle.length()
@@ -5133,8 +5219,8 @@ fn find_part_delimiter(
   view : StringView,
   crlf_delimiter : StringView,
   lf_delimiter : StringView,
-  crlf_table : Array[Int],
-  lf_table : Array[Int],
+  crlf_table : Array[Int32],
+  lf_table : Array[Int32],
   start : Int32,
 ) -> Int32? {
   let lf_length = lf_delimiter.length()
@@ -5191,11 +5277,7 @@ fn find_view_ignore_ascii_case(
   }
   let last = haystack.length() - length
   let first = needle.unsafe_get(0).to_int()
-  let lower_first = if first >= 65 && first <= 90 {
-    first + 32
-  } else {
-    first
-  }
+  let lower_first = if first >= 65 && first <= 90 { first + 32 } else { first }
   let mut i = start
   while i <= last {
     let value = haystack.unsafe_get(i).to_int()
@@ -5216,7 +5298,11 @@ fn find_view_ignore_ascii_case(
         let left = haystack.unsafe_get(i + j).to_int()
         let right = needle.unsafe_get(j).to_int()
         if left != right {
-          let lower_left = if left >= 65 && left <= 90 { left + 32 } else { left }
+          let lower_left = if left >= 65 && left <= 90 {
+            left + 32
+          } else {
+            left
+          }
           let lower_right = if right >= 65 && right <= 90 {
             right + 32
           } else {
@@ -5255,22 +5341,26 @@ fn header_parameter(value : StringView, name : String) -> String? {
   while pos < length {
     pos = pos + 1
     while pos < length &&
-      (value.unsafe_get(pos) == (' ' : UInt16) ||
-        value.unsafe_get(pos) == ('\t' : UInt16)) {
+          (
+            value.unsafe_get(pos) == (' ' : UInt16) ||
+            value.unsafe_get(pos) == ('\t' : UInt16)
+          ) {
       pos = pos + 1
     }
     let name_start = pos
     while pos < length &&
-      value.unsafe_get(pos) != ('=' : UInt16) &&
-      value.unsafe_get(pos) != (';' : UInt16) {
+          value.unsafe_get(pos) != ('=' : UInt16) &&
+          value.unsafe_get(pos) != (';' : UInt16) {
       pos = pos + 1
     }
     let attribute = trim_ascii_space(value[name_start:pos])
     if pos < length && value.unsafe_get(pos) == ('=' : UInt16) {
       pos = pos + 1
       while pos < length &&
-        (value.unsafe_get(pos) == (' ' : UInt16) ||
-          value.unsafe_get(pos) == ('\t' : UInt16)) {
+            (
+              value.unsafe_get(pos) == (' ' : UInt16) ||
+              value.unsafe_get(pos) == ('\t' : UInt16)
+            ) {
         pos = pos + 1
       }
       let parsed : String? = if pos < length &&
@@ -5311,6 +5401,8 @@ fn header_parameter(value : StringView, name : String) -> String? {
 ///|
 /// Most recently parsed `Content-Type` value and the boundary it resolved to.
 let last_boundary_content_type : Ref[String?] = Ref(None)
+
+///|
 let last_boundary_value : Ref[String?] = Ref(None)
 
 ///|
@@ -5329,7 +5421,9 @@ pub fn multipart_boundary(content_type : String) -> String? {
     pos = pos + 1
   }
   let media_type = trim_ascii_space(view[:pos])
-  let result = if media_type.equal_ignore_ascii_case("multipart/form-data".view()) {
+  let result = if media_type.equal_ignore_ascii_case(
+      "multipart/form-data".view(),
+    ) {
     header_parameter(view, "boundary")
   } else {
     None
@@ -5349,7 +5443,7 @@ pub fn multipart_boundary(content_type : String) -> String? {
 let header_index_map0 : Ref[Map[String, String]?] = Ref(None)
 
 ///|
-let header_index_size0 : Ref[Int] = Ref(-1)
+let header_index_size0 : Ref[Int32] = Ref(-1)
 
 ///|
 let header_index_value0 : Ref[Map[String, String]?] = Ref(None)
@@ -5358,14 +5452,14 @@ let header_index_value0 : Ref[Map[String, String]?] = Ref(None)
 let header_index_map1 : Ref[Map[String, String]?] = Ref(None)
 
 ///|
-let header_index_size1 : Ref[Int] = Ref(-1)
+let header_index_size1 : Ref[Int32] = Ref(-1)
 
 ///|
 let header_index_value1 : Ref[Map[String, String]?] = Ref(None)
 
 ///|
 /// Slot that receives the next rebuilt index.
-let header_index_next : Ref[Int] = Ref(0)
+let header_index_next : Ref[Int32] = Ref(0)
 
 ///|
 /// Lower-cased spellings of recently seen header names.
@@ -5373,11 +5467,11 @@ let header_lower_cache : Map[String, String] = Map([])
 
 ///|
 /// Recency ticks for `header_lower_cache`.
-let header_lower_cache_ages : Map[String, Int] = Map([])
+let header_lower_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 /// Maximum number of header names tracked by `header_lower_cache`.
-const HEADER_LOWER_CACHE_LIMIT : Int = 128
+const HEADER_LOWER_CACHE_LIMIT : Int32 = 128
 
 ///|
 /// Lower-case a header name only when it contains upper-case letters. The
@@ -5504,7 +5598,7 @@ let header_spelling_cache : Map[String, String] = Map([])
 
 ///|
 /// Recency ticks for `header_spelling_cache`.
-let header_spelling_cache_ages : Map[String, Int] = Map([])
+let header_spelling_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 /// Find the spelling under which `name` is stored, ignoring case, and
@@ -5537,10 +5631,7 @@ fn cached_header_spelling(
   match found {
     Some(key) => {
       parse_cache_set(
-        header_spelling_cache,
-        header_spelling_cache_ages,
-        lower,
-        key,
+        header_spelling_cache, header_spelling_cache_ages, lower, key,
       )
       Some(key)
     }
@@ -5592,7 +5683,7 @@ fn remove_header_ignore_case(
 ///|
 fn parse_part_headers(
   header_text : StringView,
-) -> (Map[String, String], String?, Int, String?, Int) {
+) -> (Map[String, String], String?, Int32, String?, Int32) {
   let headers : Map[String, String] = Map([], capacity=4)
   let mut disposition : String? = None
   let mut disposition_matches = 0
@@ -5635,11 +5726,7 @@ fn parse_part_headers(
     pos = end + 1
   }
   (
-    headers,
-    disposition,
-    disposition_matches,
-    content_type,
-    content_type_matches,
+    headers, disposition, disposition_matches, content_type, content_type_matches,
   )
 }
 
@@ -5648,8 +5735,10 @@ fn skip_line_break(view : StringView, pos : Int32) -> Int32 {
   let length = view.length()
   let mut index = pos
   while index < length &&
-    (view.unsafe_get(index) == (' ' : UInt16) ||
-      view.unsafe_get(index) == ('\t' : UInt16)) {
+        (
+          view.unsafe_get(index) == (' ' : UInt16) ||
+          view.unsafe_get(index) == ('\t' : UInt16)
+        ) {
     index = index + 1
   }
   if index + 1 < length &&
@@ -5671,9 +5760,9 @@ priv struct MultipartDelimiters {
   delimiter : String
   crlf_delimiter : String
   lf_delimiter : String
-  delimiter_table : Array[Int]
-  crlf_delimiter_table : Array[Int]
-  lf_delimiter_table : Array[Int]
+  delimiter_table : Array[Int32]
+  crlf_delimiter_table : Array[Int32]
+  lf_delimiter_table : Array[Int32]
 }
 
 ///|
@@ -5683,10 +5772,7 @@ let last_multipart_delimiters : Ref[MultipartDelimiters?] = Ref(None)
 /// Delimiters and prefix tables for `boundary`.
 fn multipart_delimiters(boundary : String) -> MultipartDelimiters {
   match last_multipart_delimiters.val {
-    Some(cached) =>
-      if cached.boundary == boundary {
-        return cached
-      }
+    Some(cached) => if cached.boundary == boundary { return cached }
     None => ()
   }
   let delimiter = "--" + boundary
@@ -5710,8 +5796,14 @@ fn multipart_delimiters(boundary : String) -> MultipartDelimiters {
 /// owned parse they produced. Callers receive a copy of the parts, including
 /// their header maps, so they can mutate the result freely.
 let last_parsed_multipart_body : Ref[String?] = Ref(None)
+
+///|
 let last_parsed_multipart_content_type : Ref[String?] = Ref(None)
+
+///|
 let last_parsed_multipart_result : Ref[Array[MultipartPart]?] = Ref(None)
+
+///|
 let last_parsed_multipart_valid : Ref[Bool] = Ref(false)
 
 ///|
@@ -5724,7 +5816,10 @@ pub fn parse_multipart(
       if last_parsed_multipart_valid.val &&
         (physical_equal(cached_body, body) || cached_body == body) &&
         last_parsed_multipart_content_type.val is Some(cached_type) &&
-        (physical_equal(cached_type, content_type) || cached_type == content_type) {
+        (
+          physical_equal(cached_type, content_type) ||
+          cached_type == content_type
+        ) {
         return match last_parsed_multipart_result.val {
           Some(parts) => Some(clone_multipart_parts(parts))
           None => None
@@ -5732,10 +5827,7 @@ pub fn parse_multipart(
       }
     None => ()
   }
-  let parsed = parse_multipart_uncached(
-    body,
-    content_type,
-  )
+  let parsed = parse_multipart_uncached(body, content_type)
   if body.length() <= PARSE_CACHE_MAX_KEY {
     last_parsed_multipart_body.val = Some(body)
     last_parsed_multipart_content_type.val = Some(content_type)
@@ -5795,14 +5887,11 @@ fn parse_multipart_uncached(
       break
     }
     pos = skip_line_break(view, pos)
-    let data_end = match find_part_delimiter(
-      view,
-      crlf_delimiter_view,
-      lf_delimiter_view,
-      crlf_delimiter_table,
-      lf_delimiter_table,
-      pos,
-    ) {
+    let data_end = match
+      find_part_delimiter(
+        view, crlf_delimiter_view, lf_delimiter_view, crlf_delimiter_table, lf_delimiter_table,
+        pos,
+      ) {
       Some(index) => index
       None => break
     }
@@ -5812,8 +5901,7 @@ fn parse_multipart_uncached(
       view.unsafe_get(pos) == ('\r' : UInt16) &&
       view.unsafe_get(pos + 1) == ('\n' : UInt16) {
       (pos, 2)
-    } else if pos < view.length() &&
-      view.unsafe_get(pos) == ('\n' : UInt16) {
+    } else if pos < view.length() && view.unsafe_get(pos) == ('\n' : UInt16) {
       (pos, 1)
     } else {
       match find_header_end(view, pos) {
@@ -5861,7 +5949,11 @@ fn parse_multipart_uncached(
     let part_data = data.to_owned()
     let (data_bytes, data_text) = resolve_part_bytes(
       part_data,
-      if lossless { Some(part_data) } else { None },
+      if lossless {
+        Some(part_data)
+      } else {
+        None
+      },
     )
     parts.push({
       name,
@@ -6010,7 +6102,7 @@ pub fn status_text(code : Int32) -> String {
 
 ///|
 /// Number of days in `month` (1-12) of `year`, or 0 for an invalid month.
-fn days_in_month(year : Int64, month : Int) -> Int {
+fn days_in_month(year : Int64, month : Int32) -> Int32 {
   match month {
     1 | 3 | 5 | 7 | 8 | 10 | 12 => 31
     4 | 6 | 9 | 11 => 30
@@ -6025,7 +6117,7 @@ fn days_in_month(year : Int64, month : Int) -> Int {
 }
 
 ///|
-fn days_from_civil(year : Int64, month : Int, day : Int) -> Int64 {
+fn days_from_civil(year : Int64, month : Int32, day : Int32) -> Int64 {
   let y = if month <= 2 { year - 1 } else { year }
   let era = (if y >= 0 { y } else { y - 399 }) / 400
   let yoe = y - era * 400
@@ -6036,7 +6128,7 @@ fn days_from_civil(year : Int64, month : Int, day : Int) -> Int64 {
 }
 
 ///|
-fn civil_from_days(days : Int64) -> (Int64, Int, Int) {
+fn civil_from_days(days : Int64) -> (Int64, Int32, Int32) {
   if days < -1000000000L || days > 1000000000L {
     return civil_from_days_wide(days)
   }
@@ -6054,7 +6146,7 @@ fn civil_from_days(days : Int64) -> (Int64, Int, Int) {
 }
 
 ///|
-fn civil_from_days_wide(days : Int64) -> (Int64, Int, Int) {
+fn civil_from_days_wide(days : Int64) -> (Int64, Int32, Int32) {
   let z = days + 719468L
   let era = (if z >= 0 { z } else { z - 146096L }) / 146097L
   let doe = z - era * 146097L
@@ -6075,8 +6167,7 @@ let http_weekdays : Array[String] = [
 
 ///|
 let http_months : Array[String] = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
-  "Dec",
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ]
 
 ///|
@@ -6096,7 +6187,7 @@ fn is_http_weekday(name : StringView) -> Bool {
 }
 
 ///|
-fn write_two_digits(builder : StringBuilder, value : Int) -> Unit {
+fn write_two_digits(builder : StringBuilder, value : Int32) -> Unit {
   if value >= 0 && value < 100 {
     if value < 10 {
       builder.write_char('0')
@@ -6148,7 +6239,7 @@ pub fn format_http_date(unix_seconds : Int64) -> String {
     second = tod % 60
   } else {
     hour = (time_of_day / 3600L).to_int()
-    minute = ((time_of_day % 3600L) / 60L).to_int()
+    minute = (time_of_day % 3600L / 60L).to_int()
     second = (time_of_day % 60L).to_int()
   }
   let builder = StringBuilder(size_hint=29)
@@ -6170,7 +6261,7 @@ pub fn format_http_date(unix_seconds : Int64) -> String {
 }
 
 ///|
-fn parse_decimal(view : StringView) -> Int? {
+fn parse_decimal(view : StringView) -> Int32? {
   let length = view.length()
   if length == 0 {
     return None
@@ -6192,7 +6283,7 @@ fn parse_decimal(view : StringView) -> Int? {
 }
 
 ///|
-fn month_from_name(name : StringView) -> Int? {
+fn month_from_name(name : StringView) -> Int32? {
   let length = name.length()
   if length != 3 {
     return None
@@ -6234,7 +6325,7 @@ fn parse_time_of_day(time : StringView) -> Int64? {
 }
 
 ///|
-fn imf_fixdate_two_digits(view : StringView, at : Int32) -> Int {
+fn imf_fixdate_two_digits(view : StringView, at : Int32) -> Int32 {
   let a = view.unsafe_get(at).to_int() - 48
   let b = view.unsafe_get(at + 1).to_int() - 48
   if a < 0 || a > 9 || b < 0 || b > 9 {
@@ -6244,7 +6335,7 @@ fn imf_fixdate_two_digits(view : StringView, at : Int32) -> Int {
 }
 
 ///|
-fn imf_fixdate_four_digits(view : StringView, at : Int32) -> Int {
+fn imf_fixdate_four_digits(view : StringView, at : Int32) -> Int32 {
   let a = view.unsafe_get(at).to_int() - 48
   let b = view.unsafe_get(at + 1).to_int() - 48
   let c = view.unsafe_get(at + 2).to_int() - 48
@@ -6276,13 +6367,11 @@ fn parse_imf_fixdate(view : StringView) -> Int64? {
   // whitespace-delimited token contains the comma, so a weekday with an
   // embedded space must fall back rather than parse.
   let mut weekday_start = 0
-  while weekday_start < 4 &&
-    view.unsafe_get(weekday_start) == (' ' : UInt16) {
+  while weekday_start < 4 && view.unsafe_get(weekday_start) == (' ' : UInt16) {
     weekday_start = weekday_start + 1
   }
   let mut weekday_end = weekday_start
-  while weekday_end < 4 &&
-    view.unsafe_get(weekday_end) != (' ' : UInt16) {
+  while weekday_end < 4 && view.unsafe_get(weekday_end) != (' ' : UInt16) {
     weekday_end = weekday_end + 1
   }
   if weekday_end != 4 || !is_http_weekday(view[:3]) {
@@ -6313,8 +6402,7 @@ fn parse_imf_fixdate(view : StringView) -> Int64? {
     return None
   }
   Some(
-    days_from_civil(year.to_int64(), month, day) *
-    86400L +
+    days_from_civil(year.to_int64(), month, day) * 86400L +
     (hour * 3600 + minute * 60 + second).to_int64(),
   )
 }
@@ -6403,7 +6491,11 @@ fn parse_http_date_view(view : StringView) -> Int64? {
       None => return None
     }
     if year_text.length() == 2 {
-      year = (if parsed_year < 70 { 2000 + parsed_year } else { 1900 + parsed_year }).to_int64()
+      year = (if parsed_year < 70 {
+        2000 + parsed_year
+      } else {
+        1900 + parsed_year
+      }).to_int64()
     } else if year_text.length() == 4 {
       year = parsed_year.to_int64()
     } else {
@@ -6489,17 +6581,12 @@ fn etag_header_matches(value : StringView, etag : String) -> Bool {
   let mut i = 0
   let mut in_quotes = false
   while i <= length {
-    if i == length ||
-      (value.unsafe_get(i) == (',' : UInt16) && !in_quotes) {
+    if i == length || (value.unsafe_get(i) == (',' : UInt16) && !in_quotes) {
       let token = trim_ascii_space(value[start:i])
       if token == "*" {
         return true
       }
-      let token_opaque = if token.has_prefix("W/") {
-        token[2:]
-      } else {
-        token
-      }
+      let token_opaque = if token.has_prefix("W/") { token[2:] } else { token }
       if !token_opaque.is_empty() && token_opaque == etag_opaque {
         return true
       }
@@ -6589,8 +6676,14 @@ fn precondition_input_from_http(request : @http.Request) -> PreconditionInput {
 ///|
 /// The four precondition header names, resolved once.
 let precondition_if_match_name : StringView = "If-Match".view()
+
+///|
 let precondition_if_none_match_name : StringView = "If-None-Match".view()
+
+///|
 let precondition_if_modified_since_name : StringView = "If-Modified-Since".view()
+
+///|
 let precondition_if_unmodified_since_name : StringView = "If-Unmodified-Since".view()
 
 ///|
@@ -6631,17 +6724,21 @@ fn precondition_input_from_map(
           }
         } else if length == 17 {
           if if_modified_since is None &&
-            key_view.equal_ignore_ascii_case(precondition_if_modified_since_name) {
+            key_view.equal_ignore_ascii_case(
+              precondition_if_modified_since_name,
+            ) {
             if_modified_since = Some(value)
           }
         } else if if_unmodified_since is None &&
-          key_view.equal_ignore_ascii_case(precondition_if_unmodified_since_name) {
+          key_view.equal_ignore_ascii_case(
+            precondition_if_unmodified_since_name,
+          ) {
           if_unmodified_since = Some(value)
         }
       }
     }
   })
-  { if_match, if_none_match, if_modified_since, if_unmodified_since }
+  { if_match, if_none_match, if_modified_since, if_unmodified_since, }
 }
 
 ///|
@@ -6739,8 +6836,7 @@ pub fn Context::not_modified(
   ignore(remove_header_ignore_case(self.response.headers, "Content-Length"))
   ignore(remove_header_ignore_case(self.response.headers, "Content-Range"))
   match etag {
-    Some(etag) =>
-      set_header_ignore_case(self.response.headers, "ETag", etag)
+    Some(etag) => set_header_ignore_case(self.response.headers, "ETag", etag)
     None => ()
   }
   match last_modified {
@@ -6869,7 +6965,12 @@ pub struct RouteGroup {
 
 ///|
 pub fn Router::group(self : Router, prefix : String) -> RouteGroup {
-  { router: self, prefix: normalize_prefix(prefix), middlewares: [], app: None, }
+  {
+    router: self,
+    prefix: normalize_prefix(prefix),
+    middlewares: [],
+    app: None,
+  }
 }
 
 ///|
@@ -7277,8 +7378,8 @@ pub struct App {
   mut etag_enabled : Bool
   static_lookup_cache : Map[String, (String, String, Bool, StaticMount)?]
   static_lookup_negative : Array[String]
-  mut static_lookup_negative_head : Int
-  in_flight : Ref[Int]
+  mut static_lookup_negative_head : Int32
+  in_flight : Ref[Int32]
   mut draining : Bool
 }
 
@@ -7611,17 +7712,19 @@ fn App::resolve_sse_full(
     DispatchFound(node, params, _) =>
       match self.sse_handlers.get(node.route_path) {
         Some(handler) =>
-          Some((
-            handler,
-            match params {
-              Some(params) => params.copy()
-              None => Map([], capacity=0)
-            },
-            match self.sse_middlewares.get(node.route_path) {
-              Some(chain) => chain
-              None => async_chain_terminal
-            },
-          ))
+          Some(
+            (
+              handler,
+              match params {
+                Some(params) => params.copy()
+                None => Map([], capacity=0)
+              },
+              match self.sse_middlewares.get(node.route_path) {
+                Some(chain) => chain
+                None => async_chain_terminal
+              },
+            ),
+          )
         None => None
       }
     _ => None
@@ -7651,17 +7754,19 @@ fn App::resolve_websocket_full(
     DispatchFound(node, params, _) =>
       match self.ws_handlers.get(node.route_path) {
         Some(handler) =>
-          Some((
-            handler,
-            match params {
-              Some(params) => params.copy()
-              None => Map([], capacity=0)
-            },
-            match self.ws_middlewares.get(node.route_path) {
-              Some(chain) => chain
-              None => async_chain_terminal
-            },
-          ))
+          Some(
+            (
+              handler,
+              match params {
+                Some(params) => params.copy()
+                None => Map([], capacity=0)
+              },
+              match self.ws_middlewares.get(node.route_path) {
+                Some(chain) => chain
+                None => async_chain_terminal
+              },
+            ),
+          )
         None => None
       }
     _ => None
@@ -7743,17 +7848,19 @@ fn App::resolve_stream_full(
     DispatchFound(node, params, _) =>
       match self.stream_handlers.get(node.route_path) {
         Some(handler) =>
-          Some((
-            handler,
-            match params {
-              Some(params) => params.copy()
-              None => Map([], capacity=0)
-            },
-            match self.stream_middlewares.get(node.route_path) {
-              Some(chain) => chain
-              None => async_chain_terminal
-            },
-          ))
+          Some(
+            (
+              handler,
+              match params {
+                Some(params) => params.copy()
+                None => Map([], capacity=0)
+              },
+              match self.stream_middlewares.get(node.route_path) {
+                Some(chain) => chain
+                None => async_chain_terminal
+              },
+            ),
+          )
         None => None
       }
     _ => None
@@ -7882,14 +7989,7 @@ pub fn App::static_files(
   max_age~ : Int32 = 0,
   precompressed~ : Bool = false,
 ) -> App {
-  self.static_files_with(
-    url_prefix,
-    root,
-    [],
-    index~,
-    max_age~,
-    precompressed~,
-  )
+  self.static_files_with(url_prefix, root, [], index~, max_age~, precompressed~)
 }
 
 ///|
@@ -8143,10 +8243,7 @@ pub fn App::routes(self : App) -> Array[(String, String)] {
 }
 
 ///|
-fn App::best_static_mount(
-  self : App,
-  path_view : StringView,
-) -> StaticMount? {
+fn App::best_static_mount(self : App, path_view : StringView) -> StaticMount? {
   if self.static_mounts.length() == 0 {
     return None
   }
@@ -8160,9 +8257,11 @@ fn App::best_static_mount(
       true
     } else {
       path_view == prefix_view ||
-      (path_length > prefix_length &&
+      (
+        path_length > prefix_length &&
         path_view[:prefix_length] == prefix_view &&
-        path_view[prefix_length:].has_prefix("/"))
+        path_view[prefix_length:].has_prefix("/")
+      )
     }
     if matched && prefix_length > best_length {
       best = Some(mount)
@@ -8174,7 +8273,7 @@ fn App::best_static_mount(
 
 ///|
 /// Maximum number of request paths kept by `App::static_lookup`.
-const STATIC_LOOKUP_CACHE_LIMIT : Int = 256
+const STATIC_LOOKUP_CACHE_LIMIT : Int32 = 256
 
 ///|
 /// Drop one entry from `static_lookup_cache`. Negative results are drained from
@@ -8228,7 +8327,11 @@ fn App::static_lookup_remember(
 let last_static_cache : Ref[Map[String, (String, String, Bool, StaticMount)?]?] = Ref(
   None,
 )
+
+///|
 let last_static_path : Ref[String] = Ref("")
+
+///|
 let last_static_result : Ref[(String, String, Bool, StaticMount)?] = Ref(None)
 
 ///|
@@ -8248,8 +8351,10 @@ fn App::static_lookup(
   match last_static_cache.val {
     Some(cache) =>
       if physical_equal(cache, self.static_lookup_cache) &&
-        (physical_equal(last_static_path.val, path) ||
-          last_static_path.val == path) {
+        (
+          physical_equal(last_static_path.val, path) ||
+          last_static_path.val == path
+        ) {
         return last_static_result.val
       }
     None => ()
@@ -8417,9 +8522,7 @@ pub fn middleware_recover(log? : (String) -> Unit) -> Middleware {
           let detail = "\{err}"
           match log {
             Some(log) =>
-              log(
-                "\{ctx.request.method} \{ctx.request.path} failed: \{detail}",
-              )
+              log("\{ctx.request.method} \{ctx.request.path} failed: \{detail}")
             None => ()
           }
           internal_error(ctx, detail)
@@ -8568,8 +8671,10 @@ fn cache_control_has_directive(
       let entry = trim_ascii_space(value[start:i])
       if entry.length() >= directive_length &&
         entry[:directive_length].equal_ignore_ascii_case(directive) &&
-        (entry.length() == directive_length ||
-          entry.unsafe_get(directive_length) == ('=' : UInt16)) {
+        (
+          entry.length() == directive_length ||
+          entry.unsafe_get(directive_length) == ('=' : UInt16)
+        ) {
         return true
       }
       start = i + 1
@@ -8755,7 +8860,11 @@ pub fn middleware_cors(
       let echo_origin = allow_origin != "*" ||
         (allow_credentials && request_origin != "")
       if echo_origin {
-        let origin = if allow_origin != "*" { allow_origin } else { request_origin }
+        let origin = if allow_origin != "*" {
+          allow_origin
+        } else {
+          request_origin
+        }
         set_header_ignore_case(
           ctx.response.headers,
           "Access-Control-Allow-Origin",
@@ -8789,10 +8898,18 @@ pub fn middleware_cors(
           ctx.response.status = 204
           ctx.response.data = None
           ctx.response.body = ""
-          ignore(remove_header_ignore_case(ctx.response.headers, "Content-Type"))
-          ignore(remove_header_ignore_case(ctx.response.headers, "Content-Length"))
-          ignore(remove_header_ignore_case(ctx.response.headers, "Content-Encoding"))
-          ignore(remove_header_ignore_case(ctx.response.headers, "Content-Range"))
+          ignore(
+            remove_header_ignore_case(ctx.response.headers, "Content-Type"),
+          )
+          ignore(
+            remove_header_ignore_case(ctx.response.headers, "Content-Length"),
+          )
+          ignore(
+            remove_header_ignore_case(ctx.response.headers, "Content-Encoding"),
+          )
+          ignore(
+            remove_header_ignore_case(ctx.response.headers, "Content-Range"),
+          )
           // The preflight answer depends on the two request headers, so shared
           // caches must key on them as well (Fetch: Vary considerations).
           ctx.vary("Access-Control-Request-Method")
@@ -8858,7 +8975,11 @@ fn constant_time_equal(left : String, right : String) -> Bool {
   let left_length = left_view.length()
   let right_length = right_view.length()
   let mut difference = left_length ^ right_length
-  let length = if left_length > right_length { left_length } else { right_length }
+  let length = if left_length > right_length {
+    left_length
+  } else {
+    right_length
+  }
   for i = 0; i < length; i = i + 1 {
     let a = if i < left_length { left_view.unsafe_get(i) } else { 0 }
     let b = if i < right_length { right_view.unsafe_get(i) } else { 0 }
@@ -8890,7 +9011,11 @@ fn basic_auth_middleware(
           "WWW-Authenticate",
           challenge,
         )
-        set_header_ignore_case(ctx.response.headers, "Content-Type", "text/plain; charset=utf-8")
+        set_header_ignore_case(
+          ctx.response.headers,
+          "Content-Type",
+          "text/plain; charset=utf-8",
+        )
         ctx.response.data = None
         ctx.response.body = "401 Unauthorized"
       }
@@ -8905,12 +9030,15 @@ pub fn middleware_basic_auth(
   accounts : Map[String, String],
   realm~ : String = "Restricted",
 ) -> Middleware {
-  basic_auth_middleware(fn(username, password) {
-    match accounts.get(username) {
-      Some(expected) => constant_time_equal(password, expected)
-      None => false
-    }
-  }, realm)
+  basic_auth_middleware(
+    fn(username, password) {
+      match accounts.get(username) {
+        Some(expected) => constant_time_equal(password, expected)
+        None => false
+      }
+    },
+    realm,
+  )
 }
 
 ///|
@@ -8931,7 +9059,7 @@ pub(all) struct Feather {
 
 ///|
 pub fn create_feather(config : Config) -> Feather {
-  { config, app: App::fresh(config.timeout) }
+  { config, app: App::fresh(config.timeout), }
 }
 
 ///|
@@ -9063,7 +9191,11 @@ pub fn Feather::options(
 }
 
 ///|
-pub fn Feather::all(self : Feather, path : String, handler : Handler) -> Feather {
+pub fn Feather::all(
+  self : Feather,
+  path : String,
+  handler : Handler,
+) -> Feather {
   for meth in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
     ignore(self.route(meth, path, handler))
   }
@@ -9122,7 +9254,11 @@ pub fn Feather::websocket_with(
 }
 
 ///|
-pub fn Feather::mount(self : Feather, prefix : String, child : Feather) -> Feather {
+pub fn Feather::mount(
+  self : Feather,
+  prefix : String,
+  child : Feather,
+) -> Feather {
   ignore(self.app.mount(prefix, child.app))
   self
 }
@@ -9140,7 +9276,11 @@ pub fn Feather::mount_with(
 }
 
 ///|
-pub fn Feather::sse(self : Feather, path : String, handler : SseHandler) -> Feather {
+pub fn Feather::sse(
+  self : Feather,
+  path : String,
+  handler : SseHandler,
+) -> Feather {
   ignore(self.app.sse(path, handler))
   self
 }

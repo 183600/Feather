@@ -33,7 +33,10 @@ async test "agent newly added gzip sibling is served after a negative probe" {
     assert_eq(first.code, 200)
     assert_eq(first.headers.get(ext_content_encoding), None)
     assert_eq(client.read_all().text(), plain)
-    @fs.write_file(dir + "/app.js.gz", gzip_encode_for_test(@utf8.encode(plain)))
+    @fs.write_file(
+      dir + "/app.js.gz",
+      gzip_encode_for_test(@utf8.encode(plain)),
+    )
     let second = client.get(
       "/assets/app.js",
       extra_headers=Map([(ext_accept_encoding, "gzip")]),

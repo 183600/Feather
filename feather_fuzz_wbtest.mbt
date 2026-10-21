@@ -5,19 +5,18 @@ priv struct FuzzRng {
 
 ///|
 fn FuzzRng::new(seed : Int64) -> FuzzRng {
-  { state: seed }
+  { state: seed, }
 }
 
 ///|
-fn FuzzRng::next(self : FuzzRng) -> Int {
-  self.state = (self.state * 6364136223846793005L +
-    1442695040888963407L) &
+fn FuzzRng::next(self : FuzzRng) -> Int32 {
+  self.state = (self.state * 6364136223846793005L + 1442695040888963407L) &
     9223372036854775807L
   ((self.state >> 16) % 1000003L).to_int()
 }
 
 ///|
-fn FuzzRng::below(self : FuzzRng, n : Int) -> Int {
+fn FuzzRng::below(self : FuzzRng, n : Int32) -> Int32 {
   if n <= 0 {
     0
   } else {
@@ -31,7 +30,11 @@ fn fuzz_pick(rng : FuzzRng, pool : Array[String]) -> String {
 }
 
 ///|
-fn fuzz_random_string(rng : FuzzRng, pool : Array[String], max_len : Int) -> String {
+fn fuzz_random_string(
+  rng : FuzzRng,
+  pool : Array[String],
+  max_len : Int32,
+) -> String {
   let builder = StringBuilder()
   let count = rng.below(max_len + 1)
   for i = 0; i < count; i = i + 1 {
@@ -44,7 +47,7 @@ fn fuzz_random_string(rng : FuzzRng, pool : Array[String], max_len : Int) -> Str
 fn fuzz_random_segments(
   rng : FuzzRng,
   pool : Array[String],
-  max_len : Int,
+  max_len : Int32,
 ) -> Array[String] {
   let out : Array[String] = []
   let count = rng.below(max_len + 1)
@@ -146,9 +149,7 @@ test "fuzz router dispatch matches reference matcher" {
   let route_count = 12
   for i = 0; i < route_count; i = i + 1 {
     let meth = if i % 2 == 0 { "GET" } else { "POST" }
-    let pattern = "/r" +
-      i.to_string() +
-      tails[rng.below(tails.length())]
+    let pattern = "/r" + i.to_string() + tails[rng.below(tails.length())]
     routes.push((meth, pattern))
   }
   let router = create_router()
@@ -156,7 +157,10 @@ test "fuzz router dispatch matches reference matcher" {
     let (meth, pattern) = route
     router.add_route(meth, pattern, fn(ctx) { ctx.text(200, "ok") })
   }
-  let segment_pool : Array[String] = ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "s", "x", "y", "z", "1", "a"]
+  let segment_pool : Array[String] = [
+    "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "s",
+    "x", "y", "z", "1", "a",
+  ]
   let iterations = 3000
   for iter = 0; iter < iterations; iter = iter + 1 {
     let segments = fuzz_random_segments(rng, segment_pool, 4)
@@ -220,12 +224,7 @@ test "fuzz router dispatch matches reference matcher" {
         }
     }
     // dispatch() must agree with route().
-    let ctx = Context::new({
-      method: meth,
-      path,
-      headers: Map([]),
-      body: "",
-    })
+    let ctx = Context::new({ method: meth, path, headers: Map([]), body: "", })
     router.dispatch(ctx)
     let response = ctx.response
     match expected {
@@ -265,15 +264,13 @@ test "fuzz format and parse http date round trip" {
     assert_eq(parse_http_date(formatted), Some(value))
   }
   for iter = 0; iter < 4000; iter = iter + 1 {
-    let value = (rng.next().to_int64() * 65536L) % 253402300799L
+    let value = rng.next().to_int64() * 65536L % 253402300799L
     let value = if value < 0L { -value } else { value }
     let formatted = format_http_date(value)
     match parse_http_date(formatted) {
       Some(parsed) =>
         if parsed != value {
-          fail(
-            "date round trip failed for \{value}: \{formatted} -> \{parsed}",
-          )
+          fail("date round trip failed for \{value}: \{formatted} -> \{parsed}")
         }
       None => fail("date round trip failed to parse \{formatted}")
     }
@@ -284,8 +281,8 @@ test "fuzz format and parse http date round trip" {
 test "fuzz url encode decode round trip" {
   let rng = FuzzRng::new(4242L)
   let pool : Array[String] = [
-    "a", "Z", "0", "-", ".", "_", "~", " ", "%", "+", "/", "?", "&", "=", "#",
-    "中", "世", "é", "😀", ":p", "*w",
+    "a", "Z", "0", "-", ".", "_", "~", " ", "%", "+", "/", "?", "&", "=", "#", "中",
+    "世", "é", "😀", ":p", "*w",
   ]
   for iter = 0; iter < 4000; iter = iter + 1 {
     let value = fuzz_random_string(rng, pool, 8)

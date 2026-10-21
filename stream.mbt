@@ -25,14 +25,7 @@ fn Stream::new(
   headers~ : Map[String, String] = Map([]),
   cookies~ : Array[@http.Cookie] = [],
 ) -> Stream {
-  {
-    conn,
-    closed: false,
-    started: false,
-    status,
-    headers,
-    cookies,
-  }
+  { conn, closed: false, started: false, status, headers, cookies, }
 }
 
 ///|
@@ -60,11 +53,7 @@ pub fn Stream::set_status(self : Stream, status : Int32) -> Unit {
 ///|
 /// Set a response header. Ignored after the header was sent. The
 /// `Content-Type` defaults to `text/plain; charset=utf-8` when none is set.
-pub fn Stream::set_header(
-  self : Stream,
-  name : String,
-  value : String,
-) -> Unit {
+pub fn Stream::set_header(self : Stream, name : String, value : String) -> Unit {
   if !self.started {
     set_header_ignore_case(self.headers, name, value)
   }

@@ -36,7 +36,9 @@ test "accepts understands wildcard media ranges" {
 ///|
 test "accepts honors quality values" {
   assert_false(accept_ctx("application/json;q=0").accepts("application/json"))
-  assert_true(accept_ctx("application/json;q=0.001").accepts("application/json"))
+  assert_true(
+    accept_ctx("application/json;q=0.001").accepts("application/json"),
+  )
   assert_false(accept_ctx("*/*;q=0").accepts("text/html"))
 }
 
@@ -52,9 +54,7 @@ test "accepts prefers the most specific matching range" {
 
 ///|
 test "accepts ignores media type parameters on the offer" {
-  assert_true(
-    accept_ctx("text/html").accepts("text/html; charset=utf-8"),
-  )
+  assert_true(accept_ctx("text/html").accepts("text/html; charset=utf-8"))
   assert_true(accept_ctx("application/json").accepts("application/json"))
 }
 
@@ -91,11 +91,11 @@ test "preferred_type treats wildcard offers as patterns" {
 ///|
 test "preferred_type picks the best matching offer" {
   let ctx = accept_ctx("text/html;q=0.9, application/json;q=0.8")
-  assert_eq(ctx.preferred_type(["application/json", "text/html"]), Some("text/html"))
   assert_eq(
-    ctx.preferred_type(["text/plain", "application/xml"]),
-    None,
+    ctx.preferred_type(["application/json", "text/html"]),
+    Some("text/html"),
   )
+  assert_eq(ctx.preferred_type(["text/plain", "application/xml"]), None)
 }
 
 ///|
@@ -119,14 +119,8 @@ test "preferred_type skips rejected offers" {
     ctx.preferred_type(["application/json", "text/html"]),
     Some("text/html"),
   )
-  assert_eq(
-    ctx.preferred_type(["application/json", "image/png"]),
-    None,
-  )
-  assert_eq(
-    accept_ctx("").preferred_type([]),
-    None,
-  )
+  assert_eq(ctx.preferred_type(["application/json", "image/png"]), None)
+  assert_eq(accept_ctx("").preferred_type([]), None)
 }
 
 ///|
@@ -162,7 +156,10 @@ test "an explicitly empty accept-encoding rejects every coding" {
   assert_false(ctx.accepts_encoding("gzip"))
   assert_false(ctx.accepts_encoding("br"))
   assert_true(ctx.accepts_encoding("identity"))
-  assert_eq(ctx.preferred_encoding(["gzip", "br", "identity"]), Some("identity"))
+  assert_eq(
+    ctx.preferred_encoding(["gzip", "br", "identity"]),
+    Some("identity"),
+  )
   assert_eq(ctx.preferred_encoding(["gzip"]), None)
 }
 
@@ -185,7 +182,9 @@ test "accepts_encoding treats identity as acceptable by default" {
   assert_false(encoding_ctx("gzip, identity;q=0").accepts_encoding("identity"))
   assert_false(encoding_ctx("*;q=0").accepts_encoding("identity"))
   assert_true(encoding_ctx("gzip, *;q=0.5").accepts_encoding("identity"))
-  assert_false(encoding_ctx("identity;q=0, *;q=0.8").accepts_encoding("identity"))
+  assert_false(
+    encoding_ctx("identity;q=0, *;q=0.8").accepts_encoding("identity"),
+  )
 }
 
 ///|

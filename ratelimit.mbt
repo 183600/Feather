@@ -2,7 +2,7 @@
 /// Per-key fixed-window counters for a `RateLimiter`.
 struct RateBucket {
   mut start : Int64
-  mut count : Int
+  mut count : Int32
 }
 
 ///|
@@ -13,7 +13,7 @@ const RATE_LIMIT_SWEEP_INTERVAL : Int64 = 60_000L
 /// Hard upper bound on retained buckets. When the map is full and nothing has
 /// expired yet, an arbitrary bucket is dropped so attacker chosen keys cannot
 /// grow the limiter without bound.
-const RATE_LIMIT_MAX_BUCKETS : Int = 4096
+const RATE_LIMIT_MAX_BUCKETS : Int32 = 4096
 
 ///|
 /// A bounded in-memory fixed-window rate limiter.
@@ -26,7 +26,7 @@ const RATE_LIMIT_MAX_BUCKETS : Int = 4096
 /// for a single server; share a store through another mechanism when running
 /// several instances.
 pub struct RateLimiter {
-  max : Int
+  max : Int32
   window : Int64
   buckets : Map[String, RateBucket]
   mut last_sweep : Int64
@@ -37,13 +37,18 @@ pub struct RateLimiter {
 ///|
 /// Create a limiter allowing `max` requests per `window` milliseconds for each
 /// key.
-pub fn RateLimiter::new(
-  max~ : Int,
-  window~ : Int64 = 60_000L,
-) -> RateLimiter {
+pub fn RateLimiter::new(max~ : Int32, window~ : Int64 = 60_000L) -> RateLimiter {
   {
-    max: if max < 1 { 1 } else { max },
-    window: if window < 1L { 1L } else { window },
+    max: if max < 1 {
+      1
+    } else {
+      max
+    },
+    window: if window < 1L {
+      1L
+    } else {
+      window
+    },
     buckets: Map([]),
     last_sweep: 0L,
     last_key: "",
@@ -53,7 +58,7 @@ pub fn RateLimiter::new(
 
 ///|
 /// The per-key request allowance.
-pub fn RateLimiter::max(self : RateLimiter) -> Int {
+pub fn RateLimiter::max(self : RateLimiter) -> Int32 {
   self.max
 }
 
@@ -69,7 +74,7 @@ pub fn RateLimiter::window(self : RateLimiter) -> Int64 {
 fn RateLimiter::allow_with_remaining(
   self : RateLimiter,
   key : String,
-) -> (Bool, Int) {
+) -> (Bool, Int32) {
   let now = @async.now()
   let bucket = match self.last_bucket {
     Some(bucket) if self.last_key == key => Some(bucket)
@@ -106,7 +111,7 @@ fn RateLimiter::allow_with_remaining(
       if self.buckets.length() >= RATE_LIMIT_MAX_BUCKETS {
         self.evict_one()
       }
-      let bucket = { start: now, count: 1 }
+      let bucket = { start: now, count: 1, }
       self.buckets.set(key, bucket)
       self.last_key = key
       self.last_bucket = Some(bucket)
@@ -126,7 +131,7 @@ pub fn RateLimiter::allow(self : RateLimiter, key : String) -> Bool {
 ///|
 /// Requests still allowed for `key` in the current window. Reports the full
 /// allowance when the key has no live window.
-pub fn RateLimiter::remaining(self : RateLimiter, key : String) -> Int {
+pub fn RateLimiter::remaining(self : RateLimiter, key : String) -> Int32 {
   match self.buckets.get(key) {
     Some(bucket) =>
       if @async.now() - bucket.start >= self.window {
@@ -162,7 +167,7 @@ pub fn RateLimiter::retry_after(self : RateLimiter, key : String) -> Int64 {
 
 ///|
 /// Number of keys with a bucket in the limiter.
-pub fn RateLimiter::count(self : RateLimiter) -> Int {
+pub fn RateLimiter::count(self : RateLimiter) -> Int32 {
   self.buckets.length()
 }
 
@@ -190,9 +195,7 @@ pub fn RateLimiter::sweep(self : RateLimiter) -> Unit {
   }
   let now = @async.now()
   self.last_sweep = now
-  self.buckets.retain(fn(_key, bucket) {
-    now - bucket.start < self.window
-  })
+  self.buckets.retain(fn(_key, bucket) { now - bucket.start < self.window })
   self.last_key = ""
   self.last_bucket = None
 }
@@ -244,7 +247,8 @@ pub fn middleware_rate_limit(
         next(ctx)
       } else {
         let millis = limiter.retry_after(bucket_key)
-        let seconds = millis / 1000L + (if millis % 1000L == 0L { 0L } else { 1L })
+        let seconds = millis / 1000L +
+          (if millis % 1000L == 0L { 0L } else { 1L })
         ctx.set_header("Retry-After", seconds.to_string())
         ctx.set_header("X-RateLimit-Limit", max_string)
         ctx.set_header("X-RateLimit-Remaining", "0")

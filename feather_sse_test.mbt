@@ -246,9 +246,7 @@ async test "sse routes run application middleware and merge its headers" {
         }
       }
     })
-    .sse("/events", async fn(_ctx, sse) {
-      sse.send("live")
-    })
+    .sse("/events", async fn(_ctx, sse) { sse.send("live") })
   with_sse_server(app, client => {
     let rejected = client.get("/events")
     assert_eq(rejected.code, 401)

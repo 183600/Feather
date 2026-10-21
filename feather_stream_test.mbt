@@ -257,9 +257,7 @@ async test "stream routes run application middleware and inherit its response" {
         }
       }
     })
-    .stream("/feed", async fn(_ctx, stream) {
-      stream.write("live")
-    })
+    .stream("/feed", async fn(_ctx, stream) { stream.write("live") })
   with_stream_server(app, client => {
     let rejected = client.get("/feed")
     assert_eq(rejected.code, 401)
@@ -283,9 +281,10 @@ async test "stream routes run application middleware and inherit its response" {
 
 ///|
 test "Feather stream registers a resolvable stream route" {
-  let app = @feather.create_feather(
-    { host: "127.0.0.1", port: 0, timeout: 0 },
-  ).stream("/feed", async fn(_ctx, stream) { stream.write("x") })
+  let app = @feather.create_feather({ host: "127.0.0.1", port: 0, timeout: 0, }).stream(
+    "/feed",
+    async fn(_ctx, stream) { stream.write("x") },
+  )
   assert_true(app.app.has_stream("/feed"))
 }
 

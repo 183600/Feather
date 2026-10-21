@@ -3,7 +3,9 @@ test "Context cookies strip surrounding quotes" {
   let ctx = @feather.Context::new({
     method: "GET",
     path: "/",
-    headers: { "Cookie": "a=\"hello world\"; b=plain; c=\"\"; d=unterminated\"" },
+    headers: {
+      "Cookie": "a=\"hello world\"; b=plain; c=\"\"; d=unterminated\"",
+    },
     body: "",
   })
   assert_eq(ctx.cookie("a"), Some("hello world"))
@@ -348,9 +350,8 @@ async test "server serves conditional queued files" {
       Some(etag) => etag
       None => fail("missing ETag")
     }
-    let last_modified = match first.headers.get(
-      @http.CaseInsensitiveString("Last-Modified"),
-    ) {
+    let last_modified = match
+      first.headers.get(@http.CaseInsensitiveString("Last-Modified")) {
       Some(value) => value
       None => fail("missing Last-Modified")
     }

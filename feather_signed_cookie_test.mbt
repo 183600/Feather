@@ -20,10 +20,7 @@ test "signed_cookie_token round-trips and rejects tampering" {
     @feather.verify_signed_cookie_token("other-secret", "user", token),
     None,
   )
-  assert_eq(
-    @feather.verify_signed_cookie_token("s3cret", "admin", token),
-    None,
-  )
+  assert_eq(@feather.verify_signed_cookie_token("s3cret", "admin", token), None)
   let tail = token.view().unsafe_get(token.length() - 1).unsafe_to_char()
   let replacement = if tail == 'a' { 'b' } else { 'a' }
   let tampered = token[:token.length() - 1].to_owned() + replacement.to_string()

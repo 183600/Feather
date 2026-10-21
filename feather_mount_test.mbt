@@ -3,10 +3,9 @@ test "mount exposes child routes under the prefix" {
   let child = @feather.App::new().get("/users/:id", fn(ctx) {
     ctx.text(200, "user " + ctx.param("id"))
   })
-  let app = @feather.App::new().get("/", fn(ctx) { ctx.text(200, "root") }).mount(
-    "/api",
-    child,
-  )
+  let app = @feather.App::new()
+    .get("/", fn(ctx) { ctx.text(200, "root") })
+    .mount("/api", child)
   let mounted = app.respond({
     method: "GET",
     path: "/api/users/42",
@@ -100,12 +99,11 @@ test "mount supports nested applications" {
 
 ///|
 test "mount rewrites named routes" {
-  let child = @feather.App::new().route_named(
-    "user",
-    "GET",
-    "/users/:id",
-    fn(ctx) { ctx.text(200, "ok") },
-  )
+  let child = @feather.App::new().route_named("user", "GET", "/users/:id", fn(
+    ctx,
+  ) {
+    ctx.text(200, "ok")
+  })
   let app = @feather.App::new().mount("/api", child)
   assert_eq(
     app.url_for("user", params=Map([("id", "7")])),
@@ -367,9 +365,7 @@ async test "static_files_with runs middleware for its mount only" {
   @fs.write_file(dir + "/hello.txt", "mount middleware")
   let app = @feather.App::new()
     .use(tag_header("X-App", "on"))
-    .static_files_with("/assets", dir, [
-      tag_header("X-Mount", "yes"),
-    ])
+    .static_files_with("/assets", dir, [tag_header("X-Mount", "yes")])
   with_server(app, client => {
     let response = client.get("/assets/hello.txt")
     assert_eq(response.code, 200)

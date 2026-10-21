@@ -1,6 +1,6 @@
 ///|
 fn cookie_attr_ctx() -> Context {
-  Context::new({ method: "GET", path: "/", headers: Map([]), body: "" })
+  Context::new({ method: "GET", path: "/", headers: Map([]), body: "", })
 }
 
 ///|
@@ -70,12 +70,7 @@ test "session cookies can be partitioned" {
   let store = SessionStore::new(ttl=3_600_000L)
   let app = App::new()
     .use(
-      middleware_session(
-        store,
-        same_site="None",
-        secure=true,
-        partitioned=true,
-      ),
+      middleware_session(store, same_site="None", secure=true, partitioned=true),
     )
     .get("/login", fn(ctx) {
       ignore(ctx.session_set("user", "alice"))

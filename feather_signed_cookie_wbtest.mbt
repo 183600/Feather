@@ -11,12 +11,12 @@ fn test_hex(data : Bytes) -> String {
 }
 
 ///|
-fn repeated_byte(byte : Byte, count : Int) -> Bytes {
+fn repeated_byte(byte : Byte, count : Int32) -> Bytes {
   FixedArray::make(count, byte).unsafe_reinterpret_as_bytes()
 }
 
 ///|
-fn counting_bytes(count : Int) -> Bytes {
+fn counting_bytes(count : Int32) -> Bytes {
   let out = FixedArray::make(count, b'\x00')
   for i = 0; i < count; i = i + 1 {
     out[i] = (i + 1).to_byte()
@@ -35,7 +35,9 @@ test "sha256 matches the NIST short-message vectors" {
     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
   )
   assert_eq(
-    test_hex(sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")),
+    test_hex(
+      sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+    ),
     "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
   )
   assert_eq(
@@ -93,7 +95,10 @@ test "hmac_sha256 matches RFC 4231 test case 2" {
 
 ///|
 test "hmac_sha256 matches RFC 4231 test case 3" {
-  let digest = hmac_sha256(repeated_byte(b'\xaa', 20), repeated_byte(b'\xdd', 50))
+  let digest = hmac_sha256(
+    repeated_byte(b'\xaa', 20),
+    repeated_byte(b'\xdd', 50),
+  )
   assert_eq(
     test_hex(digest),
     "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe",
@@ -209,9 +214,8 @@ test "signed cookie verification rejects non-canonical token text" {
   assert_eq(canonical, signature_text)
   let last = canonical.view().unsafe_get(canonical.length() - 1).to_int()
   let rotated = canonical[:canonical.length() - 1].to_owned() +
-    ((last + 1).unsafe_to_char()).to_string()
-  let forged_sig =
-    encoded_value + "." + expiry + "." + rotated
+    (last + 1).unsafe_to_char().to_string()
+  let forged_sig = encoded_value + "." + expiry + "." + rotated
   assert_eq(
     verify_signed_cookie_token("s3cret", "user", forged_sig, now=1L),
     None,

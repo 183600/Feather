@@ -1,8 +1,6 @@
 ///|
 async fn decode_gzip_for_test(data : Bytes) -> Bytes {
-  let reader = @io.MemoryReader(async fn(writer) {
-    writer.write(data)
-  })
+  let reader = @io.MemoryReader(async fn(writer) { writer.write(data) })
   defer reader.close()
   let decoder = @gzip.Decoder::Decoder(reader)
   decoder.read_all().binary()
@@ -58,18 +56,20 @@ test "compressible content types require the exact registered media type" {
   assert_false(content_type_is_compressible("application/jsonx".view()))
   assert_false(content_type_is_compressible("application/javascriptx".view()))
   assert_false(content_type_is_compressible("application/xmlx".view()))
-  assert_false(content_type_is_compressible("application/x-www-form-urlencodedx".view()))
-  assert_false(content_type_is_compressible("image/svg+xmlish".view()))
-  assert_true(
-    content_type_is_compressible("Text/Plain; Charset=UTF-8".view()),
+  assert_false(
+    content_type_is_compressible("application/x-www-form-urlencodedx".view()),
   )
+  assert_false(content_type_is_compressible("image/svg+xmlish".view()))
+  assert_true(content_type_is_compressible("Text/Plain; Charset=UTF-8".view()))
   assert_true(content_type_is_compressible("application/vnd.x+json".view()))
   assert_true(content_type_is_compressible("application/atom+xml".view()))
 }
 
 ///|
 test "contains ignore ascii case" {
-  assert_true(contains_ignore_ascii_case("Accept-Encoding".view(), "encoding".view()))
+  assert_true(
+    contains_ignore_ascii_case("Accept-Encoding".view(), "encoding".view()),
+  )
   assert_true(contains_ignore_ascii_case("origin".view(), "ORIGIN".view()))
   assert_true(contains_ignore_ascii_case("".view(), "".view()))
   assert_false(contains_ignore_ascii_case("origin".view(), "encoding".view()))
@@ -115,9 +115,7 @@ async test "compression drops a differently-cased Content-Length" {
   let request : @http.Request = {
     meth: @http.Get,
     path: "/big",
-    headers: Map([
-      (@http.CaseInsensitiveString("Accept-Encoding"), "gzip"),
-    ]),
+    headers: Map([(@http.CaseInsensitiveString("Accept-Encoding"), "gzip")]),
   }
   let response : Response = {
     status: 200,
@@ -130,7 +128,10 @@ async test "compression drops a differently-cased Content-Length" {
     cookies: [],
   }
   compress_response(request, response, 16)
-  assert_eq(get_header_ignore_case(response.headers, "Content-Encoding"), Some("gzip"))
+  assert_eq(
+    get_header_ignore_case(response.headers, "Content-Encoding"),
+    Some("gzip"),
+  )
   assert_eq(get_header_ignore_case(response.headers, "Content-Length"), None)
 }
 

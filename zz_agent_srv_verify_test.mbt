@@ -7,9 +7,7 @@ async test "agent async middleware error after calling through must not start ss
         raise @feather.HttpError(500, "boom")
       }
     })
-    .sse("/events", async fn(_ctx, sse) {
-      sse.send("handler-ran")
-    })
+    .sse("/events", async fn(_ctx, sse) { sse.send("handler-ran") })
   with_sse_server(app, client => {
     let response = client.get("/events")
     assert_eq(response.code, 500)

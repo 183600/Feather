@@ -203,12 +203,12 @@ async test "server answers expect 100-continue before reading the body" {
         "POST /upload HTTP/1.1\r\nHost: test\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n",
       ),
     )
-    let interim = try @async.with_timeout(2000, () => read_http_head(conn)) catch {
+    let interim = @async.with_timeout(2000, () => read_http_head(conn)) catch {
       _ => ""
     }
     assert_true(interim.has_prefix("HTTP/1.1 100"))
     conn.write(@utf8.encode("ping"))
-    let final = try @async.with_timeout(2000, () => read_http_head(conn)) catch {
+    let final = @async.with_timeout(2000, () => read_http_head(conn)) catch {
       _ => ""
     }
     assert_true(final.has_prefix("HTTP/1.1 200"))

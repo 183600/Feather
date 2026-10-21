@@ -59,9 +59,7 @@ test "context basic_auth rejects other schemes and bad payloads" {
 ///|
 test "basic auth middleware challenges missing credentials" {
   let app = @feather.App::new()
-    .use(
-      @feather.middleware_basic_auth(Map([("admin", "secret")])),
-    )
+    .use(@feather.middleware_basic_auth(Map([("admin", "secret")])))
     .get("/private", fn(ctx) { ctx.text(200, "ok") })
   let response = app.respond({
     method: "GET",
@@ -80,9 +78,7 @@ test "basic auth middleware challenges missing credentials" {
 ///|
 test "basic auth middleware accepts valid credentials" {
   let app = @feather.App::new()
-    .use(
-      @feather.middleware_basic_auth(Map([("admin", "secret")])),
-    )
+    .use(@feather.middleware_basic_auth(Map([("admin", "secret")])))
     .get("/private", fn(ctx) { ctx.text(200, "welcome") })
   let token = @feather.base64_encode(@utf8.encode("admin:secret"))
   let response = app.respond({
@@ -99,9 +95,7 @@ test "basic auth middleware accepts valid credentials" {
 test "basic auth middleware rejects wrong credentials" {
   let calls = Ref(0)
   let app = @feather.App::new()
-    .use(
-      @feather.middleware_basic_auth(Map([("admin", "secret")])),
-    )
+    .use(@feather.middleware_basic_auth(Map([("admin", "secret")])))
     .get("/private", fn(ctx) {
       calls.val = calls.val + 1
       ctx.text(200, "welcome")
@@ -124,9 +118,10 @@ test "basic auth middleware rejects wrong credentials" {
 test "basic auth middleware with predicate" {
   let app = @feather.App::new()
     .use(
-      @feather.middleware_basic_auth_with(fn(username, password) {
-        username == "u" && password.length() == 4
-      }, realm="Admin Area"),
+      @feather.middleware_basic_auth_with(
+        fn(username, password) { username == "u" && password.length() == 4 },
+        realm="Admin Area",
+      ),
     )
     .get("/area", fn(ctx) { ctx.text(200, "inside") })
   let response = app.respond({

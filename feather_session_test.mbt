@@ -5,7 +5,7 @@ fn session_request(path : String, cookie? : String) -> @feather.Request {
     Some(value) => headers.set("Cookie", value)
     None => ()
   }
-  { method: "GET", path, headers, body: "" }
+  { method: "GET", path, headers, body: "", }
 }
 
 ///|
@@ -250,19 +250,21 @@ test "session middleware isolates sessions per cookie" {
   assert_true(first.cookies[0].value != second.cookies[0].value)
   assert_eq(store.count(), 2)
   assert_eq(
-    app
-    .respond(
-      session_request("/name", cookie="feather_session=" + first.cookies[0].value),
-    )
-    .body,
+    app.respond(
+      session_request(
+        "/name",
+        cookie="feather_session=" + first.cookies[0].value,
+      ),
+    ).body,
     "alice",
   )
   assert_eq(
-    app
-    .respond(
-      session_request("/name", cookie="feather_session=" + second.cookies[0].value),
-    )
-    .body,
+    app.respond(
+      session_request(
+        "/name",
+        cookie="feather_session=" + second.cookies[0].value,
+      ),
+    ).body,
     "bob",
   )
 }
@@ -332,7 +334,10 @@ test "session json helpers round trip structured values" {
   assert_false(ctx.session_set_json("user", Json::object({ "name": "alice" })))
   ctx.session = Some(store.create())
   assert_true(
-    ctx.session_set_json("user", Json::object({ "name": "alice", "admin": true })),
+    ctx.session_set_json(
+      "user",
+      Json::object({ "name": "alice", "admin": true }),
+    ),
   )
   let user = ctx.session_get_json("user").unwrap()
   assert_eq(user.value("name"), Some(Json::string("alice")))
@@ -346,8 +351,7 @@ test "session json helpers round trip structured values" {
 ///|
 test "session json helpers persist through the middleware" {
   let store = @feather.SessionStore::new()
-  let app = @feather
-    .App::new()
+  let app = @feather.App::new()
     .use(@feather.middleware_session(store))
     .get("/set", fn(ctx) {
       ignore(ctx.session_set_json("cart", Json::array([Json::number(1.0)])))
@@ -362,7 +366,7 @@ test "session json helpers persist through the middleware" {
   let set = app.respond(session_request("/set"))
   assert_eq(set.cookies.length(), 1)
   let cookie = "feather_session=" + set.cookies[0].value
-  let get = app.respond(session_request("/get", cookie=cookie))
+  let get = app.respond(session_request("/get", cookie~))
   assert_eq(get.status, 200)
   assert_eq(get.body, "[1]")
 }

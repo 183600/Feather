@@ -37,11 +37,7 @@ fn agent_model_apply(
   match op {
     AgentFlash(category, message) => {
       match storage.get(category) {
-        Some(messages) => {
-          if messages.length() < 32 {
-            messages.push(message)
-          }
-        }
+        Some(messages) => if messages.length() < 32 { messages.push(message) }
         None => storage.set(category, [message])
       }
       "f"
@@ -88,7 +84,8 @@ test "agent randomized flash differential" {
     for _ in 0..<count {
       let category = categories[next() % categories.length()]
       match next() % 4 {
-        0 => ops.push(AgentFlash(category, messages[next() % messages.length()]))
+        0 =>
+          ops.push(AgentFlash(category, messages[next() % messages.length()]))
         1 => ops.push(AgentTake(category))
         2 => ops.push(AgentPeek(category))
         _ => ops.push(AgentTakeAll)
@@ -108,14 +105,15 @@ test "agent randomized flash differential" {
         for op in ops {
           match op {
             AgentFlash(category, message) => {
-              ignore(ctx.flash(message, category=category))
+              ignore(ctx.flash(message, category~))
               actual.push("f")
             }
             AgentTake(category) =>
-              actual.push("t" + agent_msgs_text(ctx.flash_take(category=category)))
+              actual.push("t" + agent_msgs_text(ctx.flash_take(category~)))
             AgentPeek(category) =>
-              actual.push("p" + agent_msgs_text(ctx.flash_peek(category=category)))
-            AgentTakeAll => actual.push("a" + agent_map_text(ctx.flash_take_all()))
+              actual.push("p" + agent_msgs_text(ctx.flash_peek(category~)))
+            AgentTakeAll =>
+              actual.push("a" + agent_map_text(ctx.flash_take_all()))
           }
         }
         ctx.text(200, "ok")
@@ -182,7 +180,9 @@ test "agent probe flash category cap across persist" {
       ignore(ctx.flash("new", category="newcat"))
       ctx.text(200, "setup")
     })
-    .get("/take", fn(ctx) { ctx.text(200, agent_map_text(ctx.flash_take_all())) })
+    .get("/take", fn(ctx) {
+      ctx.text(200, agent_map_text(ctx.flash_take_all()))
+    })
   let first = app.respond({
     method: "GET",
     path: "/setup",

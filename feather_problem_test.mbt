@@ -1,6 +1,6 @@
 ///|
 fn problem_ctx(headers : Map[String, String]) -> @feather.Context {
-  @feather.Context::new({ method: "GET", path: "/", headers, body: "" })
+  @feather.Context::new({ method: "GET", path: "/", headers, body: "", })
 }
 
 ///|
@@ -33,19 +33,16 @@ fn problem_request(
   } else {
     Map([])
   }
-  { method: verb, path, headers, body: "" }
+  { method: verb, path, headers, body: "", }
 }
 
 ///|
 test "wants_problem_details needs an explicit problem preference" {
   assert_true(
-    problem_ctx(Map([("Accept", "application/problem+json")]))
-      .wants_problem_details(),
+    problem_ctx(Map([("Accept", "application/problem+json")])).wants_problem_details(),
   )
   assert_true(
-    problem_ctx(
-      Map([("Accept", "text/html, application/problem+json")]),
-    ).wants_problem_details(),
+    problem_ctx(Map([("Accept", "text/html, application/problem+json")])).wants_problem_details(),
   )
   assert_true(
     problem_ctx(
@@ -53,9 +50,7 @@ test "wants_problem_details needs an explicit problem preference" {
     ).wants_problem_details(),
   )
   assert_true(
-    problem_ctx(
-      Map([("Accept", "application/problem+json;q=0.8, */*;q=0.5")]),
-    ).wants_problem_details(),
+    problem_ctx(Map([("Accept", "application/problem+json;q=0.8, */*;q=0.5")])).wants_problem_details(),
   )
 }
 
@@ -71,14 +66,10 @@ test "wants_problem_details stays false for generic or lesser preferences" {
     problem_ctx(Map([("Accept", "text/html")])).wants_problem_details(),
   )
   assert_false(
-    problem_ctx(
-      Map([("Accept", "application/problem+json;q=0")]),
-    ).wants_problem_details(),
+    problem_ctx(Map([("Accept", "application/problem+json;q=0")])).wants_problem_details(),
   )
   assert_false(
-    problem_ctx(
-      Map([("Accept", "text/html, application/problem+json;q=0.5")]),
-    ).wants_problem_details(),
+    problem_ctx(Map([("Accept", "text/html, application/problem+json;q=0.5")])).wants_problem_details(),
   )
   assert_false(
     problem_ctx(
@@ -86,14 +77,10 @@ test "wants_problem_details stays false for generic or lesser preferences" {
     ).wants_problem_details(),
   )
   assert_false(
-    problem_ctx(
-      Map([("Accept", "application/problem+json;q=0.8, */*")]),
-    ).wants_problem_details(),
+    problem_ctx(Map([("Accept", "application/problem+json;q=0.8, */*")])).wants_problem_details(),
   )
   assert_false(
-    problem_ctx(
-      Map([("Accept", "application/problem+json;q=0.8, text/plain")]),
-    ).wants_problem_details(),
+    problem_ctx(Map([("Accept", "application/problem+json;q=0.8, text/plain")])).wants_problem_details(),
   )
   assert_false(
     problem_ctx(
@@ -104,29 +91,25 @@ test "wants_problem_details stays false for generic or lesser preferences" {
 
 ///|
 test "missing routes answer problem details for problem clients" {
-  let app = @feather.App::new().get("/known", fn(ctx) {
-    ctx.text(200, "ok")
-  })
+  let app = @feather.App::new().get("/known", fn(ctx) { ctx.text(200, "ok") })
   let response = app.respond(problem_request("/missing", "GET", true))
   assert_eq(response.status, 404)
   assert_eq(
     response_header(response, "Content-Type"),
     "application/problem+json; charset=utf-8",
   )
-  assert_eq(json_field(response.body, "type"), Some(Json::string("about:blank")))
   assert_eq(
-    json_field(response.body, "title"),
-    Some(Json::string("Not Found")),
+    json_field(response.body, "type"),
+    Some(Json::string("about:blank")),
   )
+  assert_eq(json_field(response.body, "title"), Some(Json::string("Not Found")))
   assert_eq(json_field(response.body, "status"), Some(Json::number(404.0)))
   assert_eq(json_field(response.body, "detail"), None)
 }
 
 ///|
 test "missing routes keep the plain body without a problem preference" {
-  let app = @feather.App::new().get("/known", fn(ctx) {
-    ctx.text(200, "ok")
-  })
+  let app = @feather.App::new().get("/known", fn(ctx) { ctx.text(200, "ok") })
   let plain = app.respond(problem_request("/missing", "GET", false))
   assert_eq(plain.status, 404)
   assert_eq(response_header(plain, "Content-Type"), "text/plain; charset=utf-8")
@@ -159,9 +142,7 @@ test "missing routes keep the plain body without a problem preference" {
 
 ///|
 test "method not allowed carries Allow and negotiated problem details" {
-  let app = @feather.App::new().get("/only-get", fn(ctx) {
-    ctx.text(200, "ok")
-  })
+  let app = @feather.App::new().get("/only-get", fn(ctx) { ctx.text(200, "ok") })
   let plain = app.respond(problem_request("/only-get", "POST", false))
   assert_eq(plain.status, 405)
   assert_eq(response_header(plain, "Allow"), "GET, HEAD")
@@ -213,7 +194,10 @@ test "fail keeps the plain json body for other clients" {
     response_header(response, "Content-Type"),
     "application/json; charset=utf-8",
   )
-  assert_eq(json_field(response.body, "error"), Some(Json::string("invalid input")))
+  assert_eq(
+    json_field(response.body, "error"),
+    Some(Json::string("invalid input")),
+  )
   assert_eq(json_field(response.body, "detail"), None)
 }
 
@@ -232,27 +216,18 @@ test "fail_with extends the problem document with payload members" {
     response_header(response, "Content-Type"),
     "application/problem+json; charset=utf-8",
   )
-  assert_eq(
-    json_field(response.body, "title"),
-    Some(Json::string("Conflict")),
-  )
+  assert_eq(json_field(response.body, "title"), Some(Json::string("Conflict")))
   assert_eq(
     json_field(response.body, "detail"),
     Some(Json::string("resource exists")),
   )
-  assert_eq(
-    json_field(response.body, "code"),
-    Some(Json::string("duplicate")),
-  )
+  assert_eq(json_field(response.body, "code"), Some(Json::string("duplicate")))
   let plain = app.respond(problem_request("/dupe", "GET", false))
   assert_eq(
     json_field(plain.body, "error"),
     Some(Json::string("resource exists")),
   )
-  assert_eq(
-    json_field(plain.body, "code"),
-    Some(Json::string("duplicate")),
-  )
+  assert_eq(json_field(plain.body, "code"), Some(Json::string("duplicate")))
 }
 
 ///|
@@ -307,7 +282,10 @@ test "fail_problem renders problem details for every client" {
     json_field(response.body, "detail"),
     Some(Json::string("database offline")),
   )
-  assert_eq(json_field(response.body, "type"), Some(Json::string("about:blank")))
+  assert_eq(
+    json_field(response.body, "type"),
+    Some(Json::string("about:blank")),
+  )
 }
 
 ///|
@@ -317,7 +295,9 @@ test "recover middleware turns a raised problem into its response" {
     ctx.fail_problem(418, "short and stout")
   })
   let ctx = problem_ctx(Map([]))
-  chain(ctx) catch { _ => () }
+  chain(ctx) catch {
+    _ => ()
+  }
   assert_eq(ctx.response.status, 418)
   assert_eq(
     response_header(ctx.response, "Content-Type"),
@@ -336,12 +316,11 @@ test "error handler middleware turns a raised problem into its response" {
     ctx.fail_problem(502, "upstream misbehaved")
   })
   let ctx = problem_ctx(Map([]))
-  chain(ctx) catch { _ => () }
+  chain(ctx) catch {
+    _ => ()
+  }
   assert_eq(ctx.response.status, 502)
-  assert_eq(
-    json_field(ctx.response.body, "status"),
-    Some(Json::number(502.0)),
-  )
+  assert_eq(json_field(ctx.response.body, "status"), Some(Json::number(502.0)))
   assert_eq(
     json_field(ctx.response.body, "detail"),
     Some(Json::string("upstream misbehaved")),
@@ -357,7 +336,9 @@ test "logger middleware records and re-raises problem errors" {
   })
   let ctx = problem_ctx(Map([]))
   let mut propagated = false
-  chain(ctx) catch { _ => propagated = true }
+  chain(ctx) catch {
+    _ => propagated = true
+  }
   assert_true(propagated)
   assert_eq(logs.length(), 1)
   assert_true(logs[0].contains("[507]"))
@@ -369,11 +350,13 @@ test "problem errors survive an outer logger and inner recover" {
   let logs : Array[String] = []
   let logger = @feather.middleware_logger(log=fn(line) { logs.push(line) })
   let recover = @feather.middleware_recover()
-  let chain : @feather.Handler = logger(recover(fn(ctx) raise {
-    ctx.fail_problem(429, "slow down")
-  }))
+  let chain : @feather.Handler = logger(
+    recover(fn(ctx) raise { ctx.fail_problem(429, "slow down") }),
+  )
   let ctx = problem_ctx(Map([]))
-  chain(ctx) catch { _ => () }
+  chain(ctx) catch {
+    _ => ()
+  }
   assert_eq(ctx.response.status, 429)
   assert_eq(logs.length(), 1)
   assert_true(logs[0].contains("[429]"))
@@ -385,10 +368,10 @@ test "internal errors stay silent in problem rendering" {
   let chain : @feather.Handler = recover(fn(_ctx) raise {
     raise Failure("secret key is abc123")
   })
-  let ctx = problem_ctx(
-    Map([("Accept", "application/problem+json")]),
-  )
-  chain(ctx) catch { _ => () }
+  let ctx = problem_ctx(Map([("Accept", "application/problem+json")]))
+  chain(ctx) catch {
+    _ => ()
+  }
   assert_eq(ctx.response.status, 500)
   assert_eq(
     response_header(ctx.response, "Content-Type"),
@@ -408,7 +391,9 @@ test "problem details never leak into state-free plain rendering" {
     raise Failure("secret key is abc123")
   })
   let ctx = problem_ctx(Map([]))
-  chain(ctx) catch { _ => () }
+  chain(ctx) catch {
+    _ => ()
+  }
   assert_eq(ctx.response.status, 500)
   assert_eq(ctx.response.body, "Internal Server Error")
   assert_false(ctx.response.body.contains("abc123"))
@@ -416,9 +401,7 @@ test "problem details never leak into state-free plain rendering" {
 
 ///|
 async test "server answers problem details over the wire" {
-  let app = @feather.App::new().get("/known", fn(ctx) {
-    ctx.text(200, "ok")
-  })
+  let app = @feather.App::new().get("/known", fn(ctx) { ctx.text(200, "ok") })
   with_server(app, client => {
     let response = client.get(
       "/missing",

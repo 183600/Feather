@@ -59,8 +59,7 @@ test "flash decodes messages containing separators and quotes" {
 ///|
 test "flash survives session serialization between requests" {
   let store = @feather.SessionStore::new()
-  let app = @feather
-    .App::new()
+  let app = @feather.App::new()
     .use(@feather.middleware_session(store))
     .post("/login", fn(ctx) {
       ignore(ctx.flash("welcome back"))

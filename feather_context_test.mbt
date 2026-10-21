@@ -2,12 +2,8 @@
 test "Context defer_cleanup runs in reverse order after handler" {
   let order : Array[String] = []
   let app = @feather.App::new().get("/cleanup", fn(ctx) {
-    ctx.defer_cleanup(fn() {
-      order.push("first")
-    })
-    ctx.defer_cleanup(fn() {
-      order.push("second")
-    })
+    ctx.defer_cleanup(fn() { order.push("first") })
+    ctx.defer_cleanup(fn() { order.push("second") })
     order.push("handler")
     ctx.text(200, "ok")
   })
@@ -25,9 +21,7 @@ test "Context defer_cleanup runs in reverse order after handler" {
 test "Context defer_cleanup runs when the handler fails" {
   let cleaned : Array[String] = []
   let app = @feather.App::new().get("/boom", fn(ctx) raise {
-    ctx.defer_cleanup(fn() {
-      cleaned.push("done")
-    })
+    ctx.defer_cleanup(fn() { cleaned.push("done") })
     ctx.fail(503, "unavailable")
   })
   let response = app.respond({
@@ -46,9 +40,7 @@ test "cleanups registered during cleanup still run" {
   let app = @feather.App::new().get("/nested", fn(ctx) {
     ctx.defer_cleanup(fn() {
       order.push("outer")
-      ctx.defer_cleanup(fn() {
-        order.push("inner")
-      })
+      ctx.defer_cleanup(fn() { order.push("inner") })
     })
     ctx.text(200, "ok")
   })
@@ -66,9 +58,7 @@ test "cleanups registered during cleanup still run" {
 async test "server runs deferred cleanups for every request" {
   let cleaned : Array[String] = []
   let app = @feather.App::new().get("/record", fn(ctx) {
-    ctx.defer_cleanup(fn() {
-      cleaned.push(ctx.request.path)
-    })
+    ctx.defer_cleanup(fn() { cleaned.push(ctx.request.path) })
     ctx.text(200, "ok")
   })
   with_server(app, client => {
@@ -135,10 +125,7 @@ test "cookies strip control characters from values and attributes" {
   )
   let added = @feather.create_context()
   added.add_cookie("tok", "v\u{0}al", domain="ex\r\nample.com")
-  assert_eq(
-    added.response.headers.get("Set-Cookie"),
-    None,
-  )
+  assert_eq(added.response.headers.get("Set-Cookie"), None)
   assert_eq(added.response.cookies.length(), 1)
 }
 
@@ -174,10 +161,7 @@ test "cookies drop invalid same-site values and sanitize domains" {
 
 ///|
 test "url_encode encodes supplementary pairs and replaces lone surrogates" {
-  let pair = String::from_array([
-    Char::from_int(0xD83D),
-    Char::from_int(0xDE00),
-  ])
+  let pair = String::from_array([Char::from_int(0xD83D), Char::from_int(0xDE00)])
   assert_eq(@feather.url_encode(pair), "%F0%9F%98%80")
   let lone = String::from_array([Char::from_int(0xD800)])
   assert_eq(@feather.url_encode(lone), "%EF%BF%BD")
@@ -232,11 +216,7 @@ test "cors appends to an existing Vary header" {
 
 ///|
 test "listen_address renders ipv6 hosts with brackets" {
-  let ipv6 = @feather.create_feather({
-    host: "::1",
-    port: 9000,
-    timeout: 0,
-  })
+  let ipv6 = @feather.create_feather({ host: "::1", port: 9000, timeout: 0, })
   assert_eq(ipv6.listen_address(), "[::1]:9000")
   let bracketed = @feather.create_feather({
     host: "[::1]",
@@ -255,9 +235,7 @@ test "listen_address renders ipv6 hosts with brackets" {
 ///|
 test "Context typed param and query accessors" {
   let router = @feather.create_router()
-  router.add_route("GET", "/items/:id/:flag", fn(ctx) {
-    ctx.text(200, "ok")
-  })
+  router.add_route("GET", "/items/:id/:flag", fn(ctx) { ctx.text(200, "ok") })
   let ctx = @feather.Context::new({
     method: "GET",
     path: "/items/42/true?id=7&flag=0&bad=abc&big=99999999999",
@@ -281,9 +259,7 @@ test "Context typed param and query accessors" {
 ///|
 test "Context typed accessors accept signed values" {
   let router = @feather.create_router()
-  router.add_route("GET", "/n/:value", fn(ctx) {
-    ctx.text(200, "ok")
-  })
+  router.add_route("GET", "/n/:value", fn(ctx) { ctx.text(200, "ok") })
   let negative = @feather.Context::new({
     method: "GET",
     path: "/n/-12",
@@ -303,10 +279,13 @@ test "Context typed accessors accept signed values" {
 test "Context json_state round trips structured values" {
   let ctx = @feather.create_context()
   assert_eq(ctx.get_json("user"), None)
-  ctx.set_json("user", Json::object({
-    "name": Json::string("feather"),
-    "admin": Json::boolean(true),
-  }))
+  ctx.set_json(
+    "user",
+    Json::object({
+      "name": Json::string("feather"),
+      "admin": Json::boolean(true),
+    }),
+  )
   match ctx.get_json("user") {
     Some(Json::Object(fields)) =>
       match fields.get("name") {

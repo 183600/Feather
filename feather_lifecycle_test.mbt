@@ -1,6 +1,6 @@
 ///|
 /// Whether a fresh TCP connection to `port` is refused (the listener is gone).
-async fn port_refuses_connections(port : Int) -> Bool {
+async fn port_refuses_connections(port : Int32) -> Bool {
   try {
     @async.with_timeout(2000, () => {
       let conn = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{port}"))
@@ -21,7 +21,7 @@ async test "serve_with_until stops the server when the stop task resolves" {
     let port = server.addr.port()
     let finished : Ref[Bool] = Ref(false)
     group.spawn_bg(no_wait=true, () => {
-      app.serve_with_until(server, stop=() => { @async.sleep(200) })
+      app.serve_with_until(server, stop=() => @async.sleep(200))
       finished.val = true
     })
     @async.sleep(50)
@@ -48,7 +48,7 @@ async test "serve_with_until cancels a blocked accept loop" {
     let port = server.addr.port()
     let finished : Ref[Bool] = Ref(false)
     group.spawn_bg(no_wait=true, () => {
-      app.serve_with_until(server, stop=() => { @async.sleep(10) })
+      app.serve_with_until(server, stop=() => @async.sleep(10))
       finished.val = true
     })
     @async.sleep(50)

@@ -28,7 +28,7 @@ fn media_range_parts(range : StringView) -> (StringView, StringView)? {
 ///|
 /// Quality value (in thousandths) that `header` assigns to `media_type`, or
 /// `0` when it is rejected. Used directly by white-box tests.
-fn accept_quality_for(header : StringView, media_type : StringView) -> Int {
+fn accept_quality_for(header : StringView, media_type : StringView) -> Int32 {
   let (want_type, want_subtype) = match media_range_parts(media_type) {
     Some(parts) => parts
     None => return 0
@@ -44,7 +44,7 @@ fn accept_quality_for(header : StringView, media_type : StringView) -> Int {
 priv struct AcceptEntry {
   range_type : StringView
   range_subtype : StringView
-  quality : Int
+  quality : Int32
 }
 
 ///|
@@ -85,12 +85,16 @@ fn parse_accept_entries(header : StringView) -> Array[AcceptEntry] {
       }
       let parameter = trim_ascii_space(header[parameter_start:scan])
       if parameter.length() >= 2 &&
-        (parameter.unsafe_get(0) == ('q' : UInt16) ||
-          parameter.unsafe_get(0) == ('Q' : UInt16)) {
+        (
+          parameter.unsafe_get(0) == ('q' : UInt16) ||
+          parameter.unsafe_get(0) == ('Q' : UInt16)
+        ) {
         let mut marker = 1
         while marker < parameter.length() &&
-          (parameter.unsafe_get(marker) == (' ' : UInt16) ||
-            parameter.unsafe_get(marker) == ('\t' : UInt16)) {
+              (
+                parameter.unsafe_get(marker) == (' ' : UInt16) ||
+                parameter.unsafe_get(marker) == ('\t' : UInt16)
+              ) {
           marker = marker + 1
         }
         if marker < parameter.length() &&
@@ -107,7 +111,7 @@ fn parse_accept_entries(header : StringView) -> Array[AcceptEntry] {
       }
       match parts {
         Some((range_type, range_subtype)) =>
-          entries.push({ range_type, range_subtype, quality })
+          entries.push({ range_type, range_subtype, quality, })
         None => ()
       }
     }
@@ -126,7 +130,7 @@ fn accept_quality_from(
   entries : Array[AcceptEntry],
   want_type : StringView,
   want_subtype : StringView,
-) -> Int {
+) -> Int32 {
   if entries.length() == 0 {
     return 1000
   }
@@ -151,7 +155,11 @@ fn accept_quality_from(
       let specificity = if range_type == "*" && range_subtype == "*" {
         0
       } else if range_subtype == "*" {
-        if range_type.equal_ignore_ascii_case(want_type) { 1 } else { -1 }
+        if range_type.equal_ignore_ascii_case(want_type) {
+          1
+        } else {
+          -1
+        }
       } else if range_type.equal_ignore_ascii_case(want_type) &&
         range_subtype.equal_ignore_ascii_case(want_subtype) {
         2
@@ -185,7 +193,7 @@ let accept_entries_cache : Map[String, Array[AcceptEntry]] = Map([])
 
 ///|
 /// Recency ticks for `accept_entries_cache`.
-let accept_entries_cache_ages : Map[String, Int] = Map([])
+let accept_entries_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 fn accept_entries_cached(header : String) -> Array[AcceptEntry] {
@@ -210,7 +218,9 @@ fn accept_entries_cached(header : String) -> Array[AcceptEntry] {
   }
   let entries = parse_accept_entries(header.view())
   if header.length() <= PARSE_CACHE_MAX_KEY {
-    cache_set(accept_entries_cache, accept_entries_cache_ages, 32, header, entries)
+    cache_set(
+      accept_entries_cache, accept_entries_cache_ages, 32, header, entries,
+    )
   }
   last_accept_header.val = Some(header)
   last_accept_entries.val = Some(entries)
@@ -224,12 +234,16 @@ let media_type_parts_cache : Map[String, (String, String)] = Map([])
 
 ///|
 /// Recency ticks for `media_type_parts_cache`.
-let media_type_parts_cache_ages : Map[String, Int] = Map([])
+let media_type_parts_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 /// Most recently parsed media type and its parts.
 let last_media_type_text : Ref[String?] = Ref(None)
+
+///|
 let last_media_type_value : Ref[(String, String)?] = Ref(None)
+
+///|
 let last_media_type_hit : Ref[Bool] = Ref(false)
 
 ///|
@@ -251,7 +265,8 @@ fn media_type_parts_cached(media_type : String) -> (String, String)? {
     }
     None => {
       let parts = match media_range_parts(media_type.view()) {
-        Some((media_type, subtype)) => Some((media_type.to_owned(), subtype.to_owned()))
+        Some((media_type, subtype)) =>
+          Some((media_type.to_owned(), subtype.to_owned()))
         None => None
       }
       last_media_type_text.val = Some(media_type)
@@ -261,10 +276,7 @@ fn media_type_parts_cached(media_type : String) -> (String, String)? {
         Some(parts) => {
           if media_type.length() <= PARSE_CACHE_MAX_KEY {
             cache_set(
-              media_type_parts_cache,
-              media_type_parts_cache_ages,
-              32,
-              media_type,
+              media_type_parts_cache, media_type_parts_cache_ages, 32, media_type,
               parts,
             )
           }
@@ -475,7 +487,7 @@ pub fn Context::preferred_type(
 /// (in thousandths), in header order.
 priv struct EncodingEntry {
   token : StringView
-  quality : Int
+  quality : Int32
 }
 
 ///|
@@ -517,12 +529,16 @@ fn parse_encoding_entries(header : StringView) -> Array[EncodingEntry] {
       }
       let parameter = trim_ascii_space(header[parameter_start:scan])
       if parameter.length() >= 2 &&
-        (parameter.unsafe_get(0) == ('q' : UInt16) ||
-          parameter.unsafe_get(0) == ('Q' : UInt16)) {
+        (
+          parameter.unsafe_get(0) == ('q' : UInt16) ||
+          parameter.unsafe_get(0) == ('Q' : UInt16)
+        ) {
         let mut marker = 1
         while marker < parameter.length() &&
-          (parameter.unsafe_get(marker) == (' ' : UInt16) ||
-            parameter.unsafe_get(marker) == ('\t' : UInt16)) {
+              (
+                parameter.unsafe_get(marker) == (' ' : UInt16) ||
+                parameter.unsafe_get(marker) == ('\t' : UInt16)
+              ) {
           marker = marker + 1
         }
         if marker < parameter.length() &&
@@ -532,7 +548,7 @@ fn parse_encoding_entries(header : StringView) -> Array[EncodingEntry] {
       }
     }
     if !token.is_empty() {
-      entries.push({ token, quality })
+      entries.push({ token, quality, })
     }
     pos = scan
     if pos < length && header.unsafe_get(pos) == (',' : UInt16) {
@@ -548,7 +564,7 @@ fn parse_encoding_entries(header : StringView) -> Array[EncodingEntry] {
 fn encoding_quality_from(
   entries : Array[EncodingEntry],
   coding : StringView,
-) -> Int {
+) -> Int32 {
   let mut exact_q = -1
   let mut star_q = -1
   for entry in entries {
@@ -582,7 +598,7 @@ let encoding_entries_cache : Map[String, Array[EncodingEntry]] = Map([])
 
 ///|
 /// Recency ticks for `encoding_entries_cache`.
-let encoding_entries_cache_ages : Map[String, Int] = Map([])
+let encoding_entries_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 fn encoding_entries_cached(header : String) -> Array[EncodingEntry] {
@@ -607,7 +623,9 @@ fn encoding_entries_cached(header : String) -> Array[EncodingEntry] {
   }
   let entries = parse_encoding_entries(header.view())
   if header.length() <= PARSE_CACHE_MAX_KEY {
-    cache_set(encoding_entries_cache, encoding_entries_cache_ages, 32, header, entries)
+    cache_set(
+      encoding_entries_cache, encoding_entries_cache_ages, 32, header, entries,
+    )
   }
   last_encoding_header.val = Some(header)
   last_encoding_entries.val = Some(entries)
@@ -621,7 +639,7 @@ fn encoding_entries_cached(header : String) -> Array[EncodingEntry] {
 /// A missing header accepts every coding. An empty header value is treated
 /// like a missing header. When the header is present but neither `coding` nor
 /// `*` is listed, the coding is not acceptable and `0` is returned.
-fn accept_encoding_quality(header : StringView, coding : StringView) -> Int {
+fn accept_encoding_quality(header : StringView, coding : StringView) -> Int32 {
   if trim_ascii_space(header).is_empty() {
     return 1000
   }
@@ -689,7 +707,7 @@ pub fn Context::preferred_encoding(
 /// value (in thousandths), in header order.
 priv struct LanguageEntry {
   token : StringView
-  quality : Int
+  quality : Int32
 }
 
 ///|
@@ -730,12 +748,16 @@ fn parse_language_entries(header : StringView) -> Array[LanguageEntry] {
       }
       let parameter = trim_ascii_space(header[parameter_start:scan])
       if parameter.length() >= 2 &&
-        (parameter.unsafe_get(0) == ('q' : UInt16) ||
-          parameter.unsafe_get(0) == ('Q' : UInt16)) {
+        (
+          parameter.unsafe_get(0) == ('q' : UInt16) ||
+          parameter.unsafe_get(0) == ('Q' : UInt16)
+        ) {
         let mut marker = 1
         while marker < parameter.length() &&
-          (parameter.unsafe_get(marker) == (' ' : UInt16) ||
-            parameter.unsafe_get(marker) == ('\t' : UInt16)) {
+              (
+                parameter.unsafe_get(marker) == (' ' : UInt16) ||
+                parameter.unsafe_get(marker) == ('\t' : UInt16)
+              ) {
           marker = marker + 1
         }
         if marker < parameter.length() &&
@@ -745,7 +767,7 @@ fn parse_language_entries(header : StringView) -> Array[LanguageEntry] {
       }
     }
     if !token.is_empty() {
-      entries.push({ token, quality })
+      entries.push({ token, quality, })
     }
     pos = scan
     if pos < length && header.unsafe_get(pos) == (',' : UInt16) {
@@ -768,7 +790,7 @@ let language_entries_cache : Map[String, Array[LanguageEntry]] = Map([])
 
 ///|
 /// Recency ticks for `language_entries_cache`.
-let language_entries_cache_ages : Map[String, Int] = Map([])
+let language_entries_cache_ages : Map[String, Int32] = Map([])
 
 ///|
 fn language_entries_cached(header : String) -> Array[LanguageEntry] {
@@ -793,7 +815,9 @@ fn language_entries_cached(header : String) -> Array[LanguageEntry] {
   }
   let entries = parse_language_entries(header.view())
   if header.length() <= PARSE_CACHE_MAX_KEY {
-    cache_set(language_entries_cache, language_entries_cache_ages, 32, header, entries)
+    cache_set(
+      language_entries_cache, language_entries_cache_ages, 32, header, entries,
+    )
   }
   last_language_header.val = Some(header)
   last_language_entries.val = Some(entries)
@@ -810,7 +834,7 @@ fn language_entries_cached(header : String) -> Array[LanguageEntry] {
 fn language_quality_from(
   entries : Array[LanguageEntry],
   language : StringView,
-) -> Int {
+) -> Int32 {
   if entries.length() == 0 {
     return 1000
   }

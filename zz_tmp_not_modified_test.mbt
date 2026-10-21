@@ -1,8 +1,5 @@
 ///|
-fn count_response_header(
-  headers : Map[String, String],
-  name : String,
-) -> Int32 {
+fn count_response_header(headers : Map[String, String], name : String) -> Int32 {
   let mut count = 0
   for key, _ in headers {
     if key.view().equal_ignore_ascii_case(name.view()) {

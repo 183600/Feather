@@ -1,11 +1,6 @@
 ///|
 fn app_state_request(path : String) -> @feather.Request {
-  {
-    method: "GET",
-    path,
-    headers: Map([]),
-    body: "",
-  }
+  { method: "GET", path, headers: Map([]), body: "", }
 }
 
 ///|
@@ -26,10 +21,12 @@ test "app state is visible to middleware and handlers" {
 
 ///|
 test "handler writes do not mutate app state" {
-  let app = @feather.App::new().set_state("mode", "prod").get("/", fn(ctx) {
-    ctx.text(200, ctx.get("mode"))
-    ctx.set("mode", "request")
-  })
+  let app = @feather.App::new()
+    .set_state("mode", "prod")
+    .get("/", fn(ctx) {
+      ctx.text(200, ctx.get("mode"))
+      ctx.set("mode", "request")
+    })
   let first = app.respond(app_state_request("/"))
   assert_eq(first.body, "prod")
   assert_eq(app.get_state("mode"), "prod")
@@ -39,9 +36,9 @@ test "handler writes do not mutate app state" {
 
 ///|
 test "request state overrides app state for one request" {
-  let app = @feather.App::new().set_state("tenant", "default").get("/", fn(ctx) {
-    ctx.text(200, ctx.get("tenant"))
-  })
+  let app = @feather.App::new()
+    .set_state("tenant", "default")
+    .get("/", fn(ctx) { ctx.text(200, ctx.get("tenant")) })
   let ctx = @feather.Context::new(app_state_request("/"))
   ctx.set("tenant", "acme")
   app.handle(ctx)
@@ -82,10 +79,10 @@ test "removing app state stops seeding new requests" {
 ///|
 test "feather facade forwards app state helpers" {
   let feather = @feather.create_feather({
-    host: "127.0.0.1",
-    port: 0,
-    timeout: 0,
-  })
+      host: "127.0.0.1",
+      port: 0,
+      timeout: 0,
+    })
     .set_state("name", "feather")
     .set_json_state("version", Json::number(1))
   assert_eq(feather.get_state("name"), "feather")
