@@ -47,3 +47,19 @@ test "accept negotiation honors tab ows before the q value" {
   assert_eq(accept_quality_for("text/html;q\t=0", "text/html".view()), 0)
   assert_eq(accept_encoding_quality("gzip;q\t=0.5".view(), "gzip".view()), 500)
 }
+
+///|
+test "accept negotiation keeps the best quality among equally specific ranges" {
+  assert_eq(
+    accept_quality_for("text/html;q=0.2, text/html;q=0.9", "text/html".view()),
+    900,
+  )
+  assert_eq(
+    accept_quality_for("text/html;q=0.9, text/html;q=0", "text/html".view()),
+    900,
+  )
+  assert_eq(
+    accept_quality_for("text/*;q=0.2, text/*;q=0.7", "text/plain".view()),
+    700,
+  )
+}

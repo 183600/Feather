@@ -147,7 +147,9 @@ fn accept_quality_from(
       let subtype_ok = range_subtype == "*" ||
         want_subtype == "*" ||
         range_subtype.equal_ignore_ascii_case(want_subtype)
-      if type_ok && subtype_ok && quality > best_q {
+      if type_ok &&
+        subtype_ok &&
+        (quality > best_q || (quality == best_q && best_specificity < 0)) {
         best_specificity = 0
         best_q = quality
       }
@@ -166,7 +168,11 @@ fn accept_quality_from(
       } else {
         -1
       }
-      if specificity >= 0 && specificity > best_specificity {
+      if specificity >= 0 &&
+        (
+          specificity > best_specificity ||
+          (specificity == best_specificity && quality > best_q)
+        ) {
         best_specificity = specificity
         best_q = quality
       }
