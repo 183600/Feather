@@ -1563,7 +1563,11 @@ async fn handle_static(
         )
         if !failed {
           if app.compress_enabled {
-            compress_response(request, ctx.response, app.compress_min_size)
+            compress_response(
+              accept_encoding_of(request),
+              ctx.response,
+              app.compress_min_size,
+            )
           }
           if app.etag_enabled {
             apply_etag(ctx.response)
@@ -1609,7 +1613,11 @@ async fn build_response(
     )
     if !failed {
       if app.compress_enabled {
-        compress_response(request, ctx.response, app.compress_min_size)
+        compress_response(
+          accept_encoding_of(request),
+          ctx.response,
+          app.compress_min_size,
+        )
       }
       if app.etag_enabled {
         apply_etag(ctx.response)

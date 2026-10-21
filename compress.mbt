@@ -117,6 +117,13 @@ let header_accept_encoding : @http.CaseInsensitiveString = @http.CaseInsensitive
 )
 
 ///|
+/// The `Accept-Encoding` header of a server request, or `None` when the
+/// request carries none.
+fn accept_encoding_of(request : @http.Request) -> String? {
+  request.headers.get(header_accept_encoding)
+}
+
+///|
 fn contains_ignore_ascii_case(
   haystack : StringView,
   needle : StringView,
@@ -199,8 +206,14 @@ async fn gzip_compress(data : Bytes) -> Bytes {
 }
 
 ///|
+/// Compress the response body when the client accepts gzip.
+///
+/// `accept_encoding` is the `Accept-Encoding` header of the request, or
+/// `None` when the request carries none. The body is left alone when the
+/// response is not compressible, when the client does not accept gzip, or
+/// when the compressed body would not be smaller than the original one.
 async fn compress_response(
-  request : @http.Request,
+  accept_encoding : String?,
   response : Response,
   min_size : Int32,
 ) -> Unit {
@@ -234,7 +247,7 @@ async fn compress_response(
     None => ()
   }
   add_vary_accept_encoding(response)
-  let accept_encoding = match request.headers.get(header_accept_encoding) {
+  let accept_encoding = match accept_encoding {
     Some(value) => value
     None => return
   }

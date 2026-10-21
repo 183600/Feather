@@ -8576,6 +8576,14 @@ pub fn App::handle(self : App, ctx : Context) -> Unit raise {
 }
 
 ///|
+/// Run a request through the application without a server and return the
+/// response.
+///
+/// This is the offline counterpart of the server: the middleware chain, the
+/// routing and the error handling are the same, but the response is not
+/// compressed, because compressing needs the asynchronous gzip encoder. Use
+/// `App::respond_async` to see the response the server would send, gzip
+/// included.
 pub fn App::respond(self : App, request : Request) -> Response {
   let ctx = self.context_for_request(request)
   self.handle(ctx) catch {
@@ -8600,10 +8608,56 @@ pub fn App::respond(self : App, request : Request) -> Response {
         ctx.response,
       )
       if !failed {
-        if self.etag_enabled {
-          apply_etag(ctx.response)
+        finish_response(self, ctx.response, remaining, allows_not_modified)
+      }
+    }
+  }
+  ctx.response
+}
+
+///|
+/// Run a request through the application without a server and return the
+/// response, compressing it when the application compresses responses and the
+/// request accepts gzip.
+///
+/// This is the offline counterpart of the server: the middleware chain, the
+/// routing, the error handling, the compression and the cache validators are
+/// the same, so the response matches the one the server sends.
+pub async fn App::respond_async(
+  self : App,
+  request : Request,
+) -> Response {
+  let ctx = self.context_for_request(request)
+  self.handle(ctx) catch {
+    HttpError(status, message) => error_response(ctx, status, message)
+    HttpErrorPayload(status, message, payload) =>
+      error_response_with_payload(ctx, status, message, payload)
+    HttpProblem(status, type_name, title, detail, instance) =>
+      problem_response(ctx, status, type_name, title, detail, instance)
+    err => internal_error(ctx, "\{err}")
+  }
+  if ctx.file_response() is None {
+    // Without request headers there can be no precondition.
+    if ctx.request.headers.is_empty() {
+      if self.etag_enabled {
+        apply_etag(ctx.response)
+      }
+    } else {
+      let (input, allows_not_modified) = precondition_input_facade(ctx.request)
+      let (failed, remaining) = precheck_preconditions(
+        input,
+        allows_not_modified,
+        ctx.response,
+      )
+      if !failed {
+        if self.compress_enabled {
+          compress_response(
+            get_header_ignore_case(ctx.request.headers, "Accept-Encoding"),
+            ctx.response,
+            self.compress_min_size,
+          )
         }
-        apply_preconditions_input(remaining, allows_not_modified, ctx.response)
+        finish_response(self, ctx.response, remaining, allows_not_modified)
       }
     }
   }
@@ -9514,6 +9568,17 @@ pub fn Feather::static_files_with(
 ///|
 pub fn Feather::handle(self : Feather, request : Request) -> Response {
   self.app.respond(request)
+}
+
+///|
+/// Run a request through the application without a server and return the
+/// response, compressing it when the application compresses responses and the
+/// request accepts gzip. See `App::respond_async` for the details.
+pub async fn Feather::handle_async(
+  self : Feather,
+  request : Request,
+) -> Response {
+  self.app.respond_async(request)
 }
 
 ///|

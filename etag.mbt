@@ -263,6 +263,24 @@ fn has_precondition_headers(input : PreconditionInput) -> Bool {
 }
 
 ///|
+/// Tag the response and evaluate the preconditions that are left.
+///
+/// This is the last step of the response pipeline: the body is final, so the
+/// generated ETag describes the bytes that are sent, and the preconditions
+/// are decided against it.
+fn finish_response(
+  app : App,
+  response : Response,
+  remaining : PreconditionInput,
+  allows_not_modified : Bool,
+) -> Unit {
+  if app.etag_enabled {
+    apply_etag(response)
+  }
+  apply_preconditions_input(remaining, allows_not_modified, response)
+}
+
+///|
 /// Check the request's preconditions against the validators the handler
 /// supplied, before compression and ETag generation.
 ///

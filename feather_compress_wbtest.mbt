@@ -112,11 +112,6 @@ test "add vary accept encoding skips an existing token" {
 
 ///|
 async test "compression drops a differently-cased Content-Length" {
-  let request : @http.Request = {
-    meth: @http.Get,
-    path: "/big",
-    headers: Map([(@http.CaseInsensitiveString("Accept-Encoding"), "gzip")]),
-  }
   let response : Response = {
     status: 200,
     headers: Map([
@@ -127,7 +122,7 @@ async test "compression drops a differently-cased Content-Length" {
     data: None,
     cookies: [],
   }
-  compress_response(request, response, 16)
+  compress_response(Some("gzip"), response, 16)
   assert_eq(
     get_header_ignore_case(response.headers, "Content-Encoding"),
     Some("gzip"),
