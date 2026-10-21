@@ -3160,7 +3160,12 @@ pub fn Context::bearer_token(self : Context) -> String? {
   let authorization = self.header("Authorization")
   let view = authorization.view()
   if starts_with_ignore_ascii_case(view, "Bearer ".view()) {
-    Some(trim_ascii_space(view[7:]).to_owned())
+    let token = trim_ascii_space(view[7:])
+    if token.is_empty() {
+      None
+    } else {
+      Some(token.to_owned())
+    }
   } else {
     None
   }

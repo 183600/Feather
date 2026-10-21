@@ -463,6 +463,24 @@ test "Context bearer_token extracts token" {
 }
 
 ///|
+test "Context bearer_token rejects an empty credential" {
+  let empty = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: { "Authorization": "Bearer " },
+    body: "",
+  })
+  assert_eq(empty.bearer_token(), None)
+  let blank = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: { "Authorization": "Bearer    " },
+    body: "",
+  })
+  assert_eq(blank.bearer_token(), None)
+}
+
+///|
 test "middleware_request_id assigns and records ids" {
   let app = @feather.App::new()
     .use(@feather.middleware_request_id())
