@@ -8781,6 +8781,9 @@ pub async fn App::respond_async(
   if ctx.file_response() is None {
     // Without request headers there can be no precondition.
     if ctx.request.headers.is_empty() {
+      if self.compress_enabled {
+        compress_response(None, ctx.response, self.compress_min_size)
+      }
       if self.etag_enabled {
         apply_etag(ctx.response)
       }

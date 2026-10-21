@@ -263,8 +263,6 @@ async fn compress_response(
         @utf8.encode(response.body)
       }
   }
-  response.body = ""
-  response.data = Some(body_bytes)
   if body_bytes.length() < min_size {
     return
   }

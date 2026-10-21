@@ -53,6 +53,51 @@ async test "the async offline facade keeps the body when gzip is not accepted" {
 }
 
 ///|
+async test "the async offline facade keeps a body below the compression threshold" {
+  let app = @feather.App::new()
+    .compress(min_size=4096)
+    .get("/small", fn(ctx) { ctx.text(200, "tiny body") })
+  let response = app.respond_async({
+    method: "GET",
+    path: "/small",
+    headers: Map([("Accept-Encoding", "gzip")]),
+    body: "",
+  })
+  assert_eq(response.headers.get("Content-Encoding"), None)
+  assert_eq(response.headers.get("Vary"), Some("Accept-Encoding"))
+  assert_eq(response.body, "tiny body")
+}
+
+///|
+async test "the async offline facade keeps a body when gzip would not help" {
+  let app = @feather.App::new()
+    .compress(min_size=0)
+    .get("/tiny", fn(ctx) { ctx.text(200, "hi") })
+  let response = app.respond_async({
+    method: "GET",
+    path: "/tiny",
+    headers: Map([("Accept-Encoding", "gzip")]),
+    body: "",
+  })
+  assert_eq(response.headers.get("Content-Encoding"), None)
+  assert_eq(response.headers.get("Vary"), Some("Accept-Encoding"))
+  assert_eq(response.body, "hi")
+}
+
+///|
+async test "the async offline facade advertises encoding negotiation" {
+  let response = text_app().respond_async({
+    method: "GET",
+    path: "/big",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.headers.get("Content-Encoding"), None)
+  assert_eq(response.headers.get("Vary"), Some("Accept-Encoding"))
+  assert_eq(response.body, "hello ".repeat(100))
+}
+
+///|
 async test "the async offline facade tags the compressed representation" {
   let app = @feather.App::new()
     .compress(min_size=0)
