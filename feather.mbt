@@ -3474,6 +3474,7 @@ pub fn Context::file(
   self.response.body = ""
   self.response.data = None
   clear_replaced_body_headers(self.response.headers)
+  ignore(remove_header_ignore_case(self.response.headers, "Content-Disposition"))
   set_header_ignore_case(self.response.headers, "Content-Type", resolved_type)
   match download_name {
     Some(name) =>
