@@ -3169,6 +3169,7 @@ fn build_cookie(
   value : String,
   path? : String,
   max_age? : Int64,
+  expires? : Int64,
   domain? : String,
   same_site? : String,
   http_only : Bool,
@@ -3177,6 +3178,10 @@ fn build_cookie(
 ) -> @http.Cookie {
   let clean_path = match path {
     Some(value) => Some(sanitize_cookie_attribute(value))
+    None => None
+  }
+  let expires_raw = match expires {
+    Some(seconds) => Some(format_http_date(seconds))
     None => None
   }
   let clean_domain = match domain {
@@ -3206,6 +3211,7 @@ fn build_cookie(
     sanitize_cookie_token(name, true),
     sanitize_cookie_token(value, false),
     path?=clean_path,
+    expires_raw?,
     max_age?,
     domain?=clean_domain,
     http_only~,
@@ -3221,6 +3227,7 @@ pub fn Context::add_cookie(
   value : String,
   path? : String,
   max_age? : Int64,
+  expires? : Int64,
   domain? : String,
   same_site? : String,
   http_only~ : Bool = false,
@@ -3233,6 +3240,7 @@ pub fn Context::add_cookie(
       value,
       path?,
       max_age?,
+      expires?,
       domain?,
       same_site?,
       http_only,
@@ -3254,6 +3262,13 @@ fn render_cookie(cookie : @http.Cookie) -> String {
     Some(path) => {
       builder.write_string("; Path=")
       builder.write_string(path)
+    }
+    None => ()
+  }
+  match cookie.expires_raw {
+    Some(expires) => {
+      builder.write_string("; Expires=")
+      builder.write_string(expires)
     }
     None => ()
   }
@@ -3291,6 +3306,7 @@ pub fn Context::set_cookie(
   value : String,
   path? : String,
   max_age? : Int64,
+  expires? : Int64,
   domain? : String,
   same_site? : String,
   http_only~ : Bool = false,
@@ -3302,6 +3318,7 @@ pub fn Context::set_cookie(
     value,
     path?,
     max_age?,
+    expires?,
     domain?,
     same_site?,
     http_only,

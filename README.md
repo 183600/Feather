@@ -153,7 +153,8 @@ app.get("/api/items/:id", fn(ctx) {
 ```
 
 `cache_public` and `cache_private` accept `immutable=true`; `no_store` and
-`no_cache` cover the common non-storable and revalidate-first cases.
+`no_cache` cover the common non-storable and revalidate-first cases. Cookie
+helpers accept `max_age` and an absolute `expires` timestamp in Unix seconds.
 
 `app.compress(min_size=1024)` enables gzip compression for eligible responses.
 `app.etag()` enables automatic ETag generation for responses that do not set

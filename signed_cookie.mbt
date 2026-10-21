@@ -590,15 +590,26 @@ pub fn Context::set_signed_cookie(
   secret : String,
   path? : String,
   max_age? : Int64,
+  expires? : Int64,
   domain? : String,
   same_site? : String,
   http_only~ : Bool = false,
   secure~ : Bool = false,
   partitioned~ : Bool = false,
 ) -> Unit {
-  let expires_at = match max_age {
+  let by_max_age = match max_age {
     Some(seconds) => Some(@async.now() + seconds * 1000L)
     None => None
+  }
+  let by_expires = match expires {
+    Some(seconds) => Some(seconds * 1000L)
+    None => None
+  }
+  let expires_at = match (by_max_age, by_expires) {
+    (Some(a), Some(b)) => Some(if a < b { a } else { b })
+    (Some(a), None) => Some(a)
+    (None, Some(b)) => Some(b)
+    (None, None) => None
   }
   let token = signed_cookie_token(secret, name, value, expires_at?)
   self.set_cookie(
@@ -606,6 +617,7 @@ pub fn Context::set_signed_cookie(
     token,
     path?,
     max_age?,
+    expires?,
     domain?,
     same_site?,
     http_only~,
