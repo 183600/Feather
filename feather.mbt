@@ -8348,6 +8348,11 @@ fn cache_control_has_directive(
         return true
       }
       start = i + 1
+    } else if in_quotes && value.unsafe_get(i) == ('\\' : UInt16) {
+      // RFC 9110 §5.6.4 lets a quoted-string escape any character with a
+      // backslash; the escaped character (often a quote or a comma) must not
+      // affect the quote balance or the directive split.
+      i = i + 1
     } else if value.unsafe_get(i) == ('"' : UInt16) {
       in_quotes = !in_quotes
     }
