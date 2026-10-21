@@ -1640,6 +1640,16 @@ pub fn error_response_with_payload(
   match payload {
     Json::Object(extra) =>
       for key, value in extra {
+        if problem &&
+          (
+            key == "type" ||
+            key == "title" ||
+            key == "status" ||
+            key == "detail" ||
+            key == "instance"
+          ) {
+          continue
+        }
         body.set(key, value)
       }
     _ =>
