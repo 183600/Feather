@@ -507,10 +507,7 @@ async fn send_file_response(
     mtime_nanos,
     cache_key=file.path,
   )
-  let headers : @http.Headers = Map([], capacity=response.headers.length() + 4)
-  for name, value in response.headers {
-    headers.set(header_key(name), value)
-  }
+  let headers = static_base_headers(response.headers, response.cookies, 4)
   if !headers.contains(header_content_type) {
     headers.set(header_content_type, file.content_type)
   }
@@ -519,9 +516,6 @@ async fn send_file_response(
   }
   if !headers.contains(header_last_modified) {
     headers.set(header_last_modified, last_modified)
-  }
-  if response.cookies.length() > 0 {
-    headers.remove(header_set_cookie)
   }
   // A handler may override `ETag` / `Last-Modified`; preconditions must be
   // evaluated against the validators the response actually advertises.
@@ -789,6 +783,10 @@ async fn send_response(
 ) -> Unit {
   let headers : @http.Headers = Map([], capacity=response.headers.length() + 1)
   for name, value in response.headers {
+    if name.view().equal_ignore_ascii_case("transfer-encoding".view()) ||
+      name.view().equal_ignore_ascii_case("connection".view()) {
+      continue
+    }
     headers.set(header_key(name), value)
   }
   let body_allowed = response.status >= 200 &&
@@ -993,7 +991,9 @@ fn stream_seed_headers(response : Response) -> Map[String, String] {
     capacity=response.headers.length(),
   )
   for name, value in response.headers {
-    if !is_stream_reserved_header(name) {
+    if !is_stream_reserved_header(name) &&
+      !name.view().equal_ignore_ascii_case("content-encoding".view()) &&
+      !name.view().equal_ignore_ascii_case("content-range".view()) {
       headers.set(name, value)
     }
   }
@@ -1693,7 +1693,9 @@ async fn handle_sse(
   )
   for name, value in ctx.response.headers {
     if !is_stream_reserved_header(name) &&
-      !name.view().equal_ignore_ascii_case("content-type".view()) {
+      !name.view().equal_ignore_ascii_case("content-type".view()) &&
+      !name.view().equal_ignore_ascii_case("content-encoding".view()) &&
+      !name.view().equal_ignore_ascii_case("content-range".view()) {
       headers.set(header_key(name), value)
     }
   }

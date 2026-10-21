@@ -325,3 +325,33 @@ test "etag generation skips partial content" {
   assert_eq(response.status, 206)
   assert_eq(response.headers.get("ETag"), None)
 }
+
+///|
+async test "generated etags evaluate if-match before if-none-match" {
+  let if_match_key : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+    "If-Match",
+  )
+  let app = @feather.App::new()
+    .etag()
+    .get("/guard", fn(ctx) { ctx.text(200, "guarded") })
+  with_server(app, client => {
+    let first = client.get("/guard")
+    let etag = first.headers.get(etag_key).unwrap()
+    ignore(client.read_all())
+    let stale = client.get(
+      "/guard",
+      extra_headers=Map([
+        (if_match_key, "\"stale\""),
+        (if_none_match_key, "*"),
+      ]),
+    )
+    assert_eq(stale.code, 412)
+    assert_eq(client.read_all().text(), "412 Precondition Failed")
+    let matched = client.get(
+      "/guard",
+      extra_headers=Map([(if_match_key, etag), (if_none_match_key, "*")]),
+    )
+    assert_eq(matched.code, 304)
+    assert_eq(client.read_all().text(), "")
+  })
+}

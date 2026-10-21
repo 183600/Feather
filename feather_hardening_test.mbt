@@ -209,6 +209,36 @@ async test "server ignores ranges for non-get file responses" {
 }
 
 ///|
+async test "dynamic responses drop handler framing headers" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_header("Transfer-Encoding", "chunked")
+        ctx.set_header("Connection", "keep-alive")
+        next(ctx)
+      }
+    })
+    .get("/text", fn(ctx) { ctx.text(200, "hello") })
+  with_server(app, client => {
+    let response = client.get("/text")
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Transfer-Encoding")),
+      None,
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Connection")),
+      None,
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Length")),
+      Some("5"),
+    )
+    assert_eq(client.read_all().text(), "hello")
+  })
+}
+
+///|
 async test "if-range tolerates surrounding whitespace" {
   let dir = @fs.tmpdir(prefix="feather-file-if-range-ows")
   @fs.write_file(dir + "/digits.txt", "0123456789")
@@ -276,6 +306,49 @@ async test "sse fields strip injected line breaks" {
       client.read_all().text(),
       "event: tickdata: forged\nid: 1data: hijack\ndata: real\n\n",
     )
+  })
+}
+
+///|
+async test "streaming responses drop stale representation headers" {
+  let stale : @feather.Middleware = fn(next) {
+    fn(ctx) raise {
+      ctx.set_header("Content-Encoding", "gzip")
+      ctx.set_header("Content-Range", "bytes 0-1/2")
+      next(ctx)
+    }
+  }
+  let stream_app = @feather.App::new()
+    .use(stale)
+    .stream("/feed", async fn(_ctx, stream) { stream.write("chunk") })
+  with_stream_server(stream_app, client => {
+    let response = client.get("/feed")
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Encoding")),
+      None,
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      None,
+    )
+    assert_eq(client.read_all().text(), "chunk")
+  })
+  let sse_app = @feather.App::new()
+    .use(stale)
+    .sse("/events", async fn(_ctx, sse) { sse.send("hi") })
+  with_sse_server(sse_app, client => {
+    let response = client.get("/events")
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Encoding")),
+      None,
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      None,
+    )
+    assert_eq(client.read_all().text(), "data: hi\n\n")
   })
 }
 
@@ -460,6 +533,216 @@ async test "static errors drop stale representation headers" {
     assert_eq(client.read_all().text(), "404 Not Found")
   })
   @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "dynamic errors drop stale representation headers" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_header("Content-Encoding", "gzip")
+        ctx.set_header("Content-Range", "bytes 0-1/2")
+        ctx.set_header("Content-Length", "999")
+        next(ctx)
+      }
+    })
+    .get("/boom", fn(_ctx) { raise @feather.HttpError(503, "down") })
+  with_server(app, client => {
+    let failed = client.get("/boom")
+    assert_eq(failed.code, 503)
+    assert_eq(
+      failed.headers.get(@http.CaseInsensitiveString("Content-Encoding")),
+      None,
+    )
+    assert_eq(
+      failed.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      None,
+    )
+    assert_eq(client.read_all().text(), "{\"status\":503,\"error\":\"down\"}")
+    let missing = client.get("/missing")
+    assert_eq(missing.code, 404)
+    assert_eq(
+      missing.headers.get(@http.CaseInsensitiveString("Content-Encoding")),
+      None,
+    )
+    assert_eq(
+      missing.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      None,
+    )
+    assert_eq(client.read_all().text(), "404 Not Found")
+  })
+}
+
+///|
+async test "file responses drop stale representation and framing headers" {
+  let dir = @fs.tmpdir(prefix="feather-file-encoding")
+  @fs.write_file(dir + "/digits.txt", "0123456789")
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_header("Content-Encoding", "gzip")
+        ctx.set_header("Content-Range", "bytes 0-1/2")
+        ctx.set_header("Transfer-Encoding", "chunked")
+        next(ctx)
+      }
+    })
+    .get("/download", fn(ctx) {
+      ctx.set_header("ETag", "\"v1\"")
+      ctx.file(200, dir + "/digits.txt")
+    })
+  with_server(app, client => {
+    let full = client.get("/download")
+    assert_eq(full.code, 200)
+    assert_eq(
+      full.headers.get(@http.CaseInsensitiveString("Content-Encoding")),
+      None,
+    )
+    assert_eq(
+      full.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      None,
+    )
+    assert_eq(
+      full.headers.get(@http.CaseInsensitiveString("Transfer-Encoding")),
+      None,
+    )
+    assert_eq(client.read_all().text(), "0123456789")
+    let invalid = client.get(
+      "/download",
+      extra_headers=Map([(@http.CaseInsensitiveString("Range"), "bytes=99-")]),
+    )
+    assert_eq(invalid.code, 416)
+    assert_eq(
+      invalid.headers.get(@http.CaseInsensitiveString("Content-Encoding")),
+      None,
+    )
+    assert_eq(
+      invalid.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      Some("bytes */10"),
+    )
+    ignore(client.read_all())
+    let cached = client.get(
+      "/download",
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("If-None-Match"), "\"v1\""),
+      ]),
+    )
+    assert_eq(cached.code, 304)
+    assert_eq(
+      cached.headers.get(@http.CaseInsensitiveString("Content-Encoding")),
+      None,
+    )
+    assert_eq(
+      cached.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      None,
+    )
+    assert_eq(
+      cached.headers.get(@http.CaseInsensitiveString("Content-Length")),
+      None,
+    )
+    ignore(client.read_all())
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "dynamic precondition failures drop stale content range" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_header("Content-Range", "bytes 0-1/2")
+        next(ctx)
+      }
+    })
+    .etag()
+    .get("/item", fn(ctx) {
+      ctx.set_header("ETag", "\"v1\"")
+      ctx.text(200, "hello")
+    })
+  with_server(app, client => {
+    let response = client.get(
+      "/item",
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("If-Match"), "\"stale\""),
+      ]),
+    )
+    assert_eq(response.code, 412)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      None,
+    )
+    assert_eq(client.read_all().text(), "412 Precondition Failed")
+  })
+}
+
+///|
+test "body-replacing response helpers drop stale framing headers" {
+  let ctx = @feather.create_context()
+  ctx.set_header("Content-Length", "999")
+  ctx.set_header("Content-Encoding", "gzip")
+  ctx.set_header("Content-Range", "bytes 0-1/2")
+  ctx.no_content()
+  assert_eq(ctx.response.headers.get("Content-Length"), None)
+  assert_eq(ctx.response.headers.get("Content-Encoding"), None)
+  assert_eq(ctx.response.headers.get("Content-Range"), None)
+  ctx.set_header("Content-Length", "999")
+  ctx.set_header("Content-Encoding", "gzip")
+  ctx.set_header("Content-Range", "bytes 0-1/2")
+  ctx.redirect(302, "/next")
+  assert_eq(ctx.response.headers.get("Content-Length"), None)
+  assert_eq(ctx.response.headers.get("Content-Encoding"), None)
+  assert_eq(ctx.response.headers.get("Content-Range"), None)
+}
+
+///|
+test "middleware denials drop stale representation headers" {
+  let stale : @feather.Middleware = fn(next) {
+    fn(ctx) raise {
+      ctx.set_header("Content-Length", "999")
+      ctx.set_header("Content-Encoding", "gzip")
+      ctx.set_header("Content-Range", "bytes 0-1/2")
+      next(ctx)
+    }
+  }
+  let store = @feather.SessionStore::new()
+  let csrf_app = @feather.App::new()
+    .use(@feather.middleware_session(store))
+    .use(stale)
+    .use(@feather.middleware_csrf())
+    .post("/act", fn(ctx) { ctx.text(200, "ok") })
+  let denied = csrf_app.respond({
+    method: "POST",
+    path: "/act",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(denied.status, 403)
+  assert_eq(denied.headers.get("Content-Length"), None)
+  assert_eq(denied.headers.get("Content-Encoding"), None)
+  assert_eq(denied.headers.get("Content-Range"), None)
+  assert_eq(denied.body, "403 Forbidden")
+  let limiter = @feather.RateLimiter::new(max=1)
+  let limited_app = @feather.App::new()
+    .use(stale)
+    .use(@feather.middleware_rate_limit(limiter))
+    .get("/limited", fn(ctx) { ctx.text(200, "ok") })
+  let allowed = limited_app.respond({
+    method: "GET",
+    path: "/limited",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(allowed.status, 200)
+  let throttled = limited_app.respond({
+    method: "GET",
+    path: "/limited",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(throttled.status, 429)
+  assert_eq(throttled.headers.get("Content-Length"), None)
+  assert_eq(throttled.headers.get("Content-Encoding"), None)
+  assert_eq(throttled.headers.get("Content-Range"), None)
+  assert_eq(throttled.body, "429 Too Many Requests")
 }
 
 ///|

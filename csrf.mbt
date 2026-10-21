@@ -123,6 +123,7 @@ pub fn middleware_csrf(
         csrf_constant_time_equal(provided, expected.view()) {
         next(ctx)
       } else {
+        clear_replaced_body_headers(ctx.response.headers)
         ctx.text(403, "403 Forbidden")
       }
     }

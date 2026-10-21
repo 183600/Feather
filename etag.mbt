@@ -204,6 +204,7 @@ fn apply_preconditions_input(
       response.data = None
       ignore(remove_header_ignore_case(response.headers, "Content-Type"))
       ignore(remove_header_ignore_case(response.headers, "Content-Length"))
+      ignore(remove_header_ignore_case(response.headers, "Content-Range"))
     }
     PreconditionFailed => {
       response.status = 412
@@ -216,6 +217,7 @@ fn apply_preconditions_input(
       )
       ignore(remove_header_ignore_case(response.headers, "Content-Length"))
       ignore(remove_header_ignore_case(response.headers, "Content-Encoding"))
+      ignore(remove_header_ignore_case(response.headers, "Content-Range"))
     }
   }
 }
@@ -316,26 +318,20 @@ fn precheck_preconditions(
     None => 0L
   }
   // Without a handler ETag the `If-Match` outcome is not final: generation may
-  // produce a matching tag. `If-Match` also suppresses `If-Unmodified-Since`,
-  // so only the conditions that do not depend on the missing tag are checked.
-  let early_input = if response_etag is None && input.if_match is Some(_) {
-    {
-      if_match: None,
-      if_none_match: input.if_none_match,
-      if_modified_since: input.if_modified_since,
-      if_unmodified_since: None,
-    }
-  } else {
-    input
+  // produce a matching tag. Defer the whole precondition set until after
+  // generation, because `If-Match` must be evaluated before the other
+  // conditions and a failure must not be masked by `If-None-Match`.
+  if response_etag is None && input.if_match is Some(_) {
+    return (false, input)
   }
   match evaluate_preconditions_input(
-    early_input,
+    input,
     etag,
     mtime_secs,
     allows_not_modified,
   ) {
     PreconditionFailed => {
-      apply_preconditions_input(early_input, allows_not_modified, response)
+      apply_preconditions_input(input, allows_not_modified, response)
       (true, input)
     }
     _ =>

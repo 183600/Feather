@@ -1320,9 +1320,17 @@ pub fn Router::dispatch_with(
 }
 
 ///|
+fn clear_replaced_body_headers(headers : Map[String, String]) -> Unit {
+  ignore(remove_header_ignore_case(headers, "Content-Length"))
+  ignore(remove_header_ignore_case(headers, "Content-Encoding"))
+  ignore(remove_header_ignore_case(headers, "Content-Range"))
+}
+
+///|
 pub fn not_found(ctx : Context) -> Unit {
   ctx.file = None
   ctx.response.status = 404
+  clear_replaced_body_headers(ctx.response.headers)
   set_header_ignore_case(ctx.response.headers, "Content-Type", "text/plain; charset=utf-8")
   ctx.response.data = None
   ctx.response.body = "404 Not Found"
@@ -1332,6 +1340,7 @@ pub fn not_found(ctx : Context) -> Unit {
 fn method_not_allowed_with_allow(ctx : Context, allow : String) -> Unit {
   ctx.file = None
   ctx.response.status = 405
+  clear_replaced_body_headers(ctx.response.headers)
   set_header_ignore_case(ctx.response.headers, "Allow", allow)
   set_header_ignore_case(ctx.response.headers, "Content-Type", "text/plain; charset=utf-8")
   ctx.response.data = None
@@ -1347,6 +1356,7 @@ pub fn method_not_allowed(ctx : Context, allowed : Array[String]) -> Unit {
 fn respond_options_with_allow(ctx : Context, allow : String) -> Unit {
   ctx.file = None
   ctx.response.status = 204
+  clear_replaced_body_headers(ctx.response.headers)
   set_header_ignore_case(ctx.response.headers, "Allow", allow)
   ctx.response.data = None
   ctx.response.body = ""
@@ -1364,6 +1374,7 @@ pub fn internal_error(ctx : Context, detail : String) -> Unit {
   ctx.file = None
   ctx.state.set("error", detail)
   ctx.response.status = 500
+  clear_replaced_body_headers(ctx.response.headers)
   set_header_ignore_case(ctx.response.headers, "Content-Type", "text/plain; charset=utf-8")
   ctx.response.data = None
   ctx.response.body = "Internal Server Error"
@@ -1420,6 +1431,7 @@ fn cached_error_body(status : Int32, message : String) -> String {
 pub fn error_response(ctx : Context, status : Int32, message : String) -> Unit {
   ctx.file = None
   ctx.response.status = status
+  clear_replaced_body_headers(ctx.response.headers)
   set_header_ignore_case(ctx.response.headers, "Content-Type", "application/json; charset=utf-8")
   ctx.response.data = None
   ctx.response.body = cached_error_body(status, message)
@@ -1444,6 +1456,7 @@ pub fn error_response_with_payload(
     _ => body.set("detail", payload)
   }
   ctx.response.status = status
+  clear_replaced_body_headers(ctx.response.headers)
   set_header_ignore_case(ctx.response.headers, "Content-Type", "application/json; charset=utf-8")
   ctx.response.data = None
   ctx.response.body = Json::object(body).stringify()
@@ -1745,6 +1758,7 @@ pub fn Context::redirect(
 ) -> Unit {
   self.file = None
   self.response.status = status
+  clear_replaced_body_headers(self.response.headers)
   set_header_ignore_case(self.response.headers, "Location", location)
   self.response.data = None
   self.response.body = ""
@@ -1757,6 +1771,7 @@ pub fn Context::no_content(self : Context) -> Unit {
   self.response.body = ""
   self.response.data = None
   ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
+  clear_replaced_body_headers(self.response.headers)
 }
 
 ///|
@@ -6296,6 +6311,8 @@ pub fn Context::not_modified(
   self.response.body = ""
   self.response.data = None
   ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
+  ignore(remove_header_ignore_case(self.response.headers, "Content-Length"))
+  ignore(remove_header_ignore_case(self.response.headers, "Content-Range"))
   match etag {
     Some(etag) =>
       set_header_ignore_case(self.response.headers, "ETag", etag)
@@ -8421,6 +8438,7 @@ fn basic_auth_middleware(
       } else {
         ctx.file = None
         ctx.response.status = 401
+        clear_replaced_body_headers(ctx.response.headers)
         set_header_ignore_case(
           ctx.response.headers,
           "WWW-Authenticate",
