@@ -48,3 +48,27 @@ test "zz agent file drops stale body headers" {
   ctx.file(200, "/tmp/zz-agent.txt")
   assert_false(zz_agent_has_stale(ctx))
 }
+
+///|
+async test "zz agent static 416 does not advertise a coding for empty body" {
+  let dir = @fs.tmpdir(prefix="feather-416-encoding")
+  @fs.write_file(dir + "/asset.txt", "0123456789")
+  @fs.write_file(dir + "/asset.txt.gz", b"\x1f\x8b\x08\x00\x00\x00\x00\x00")
+  let app = @feather.App::new().static_files("/", dir, precompressed=true)
+  with_server(app, client => {
+    let response = client.get(
+      "/asset.txt",
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("Range"), "bytes=99-"),
+        (@http.CaseInsensitiveString("Accept-Encoding"), "gzip"),
+      ]),
+    )
+    assert_eq(response.code, 416)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Encoding")),
+      None,
+    )
+    ignore(client.read_all())
+  })
+  @fs.rmdir(dir, recursive=true)
+}

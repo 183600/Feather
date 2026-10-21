@@ -1381,7 +1381,7 @@ async fn serve_static_file(
       let headers = static_base_headers(extra_headers, cookies, 2)
       headers.set(content_range_key, "bytes */" + size.to_string())
       headers.set(accept_ranges_key, "bytes")
-      decorate_static_headers(headers, precompressed, serving_gzip)
+      decorate_static_headers(headers, precompressed, false)
       send_with_date(conn, 416, "Range Not Satisfiable", headers, cookies~)
       conn.end_response()
     }
