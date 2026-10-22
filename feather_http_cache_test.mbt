@@ -665,6 +665,34 @@ test "Context forwarded_ip honors proxy headers" {
 }
 
 ///|
+async test "server ignores preconditions for non-2xx queued files" {
+  let dir = @fs.tmpdir(prefix="feather-file-precondition-status")
+  @fs.write_file(dir + "/nope.txt", "not found body")
+  let app = @feather.App::new().get("/nope.txt", fn(ctx) {
+    ctx.file(404, dir + "/nope.txt")
+  })
+  with_server(app, client => {
+    let not_modified = client.get(
+      "/nope.txt",
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("If-None-Match"), "*"),
+      ]),
+    )
+    assert_eq(not_modified.code, 404)
+    assert_eq(client.read_all().text(), "not found body")
+    let failed = client.get(
+      "/nope.txt",
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("If-Match"), "\"stale\""),
+      ]),
+    )
+    assert_eq(failed.code, 404)
+    assert_eq(client.read_all().text(), "not found body")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
 async test "server ignores range headers for non-200 queued files" {
   let dir = @fs.tmpdir(prefix="feather-file-range-status")
   @fs.write_file(dir + "/nope.txt", "0123456789")

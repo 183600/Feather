@@ -104,7 +104,7 @@ test "the forwarded header wins over x-forwarded-for" {
 }
 
 ///|
-test "forwarded nodes without an address are skipped" {
+test "forwarded nodes without an address keep their hop position" {
   let app = ip_app(1)
   assert_eq(
     ip_of(app, Map([("Forwarded", "for=_hidden, for=198.51.100.4")])),
@@ -113,6 +113,50 @@ test "forwarded nodes without an address are skipped" {
   assert_eq(
     ip_of(app, Map([("Forwarded", "for=unknown, for=198.51.100.4")])),
     "198.51.100.4",
+  )
+  // The trusted proxy appended an address-less node, so the earlier value is
+  // client-controlled and must not be trusted as the reported client.
+  assert_eq(
+    ip_of(app, Map([("Forwarded", "for=203.0.113.7, for=_hidden")])),
+    "10.0.0.9",
+  )
+  let two = ip_app(2)
+  assert_eq(
+    ip_of(two, Map([("Forwarded", "for=_hidden, for=198.51.100.4")])),
+    "10.0.0.9",
+  )
+}
+
+///|
+test "an address-less forwarded node suppresses the x-forwarded-for fallback" {
+  let app = ip_app(1)
+  assert_eq(
+    ip_of(
+      app,
+      Map([
+        ("Forwarded", "for=_hidden"),
+        ("X-Forwarded-For", "203.0.113.7"),
+      ]),
+    ),
+    "10.0.0.9",
+  )
+  // Without any `for=` parameter the RFC 7239 header is not a usable chain, so
+  // the legacy header is still consulted.
+  assert_eq(
+    ip_of(
+      app,
+      Map([
+        ("Forwarded", "proto=https"),
+        ("X-Forwarded-For", "203.0.113.7"),
+      ]),
+    ),
+    "203.0.113.7",
+  )
+  // An empty X-Forwarded-For entry is an unaddressed hop, not a reason to
+  // shift to an earlier client-controlled value.
+  assert_eq(
+    ip_of(app, Map([("X-Forwarded-For", "203.0.113.7, ")])),
+    "10.0.0.9",
   )
 }
 

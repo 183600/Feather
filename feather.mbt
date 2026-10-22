@@ -2412,9 +2412,10 @@ pub fn Context::full_url(self : Context) -> String {
 /// When the application declares trusted proxies with `App::trust_proxy`, the
 /// address of the real client is reported instead: the forwarded chain is
 /// walked `hops` steps back from the peer, so one trusted proxy reports the
-/// address that proxy saw. Without a trusted-proxy configuration the peer
-/// address is reported, and `Context::forwarded_ip` remains the way to read
-/// the forwarded headers directly.
+/// address that proxy saw. A selected hop that recorded no address falls back
+/// to the peer address. Without a trusted-proxy configuration the peer address
+/// is reported, and `Context::forwarded_ip` remains the way to read the
+/// forwarded headers directly.
 pub fn Context::ip(self : Context) -> String {
   let peer = match self.state.get("remote_addr") {
     Some(value) => value
@@ -8692,6 +8693,8 @@ pub fn App::max_body_size(self : App, size : Int32) -> App {
 /// The chain is read from the RFC 7239 `Forwarded` header when it carries
 /// `for=` parameters, and from `X-Forwarded-For` otherwise. Both list the
 /// client first, so the chain is walked from the closest proxy backwards.
+/// Nodes that record no address remain in the chain, and selecting one reports
+/// the peer address rather than an earlier, potentially spoofed entry.
 pub fn App::trust_proxy(self : App, hops : Int32) -> App {
   self.trust_proxy_hops = hops
   self
@@ -9006,6 +9009,12 @@ fn cache_control_has_directive(
 ///|
 /// Append `value` to the response's `Vary` header unless it is already listed.
 pub fn Context::vary(self : Context, value : String) -> Unit {
+  // RFC 9110 §12.5.5 defines `*` as the entire field value, so a wildcard
+  // replaces whatever was already listed instead of being appended to it.
+  if header_list_has_token(value.view(), "*".view()) {
+    set_header_ignore_case(self.response.headers, "Vary", "*")
+    return
+  }
   match get_header_ignore_case(self.response.headers, "Vary") {
     Some(existing) =>
       if !header_list_has_token(existing.view(), value.view()) {

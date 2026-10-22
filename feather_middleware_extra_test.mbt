@@ -254,6 +254,19 @@ test "context vary replaces a differently cased existing header" {
 }
 
 ///|
+test "context vary keeps a wildcard as the whole field value" {
+  let ctx = @feather.create_context()
+  ctx.vary("Accept-Encoding")
+  ctx.vary("*")
+  assert_eq(ctx.response.headers.get("Vary"), Some("*"))
+  ctx.vary("Origin")
+  assert_eq(ctx.response.headers.get("Vary"), Some("*"))
+  let list = @feather.create_context()
+  list.vary("Accept, *")
+  assert_eq(list.response.headers.get("Vary"), Some("*"))
+}
+
+///|
 test "context set_header replaces a differently cased header" {
   let ctx = @feather.create_context()
   ctx.set_header("X-Test", "one")

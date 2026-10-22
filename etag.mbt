@@ -144,6 +144,18 @@ fn apply_etag(response : Response) -> Unit {
 }
 
 ///|
+/// Whether a response status selects a representation whose preconditions may
+/// be evaluated. Error responses are left untouched, as are empty and ranged
+/// responses, whose `If-Range` handling happens where the range is computed.
+fn status_allows_preconditions(status : Int) -> Bool {
+  status >= 200 &&
+  status < 300 &&
+  status != 204 &&
+  status != 205 &&
+  status != 206
+}
+
+///|
 /// Evaluate the request's precondition headers against the response's `ETag` /
 /// `Last-Modified` validators, turning a successful response into
 /// `304 Not Modified` or `412 Precondition Failed` as RFC 9110 §13 requires.
@@ -157,11 +169,7 @@ fn apply_preconditions_input(
   allows_not_modified : Bool,
   response : Response,
 ) -> Unit {
-  if response.status < 200 ||
-    response.status >= 300 ||
-    response.status == 204 ||
-    response.status == 205 ||
-    response.status == 206 {
+  if !status_allows_preconditions(response.status) {
     return
   }
   let has_if_match = input.if_match is Some(_)

@@ -12,13 +12,16 @@ const TRUST_PROXY_HOPS_KEY : String = "__feather_trust_proxy_hops"
 
 ///|
 /// The `for=` node identifiers of every element of an RFC 7239 `Forwarded`
-/// header, in the order the proxies processed the request.
+/// header, in the order the proxies processed the request, together with
+/// whether any element carried a `for=` parameter.
 ///
 /// The client-most proxy comes first, so the proxy closest to the application
-/// is the last element. Elements whose `for=` parameter carries no address
-/// (obfuscated or unknown nodes) are skipped.
-fn forwarded_for_values(header : StringView) -> Array[String] {
+/// is the last element. An element whose `for=` parameter carries no address
+/// (obfuscated or unknown nodes) is kept as an empty placeholder so trusted
+/// hop counting still lines up with the elements the proxies appended.
+fn forwarded_for_values(header : StringView) -> (Array[String], Bool) {
   let values : Array[String] = []
+  let mut saw_for = false
   let length = header.length()
   let mut start = 0
   let mut i = 0
@@ -33,33 +36,40 @@ fn forwarded_for_values(header : StringView) -> Array[String] {
       in_quotes = !in_quotes
     } else if unit == (',' : UInt16) && !in_quotes {
       match forwarded_element_param(header[start:i], "for".view()) {
-        Some(value) =>
+        Some(value) => {
+          saw_for = true
           match normalize_forwarded_for(value.view()) {
             Some(address) => values.push(address)
-            None => ()
+            None => values.push("")
           }
-        None => ()
+        }
+        None => values.push("")
       }
       start = i + 1
     }
     i = i + 1
   }
-  values
+  if saw_for {
+    (values, true)
+  } else {
+    ([], false)
+  }
 }
 
 ///|
 /// The client addresses recorded by the proxies in front of the application,
 /// closest proxy first.
 ///
-/// The RFC 7239 `Forwarded` header wins over `X-Forwarded-For`. Both list the
-/// client first and the proxy closest to the application last, so the list is
-/// reversed to report the closest proxy first. An empty list means that no
-/// proxy recorded an address.
+/// The RFC 7239 `Forwarded` header wins over `X-Forwarded-For` whenever one of
+/// its elements carries a `for=` parameter. Both list the client first and the
+/// proxy closest to the application last, so the list is reversed to report the
+/// closest proxy first. Empty entries are retained as placeholders so hop
+/// counting is not shifted by a proxy that recorded no address.
 fn forwarded_chain(ctx : Context) -> Array[String] {
   let forwarded = ctx.header("Forwarded")
   if forwarded != "" {
-    let values = forwarded_for_values(forwarded.view())
-    if !values.is_empty() {
+    let (values, saw_for) = forwarded_for_values(forwarded.view())
+    if saw_for {
       return reverse_strings(values)
     }
   }
@@ -74,10 +84,7 @@ fn forwarded_chain(ctx : Context) -> Array[String] {
   let chain : Array[String] = []
   let mut i = parts.length() - 1
   while i >= 0 {
-    let value = trim_ascii_space(parts[i])
-    if !value.is_empty() {
-      chain.push(value.to_owned())
-    }
+    chain.push(trim_ascii_space(parts[i]).to_owned())
     i = i - 1
   }
   chain
@@ -102,7 +109,9 @@ fn reverse_strings(values : Array[String]) -> Array[String] {
 /// The peer address comes first, followed by the addresses the proxies
 /// recorded, closest proxy first. `hops` counts the trusted hops, so one
 /// trusted proxy reports the address that proxy saw, and a negative count
-/// trusts the whole chain and reports the original client.
+/// trusts the whole chain and reports the original client. When the selected
+/// hop recorded no address, the peer address is reported instead of trusting a
+/// different, client-controlled entry.
 fn trusted_client_address(
   peer : String,
   chain : Array[String],
@@ -113,5 +122,10 @@ fn trusted_client_address(
   }
   let last = chain.length() - 1
   let index = if hops < 0 || hops >= chain.length() { last } else { hops - 1 }
-  chain[index]
+  let address = chain[index]
+  if address == "" {
+    peer
+  } else {
+    address
+  }
 }

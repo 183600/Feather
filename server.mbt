@@ -566,39 +566,41 @@ async fn send_file_response(
       }
     None => mtime_secs
   }
-  match
-    evaluate_preconditions(
-      request,
-      effective_etag,
-      effective_mtime,
-      head || request.meth is @http.Get,
-    ) {
-    PreconditionFailed => {
-      send_static_error(
-        conn,
-        response.headers,
-        response.cookies,
-        head,
-        412,
-        "412 Precondition Failed",
-        false,
-      )
-      return
+  if status_allows_preconditions(response.status) {
+    match
+      evaluate_preconditions(
+        request,
+        effective_etag,
+        effective_mtime,
+        head || request.meth is @http.Get,
+      ) {
+      PreconditionFailed => {
+        send_static_error(
+          conn,
+          response.headers,
+          response.cookies,
+          head,
+          412,
+          "412 Precondition Failed",
+          false,
+        )
+        return
+      }
+      PreconditionNotModified => {
+        headers.remove(header_content_length)
+        headers.remove(header_content_type)
+        send_with_date(
+          conn,
+          304,
+          "Not Modified",
+          headers,
+          cookies=response.cookies,
+        )
+        conn.end_response()
+        return
+      }
+      PreconditionPass => ()
     }
-    PreconditionNotModified => {
-      headers.remove(header_content_length)
-      headers.remove(header_content_type)
-      send_with_date(
-        conn,
-        304,
-        "Not Modified",
-        headers,
-        cookies=response.cookies,
-      )
-      conn.end_response()
-      return
-    }
-    PreconditionPass => ()
   }
   let mut status = response.status
   let mut start = 0L
