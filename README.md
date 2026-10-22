@@ -196,7 +196,8 @@ Authentication middleware is available for basic credentials
 `feather-<n>` value, stores it for `Context::request_id`, and echoes it in the
 response. Pass `generate` for UUID/ULID or tracing ids and `max_length` to bound
 untrusted input; an empty or over-long generated id falls back to the built-in
-counter.
+counter. `trust_incoming=false` ignores a client-supplied id entirely, which is
+the safer choice on a public endpoint where the header is spoofable.
 
 `middleware_allowed_hosts(["example.com", "*.example.com"])` rejects requests
 whose `Host` header is not accepted with `400` before the handler runs. Ports

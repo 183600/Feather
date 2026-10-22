@@ -85,7 +85,7 @@ pub fn middleware_rate_limit(RateLimiter, key? : (Context) -> String) -> ((Conte
 
 pub fn middleware_recover(log? : (String) -> Unit) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
-pub fn middleware_request_id(header? : String, generate? : () -> String, max_length? : Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+pub fn middleware_request_id(header? : String, generate? : () -> String, max_length? : Int32, trust_incoming? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_secure_headers(content_type_options? : String, frame_options? : String, referrer_policy? : String, hsts? : String, content_security_policy? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 

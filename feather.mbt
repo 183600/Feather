@@ -11336,10 +11336,16 @@ fn normalize_request_id(value : String, max_length : Int32) -> String {
 /// counter. `max_length` caps accepted and generated ids, which bounds the
 /// state and response header an untrusted client can force; `0` disables the
 /// cap.
+///
+/// `trust_incoming` defaults to `true`, which is useful behind a gateway that
+/// already assigns ids. Set it to `false` on a public endpoint so a client
+/// cannot choose the id that appears in logs and tracing systems; a generated
+/// id is used instead.
 pub fn middleware_request_id(
   header~ : String = "X-Request-Id",
   generate? : () -> String,
   max_length~ : Int32 = 0,
+  trust_incoming~ : Bool = true,
 ) -> Middleware {
   let counter = Ref(0)
   let limit = if max_length < 0 { 0 } else { max_length }
@@ -11348,7 +11354,13 @@ pub fn middleware_request_id(
       // An incoming id is client-controlled, so control characters must not
       // reach the response header or the request state even on the offline
       // facade, which does not pass through the server's header sanitizer.
-      let incoming = normalize_request_id(ctx.header(header), limit)
+      // Public endpoints can set `trust_incoming=false` so a client cannot
+      // choose the id that appears in logs and correlation systems.
+      let incoming = if trust_incoming {
+        normalize_request_id(ctx.header(header), limit)
+      } else {
+        ""
+      }
       let id = if incoming != "" {
         incoming
       } else {
