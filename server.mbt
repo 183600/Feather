@@ -315,6 +315,18 @@ async fn decode_gzip_body(data : Bytes, limit : Int32) -> Bytes {
 }
 
 ///|
+/// Normalize an absolute-form request target before routing or static lookup.
+/// Origin-form and authority-form targets are copied unchanged.
+fn normalize_http_request(request : @http.Request) -> @http.Request {
+  let path = normalize_request_target(request.path)
+  if path == request.path {
+    request
+  } else {
+    { meth: request.meth, path, headers: request.headers }
+  }
+}
+
+///|
 fn request_method_to_string(meth : @http.RequestMethod) -> String {
   match meth {
     @http.Get => "GET"
@@ -2146,6 +2158,7 @@ async fn handle_request(
   body : &@io.Reader,
   conn : @http.ServerConnection,
 ) -> Unit {
+  let request = normalize_http_request(request)
   if app.draining {
     send_simple(
       conn,

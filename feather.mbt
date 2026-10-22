@@ -171,6 +171,17 @@ pub fn create_router() -> Router {
 
 ///|
 pub fn Context::new(request : Request) -> Context {
+  let normalized_path = normalize_request_target(request.path)
+  let request = if normalized_path == request.path {
+    request
+  } else {
+    {
+      method: request.method,
+      path: normalized_path,
+      headers: request.headers,
+      body: request.body,
+    }
+  }
   {
     request,
     response: {
@@ -259,6 +270,80 @@ fn clean_path_view(path : String) -> StringView {
   match path_head_end(path) {
     Some(index) => path[:index]
     None => path.view()
+  }
+}
+
+///|
+/// Whether `code` may appear in a URI scheme (RFC 3986 §3.1).
+fn is_uri_scheme_character(code : Int32) -> Bool {
+  (code >= 48 && code <= 57) ||
+  (code >= 65 && code <= 90) ||
+  (code >= 97 && code <= 122) ||
+  code == 43 ||
+  code == 45 ||
+  code == 46
+}
+
+///|
+/// The effective request target for routing and context accessors.
+///
+/// Origin-form targets (`/users/1?q=x`), authority-form `CONNECT` targets and
+/// the asterisk-form (`*`) are returned unchanged. An absolute-form target,
+/// which HTTP/1.1 clients send to proxies (`GET http://example.com/users/1
+/// HTTP/1.1`), is reduced to its path and query so routing, static lookup and
+/// `Context` helpers behave exactly as they do for origin-form requests.
+///
+/// An absolute URI without an explicit path is the root path, so
+/// `http://example.com?q=x` becomes `/?q=x`. A value that is not a valid
+/// absolute URI is left untouched, letting normal routing produce the 404.
+fn normalize_request_target(path : String) -> String {
+  let view = path.view()
+  let length = view.length()
+  if length == 0 || view.unsafe_get(0) == ('/' : UInt16) {
+    return path
+  }
+  let separator = match view.find("://") {
+    Some(index) => index
+    None => return path
+  }
+  // The scheme starts with a letter and contains only scheme characters;
+  // anything else (for example `a/b://host`) is not an absolute URI.
+  let first = view.unsafe_get(0).to_int()
+  if !((first >= 65 && first <= 90) || (first >= 97 && first <= 122)) {
+    return path
+  }
+  let mut i = 1
+  while i < separator {
+    if !is_uri_scheme_character(view.unsafe_get(i).to_int()) {
+      return path
+    }
+    i = i + 1
+  }
+  let authority_start = separator + 3
+  let mut path_start = authority_start
+  while path_start < length {
+    let code = view.unsafe_get(path_start)
+    if code == ('/' : UInt16) ||
+      code == ('?' : UInt16) ||
+      code == ('#' : UInt16) {
+      break
+    }
+    path_start = path_start + 1
+  }
+  // Require a non-empty authority so malformed targets are not turned into a
+  // root request by accident.
+  if path_start == authority_start {
+    return path
+  }
+  if path_start >= length {
+    return "/"
+  }
+  let code = view.unsafe_get(path_start)
+  if code == ('/' : UInt16) {
+    view[path_start:].to_owned()
+  } else {
+    // A query or fragment with no path component belongs to the root path.
+    "/" + view[path_start:].to_owned()
   }
 }
 
