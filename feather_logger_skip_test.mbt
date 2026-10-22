@@ -71,3 +71,31 @@ test "logger duration and skip compose" {
   assert_eq(lines.val.length(), 1)
   assert_true(lines.val[0].has_prefix("[200] GET /timed ("))
 }
+
+///|
+async test "logger skip silences static asset requests" {
+  let dir = @fs.tmpdir(prefix="feather-logger-skip-static")
+  @fs.write_file(dir + "/asset.txt", "asset")
+  let lines : Ref[Array[String]] = Ref([])
+  let app = @feather.App::new()
+    .use(
+      @feather.middleware_logger(
+        log=fn(line) { lines.val.push(line) },
+        skip=fn(ctx) { ctx.pathname().has_prefix("/assets") },
+      ),
+    )
+    .static_files("/assets", dir)
+    .get("/api", fn(ctx) { ctx.text(200, "api") })
+  with_server(app, client => {
+    let asset = client.get("/assets/asset.txt")
+    assert_eq(asset.code, 200)
+    assert_eq(client.read_all().text(), "asset")
+    let api = client.get("/api")
+    assert_eq(api.code, 200)
+    assert_eq(client.read_all().text(), "api")
+  })
+  assert_eq(lines.val.length(), 1)
+  assert_eq(lines.val[0], "[200] GET /api")
+  @fs.rmdir(dir, recursive=true)
+}
+

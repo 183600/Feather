@@ -120,3 +120,33 @@ test "secure headers stay on responses produced by an inner recovery" {
   )
   assert_eq(response.headers.get("X-Content-Type-Options"), Some("nosniff"))
 }
+
+///|
+async test "secure headers apply to static file responses" {
+  let dir = @fs.tmpdir(prefix="feather-secure-headers-static")
+  @fs.write_file(dir + "/asset.txt", "asset")
+  let app = @feather.App::new()
+    .use(
+      @feather.middleware_secure_headers(
+        cross_origin_resource_policy="same-origin",
+      ),
+    )
+    .static_files("/assets", dir)
+  with_server(app, client => {
+    let response = client.get("/assets/asset.txt")
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(
+        @http.CaseInsensitiveString("Cross-Origin-Resource-Policy"),
+      ),
+      Some("same-origin"),
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-Frame-Options")),
+      Some("DENY"),
+    )
+    assert_eq(client.read_all().text(), "asset")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+

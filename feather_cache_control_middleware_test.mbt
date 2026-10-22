@@ -121,3 +121,27 @@ test "cache control middleware leaves an escaping error undecorated" {
   assert_eq(response.status, 500)
   assert_eq(response.headers.get("Cache-Control"), None)
 }
+
+///|
+async test "no-store middleware overrides a static mount cache policy" {
+  let dir = @fs.tmpdir(prefix="feather-cache-control-static")
+  @fs.write_file(dir + "/asset.txt", "asset")
+  let app = @feather.App::new()
+    .use(@feather.middleware_no_store())
+    .static_files(
+      "/assets",
+      dir,
+      cache_control="public, max-age=3600",
+    )
+  with_server(app, client => {
+    let response = client.get("/assets/asset.txt")
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Cache-Control")),
+      Some("no-store"),
+    )
+    assert_eq(client.read_all().text(), "asset")
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
