@@ -6772,7 +6772,13 @@ fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
     return false
   }
   let code = view.unsafe_get(index)
-  if code == ('\r' : UInt16) || code == ('\n' : UInt16) {
+  if code == ('\r' : UInt16) {
+    // A delimiter line ends with CRLF, not with a bare CR. Data can legitimately
+    // contain CR bytes, so treating a lone CR as a line break would split a
+    // payload whose text merely starts with the boundary spelling.
+    return index + 1 < length && view.unsafe_get(index + 1) == ('\n' : UInt16)
+  }
+  if code == ('\n' : UInt16) {
     return true
   }
   if code == ('-' : UInt16) {
@@ -6791,7 +6797,11 @@ fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
       return true
     }
     let tail_code = view.unsafe_get(tail)
-    return tail_code == ('\r' : UInt16) || tail_code == ('\n' : UInt16)
+    if tail_code == ('\r' : UInt16) {
+      return tail + 1 < length &&
+        view.unsafe_get(tail + 1) == ('\n' : UInt16)
+    }
+    return tail_code == ('\n' : UInt16)
   }
   false
 }
