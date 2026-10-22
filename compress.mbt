@@ -12,6 +12,59 @@ pub fn App::compress(self : App, min_size~ : Int32 = 1024) -> App {
 }
 
 ///|
+/// Request state key recording a per-response compression decision.
+const COMPRESSION_OVERRIDE_KEY : String = "__feather_response_compression"
+
+///|
+/// Force gzip compression for this response, even when application-wide
+/// compression is disabled.
+///
+/// `min_size` is the smallest body, in bytes, that is worth compressing for
+/// this response; it defaults to `0`, so any compressible body whose gzip form
+/// is smaller is encoded. The request's `Accept-Encoding` is still honored and
+/// `Vary: Accept-Encoding` is still added. Like application-wide compression,
+/// this takes effect when the response is sent by the server or built with
+/// `App::respond_async`; the synchronous `App::respond` facade never
+/// compresses.
+pub fn Context::compress(self : Context, min_size~ : Int32 = 0) -> Unit {
+  let minimum = if min_size < 0 { 0 } else { min_size }
+  self.state.set(COMPRESSION_OVERRIDE_KEY, "on:" + minimum.to_string())
+}
+
+///|
+/// Disable gzip compression for this response, even when application-wide
+/// compression is enabled.
+///
+/// The response is sent as-is and no `Vary: Accept-Encoding` is added by the
+/// compression stage, because this representation does not depend on the
+/// request's accepted encodings.
+pub fn Context::no_compress(self : Context) -> Unit {
+  self.state.set(COMPRESSION_OVERRIDE_KEY, "off")
+}
+
+///|
+/// Whether this response should be compressed and the threshold to use,
+/// honoring a per-response `Context::compress` / `Context::no_compress`
+/// decision before the application-wide setting.
+fn compression_settings(app : App, ctx : Context) -> (Bool, Int32) {
+  match ctx.state.get(COMPRESSION_OVERRIDE_KEY) {
+    Some(value) =>
+      if value == "off" {
+        (false, app.compress_min_size)
+      } else if value.has_prefix("on:") {
+        let minimum = match parse_decimal(value[3:].view()) {
+          Some(size) => size
+          None => 0
+        }
+        (true, minimum)
+      } else {
+        (app.compress_enabled, app.compress_min_size)
+      }
+    None => (app.compress_enabled, app.compress_min_size)
+  }
+}
+
+///|
 fn parse_quality(value : StringView) -> Int32 {
   let length = value.length()
   if length == 0 {

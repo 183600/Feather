@@ -250,6 +250,7 @@ pub fn Context::cache_private(Self, Int32, immutable? : Bool) -> Unit
 pub fn Context::cache_public(Self, Int32, immutable? : Bool) -> Unit
 pub fn Context::clear_cookie(Self, String, path? : String, domain? : String) -> Unit
 pub fn Context::clear_signed_cookie(Self, String, path? : String, domain? : String) -> Unit
+pub fn Context::compress(Self, min_size? : Int32) -> Unit
 pub fn Context::content_type(Self) -> String
 pub fn Context::cookie(Self, String) -> String?
 pub fn Context::cookies(Self) -> Map[String, String]
@@ -295,6 +296,7 @@ pub fn Context::multipart_file(Self, String) -> MultipartPart?
 pub fn Context::multipart_value(Self, String) -> String
 pub fn Context::new(Request) -> Self
 pub fn Context::no_cache(Self) -> Unit
+pub fn Context::no_compress(Self) -> Unit
 pub fn Context::no_content(Self) -> Unit
 pub fn Context::no_store(Self) -> Unit
 pub fn Context::not_modified(Self, etag? : String, last_modified? : String) -> Unit

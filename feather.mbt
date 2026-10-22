@@ -8790,8 +8790,9 @@ pub async fn App::respond_async(
   if ctx.file_response() is None {
     // Without request headers there can be no precondition.
     if ctx.request.headers.is_empty() {
-      if self.compress_enabled {
-        compress_response(None, ctx.response, self.compress_min_size)
+      let (compress, min_size) = compression_settings(self, ctx)
+      if compress {
+        compress_response(None, ctx.response, min_size)
       }
       if self.etag_enabled {
         apply_etag(ctx.response)
@@ -8804,11 +8805,12 @@ pub async fn App::respond_async(
         ctx.response,
       )
       if !failed {
-        if self.compress_enabled {
+        let (compress, min_size) = compression_settings(self, ctx)
+        if compress {
           compress_response(
             get_header_ignore_case(ctx.request.headers, "Accept-Encoding"),
             ctx.response,
-            self.compress_min_size,
+            min_size,
           )
         }
         finish_response(self, ctx.response, remaining, allows_not_modified)
