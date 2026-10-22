@@ -1454,7 +1454,7 @@ async fn serve_static_file(
       set_header_if_absent(headers, etag_key, etag)
       set_header_if_absent(headers, last_modified_key, last_modified)
       if cache_control != "" {
-        headers.set(cache_control_key, cache_control)
+        set_header_if_absent(headers, cache_control_key, cache_control)
       }
       decorate_static_headers(headers, precompressed, serving_gzip)
       send_with_date(conn, 304, "Not Modified", headers, cookies~)
@@ -1508,7 +1508,7 @@ async fn serve_static_file(
       set_header_if_absent(headers, last_modified_key, last_modified)
       headers.set(accept_ranges_key, "bytes")
       if cache_control != "" {
-        headers.set(cache_control_key, cache_control)
+        set_header_if_absent(headers, cache_control_key, cache_control)
       }
       decorate_static_headers(headers, precompressed, serving_gzip)
       send_with_date(conn, 206, "Partial Content", headers, cookies~)
@@ -1525,7 +1525,7 @@ async fn serve_static_file(
       set_header_if_absent(headers, last_modified_key, last_modified)
       headers.set(accept_ranges_key, "bytes")
       if cache_control != "" {
-        headers.set(cache_control_key, cache_control)
+        set_header_if_absent(headers, cache_control_key, cache_control)
       }
       decorate_static_headers(headers, precompressed, serving_gzip)
       send_with_date(conn, 200, "OK", headers, cookies~)
