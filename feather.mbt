@@ -9327,44 +9327,52 @@ pub fn middleware_method_override(
 }
 
 ///|
-pub fn middleware_cors(
-  allow_origin~ : String = "*",
-  allow_methods~ : String = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
-  allow_headers~ : String = "*",
-  expose_headers~ : String = "",
-  allow_credentials~ : Bool = false,
-  max_age~ : Int32 = 0,
+priv enum CorsOriginPolicy {
+  CorsOriginFixed(String)
+  CorsOriginPredicate((String) -> Bool)
+}
+
+///|
+/// Shared implementation of the fixed-origin and predicate CORS middleware.
+fn cors_middleware(
+  policy : CorsOriginPolicy,
+  allow_methods : String,
+  allow_headers : String,
+  expose_headers : String,
+  allow_credentials : Bool,
+  max_age : Int32,
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
+      let origin = trim_ascii_space(ctx.header("Origin").view()).to_owned()
       let is_options = ctx.request.method == "OPTIONS"
-      // The default response (`*`, no credentials) does not depend on the
-      // request's `Origin`.
-      let request_origin = if allow_credentials || is_options {
-        ctx.header("Origin")
-      } else {
-        ""
+      let (allowed_origin, dynamic_origin) = match policy {
+        CorsOriginFixed(value) =>
+          if value != "*" {
+            (value, true)
+          } else if allow_credentials && origin != "" {
+            (origin, true)
+          } else {
+            ("*", false)
+          }
+        CorsOriginPredicate(check) =>
+          if origin != "" && check(origin) {
+            (origin, true)
+          } else {
+            ("", false)
+          }
       }
-      let echo_origin = allow_origin != "*" ||
-        (allow_credentials && request_origin != "")
-      if echo_origin {
-        let origin = if allow_origin != "*" {
-          allow_origin
-        } else {
-          request_origin
-        }
+      if allowed_origin != "" {
         set_header_ignore_case(
           ctx.response.headers,
           "Access-Control-Allow-Origin",
-          origin,
+          allowed_origin,
         )
+      }
+      if dynamic_origin {
+        // The answer depends on the request's `Origin`, so shared caches must
+        // keep origins apart.
         ctx.vary("Origin")
-      } else {
-        set_header_ignore_case(
-          ctx.response.headers,
-          "Access-Control-Allow-Origin",
-          allow_origin,
-        )
       }
       if allow_credentials {
         set_header_ignore_case(
@@ -9379,7 +9387,7 @@ pub fn middleware_cors(
         // the handler. Other OPTIONS requests (including explicit OPTIONS
         // routes) pass through to the router and are only decorated with the
         // CORS headers below.
-        let preflight = request_origin != "" &&
+        let preflight = origin != "" &&
           ctx.header("Access-Control-Request-Method") != ""
         if preflight {
           ctx.file = None
@@ -9405,25 +9413,27 @@ pub fn middleware_cors(
         } else {
           next(ctx)
         }
-        set_header_ignore_case(
-          ctx.response.headers,
-          "Access-Control-Allow-Methods",
-          allow_methods,
-        )
-        set_header_ignore_case(
-          ctx.response.headers,
-          "Access-Control-Allow-Headers",
-          allow_headers,
-        )
-        if max_age > 0 {
+        if allowed_origin != "" {
           set_header_ignore_case(
             ctx.response.headers,
-            "Access-Control-Max-Age",
-            max_age.to_string(),
+            "Access-Control-Allow-Methods",
+            allow_methods,
           )
+          set_header_ignore_case(
+            ctx.response.headers,
+            "Access-Control-Allow-Headers",
+            allow_headers,
+          )
+          if max_age > 0 {
+            set_header_ignore_case(
+              ctx.response.headers,
+              "Access-Control-Max-Age",
+              max_age.to_string(),
+            )
+          }
         }
       } else {
-        if expose_headers != "" {
+        if expose_headers != "" && allowed_origin != "" {
           set_header_ignore_case(
             ctx.response.headers,
             "Access-Control-Expose-Headers",
@@ -9434,6 +9444,92 @@ pub fn middleware_cors(
       }
     }
   }
+}
+
+///|
+/// Middleware that adds CORS response headers and answers preflight requests.
+///
+/// `allow_origin` is either `"*"` (the default) or a concrete origin to
+/// advertise; when credentials are enabled the request's `Origin` is echoed
+/// instead, because browsers reject a wildcard with credentials. Use
+/// `middleware_cors_with` for a dynamic predicate or
+/// `middleware_cors_allowlist` for a fixed set of accepted origins.
+pub fn middleware_cors(
+  allow_origin~ : String = "*",
+  allow_methods~ : String = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
+  allow_headers~ : String = "*",
+  expose_headers~ : String = "",
+  allow_credentials~ : Bool = false,
+  max_age~ : Int32 = 0,
+) -> Middleware {
+  cors_middleware(
+    CorsOriginFixed(allow_origin),
+    allow_methods,
+    allow_headers,
+    expose_headers,
+    allow_credentials,
+    max_age,
+  )
+}
+
+///|
+/// CORS middleware whose accepted origin is decided per request.
+///
+/// The predicate receives the request's non-empty `Origin`; returning `true`
+/// echoes that origin in `Access-Control-Allow-Origin` and adds `Vary:
+/// Origin`. Requests with an origin the predicate rejects (and requests
+/// without an `Origin`) are passed through without CORS headers. Preflight
+/// requests are still answered with `204`, so a rejected origin never reaches
+/// the handler.
+pub fn middleware_cors_with(
+  allow_origin~ : (String) -> Bool,
+  allow_methods~ : String = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
+  allow_headers~ : String = "*",
+  expose_headers~ : String = "",
+  allow_credentials~ : Bool = false,
+  max_age~ : Int32 = 0,
+) -> Middleware {
+  cors_middleware(
+    CorsOriginPredicate(allow_origin),
+    allow_methods,
+    allow_headers,
+    expose_headers,
+    allow_credentials,
+    max_age,
+  )
+}
+
+///|
+/// CORS middleware that accepts only the listed origins.
+///
+/// Matching is exact and case-sensitive, which is the right default for the
+/// serialized origins browsers send. An empty list rejects every origin while
+/// still answering preflight requests.
+pub fn middleware_cors_allowlist(
+  origins : Array[String],
+  allow_methods~ : String = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
+  allow_headers~ : String = "*",
+  expose_headers~ : String = "",
+  allow_credentials~ : Bool = false,
+  max_age~ : Int32 = 0,
+) -> Middleware {
+  let accepted = origins.copy()
+  middleware_cors_with(
+    allow_origin=fn(origin) {
+      let mut found = false
+      for candidate in accepted {
+        if candidate == origin {
+          found = true
+        }
+      }
+      found
+    },
+    allow_methods~,
+    allow_headers~,
+    expose_headers~,
+    allow_credentials~,
+    max_age~,
+  )
 }
 
 ///|

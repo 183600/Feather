@@ -63,6 +63,10 @@ pub fn middleware_bearer_auth_with((String) -> Bool, realm? : String) -> ((Conte
 
 pub fn middleware_cors(allow_origin? : String, allow_methods? : String, allow_headers? : String, expose_headers? : String, allow_credentials? : Bool, max_age? : Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
+pub fn middleware_cors_allowlist(Array[String], allow_methods? : String, allow_headers? : String, expose_headers? : String, allow_credentials? : Bool, max_age? : Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_cors_with(allow_origin~ : (String) -> Bool, allow_methods? : String, allow_headers? : String, expose_headers? : String, allow_credentials? : Bool, max_age? : Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
 pub fn middleware_csrf(field? : String, header? : String, key? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_error_handler() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
