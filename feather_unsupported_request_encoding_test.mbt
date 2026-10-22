@@ -94,3 +94,21 @@ async test "static fast paths reject unsupported request codings too" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+async test "streaming endpoints reject unsupported request codings" {
+  let app = @feather.App::new().stream("/stream", async fn(_ctx, out) {
+    out.write("unexpected")
+  })
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "GET /stream HTTP/1.1\r\nHost: test\r\nContent-Encoding: compress\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbody",
+      ),
+    )
+    let head = @async.with_timeout(2000, () => read_http_head(conn)) catch {
+      _ => ""
+    }
+    assert_true(head.has_prefix("HTTP/1.1 415"), msg=head)
+  })
+}
