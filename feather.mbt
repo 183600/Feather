@@ -603,12 +603,16 @@ fn normalize_method(meth : String) -> String {
 }
 
 ///|
-pub fn Router::add_route(
+/// Insert a route and return the leaf node, so named registration can attach
+/// the name to exactly the node it just created even when another route
+/// pattern would otherwise win the generic matcher (for example a static
+/// `%3Aid` sibling of a `:id` parameter).
+fn Router::add_route_node(
   self : Router,
   meth : String,
   path : String,
   handler : Handler,
-) -> Unit {
+) -> RouteNode {
   let clean_path = clean_route_path(path)
   let method_key = normalize_method(meth)
   let mut node = match self.trees.get(method_key) {
@@ -712,6 +716,18 @@ pub fn Router::add_route(
   last_route_valid.val = false
   last_route_hit.val = None
   last_route_miss.val = None
+  node
+}
+
+///|
+/// Register a route.
+pub fn Router::add_route(
+  self : Router,
+  meth : String,
+  path : String,
+  handler : Handler,
+) -> Unit {
+  ignore(self.add_route_node(meth, path, handler))
 }
 
 ///|
@@ -730,23 +746,6 @@ pub fn Router::add_route_with(
 }
 
 ///|
-/// Attach `name` to the node registered for `meth path`. The route must have
-/// been added already; a missing node is ignored so callers can pass a cleaned
-/// path without reimplementing route normalization.
-fn Router::set_node_name(
-  self : Router,
-  meth : String,
-  path : String,
-  name : String,
-) -> Unit {
-  let clean_path = clean_path_view(path)
-  match self.find_node_raw(normalize_method(meth), clean_path) {
-    Some((node, _, _)) => node.route_name = name
-    None => ()
-  }
-}
-
-///|
 pub fn Router::add_named_route(
   self : Router,
   name : String,
@@ -755,8 +754,8 @@ pub fn Router::add_named_route(
   handler : Handler,
 ) -> Unit {
   let clean_path = clean_route_path(path)
-  self.add_route(meth, clean_path, handler)
-  self.set_node_name(meth, clean_path, name)
+  let node = self.add_route_node(meth, clean_path, handler)
+  node.route_name = name
   self.named.set(name, { method: normalize_method(meth), path: clean_path, })
 }
 
@@ -772,8 +771,12 @@ pub fn Router::add_named_route_with(
   handler : Handler,
 ) -> Unit {
   let clean_path = clean_route_path(path)
-  self.add_route_with(meth, clean_path, middlewares, handler)
-  self.set_node_name(meth, clean_path, name)
+  let node = self.add_route_node(
+    meth,
+    clean_path,
+    apply_middleware(middlewares, handler),
+  )
+  node.route_name = name
   self.named.set(name, { method: normalize_method(meth), path: clean_path, })
 }
 
@@ -9500,10 +9503,11 @@ pub fn App::static_files_with(
 fn collect_route_nodes(
   node : RouteNode,
   method : String,
-  out : Array[(String, String, Handler)],
+  out : Array[(String, String, Handler, String)],
 ) -> Unit {
   match node.handler {
-    Some(handler) => out.push((method, node.route_path, handler))
+    Some(handler) =>
+      out.push((method, node.route_path, handler, node.route_name))
     None => ()
   }
   match node.static_children {
@@ -9641,25 +9645,21 @@ pub fn App::mount_with(
   let outer = middlewares.copy()
   let base = normalize_prefix(prefix)
   let child_middlewares = mounted_child_middlewares(child)
-  let routes : Array[(String, String, Handler)] = []
+  let routes : Array[(String, String, Handler, String)] = []
   for method, root in child.router.trees {
     collect_route_nodes(root, method, routes)
   }
   for route in routes {
-    let (method, path, handler) = route
+    let (method, path, handler, route_name) = route
     let wrapped = mounted_route_chain(outer, child_middlewares, handler)
-    self.router.add_route(method, join_paths(base, path), wrapped)
+    let node = self.router.add_route_node(method, join_paths(base, path), wrapped)
+    node.route_name = route_name
   }
   for name, named in child.router.named {
-    let mounted_path = join_paths(base, named.path)
     self.router.named.set(name, {
       method: named.method,
-      path: mounted_path,
+      path: join_paths(base, named.path),
     })
-    // The mounted route is registered through `add_route`, which clears the
-    // node's name; restore the child's name so `Context::route_name` keeps
-    // working through a mount.
-    self.router.set_node_name(named.method, mounted_path, name)
   }
   for mount in child.static_mounts {
     self.static_mounts.push({

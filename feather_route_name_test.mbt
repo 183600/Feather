@@ -141,3 +141,26 @@ test "Router::route reports the registered name" {
     _ => fail("expected the unnamed route to match")
   }
 }
+
+///|
+test "a named parameter route is not confused with a static colon sibling" {
+  let router = @feather.create_router()
+  router.add_route("GET", "/users/%3Aid", fn(ctx) { ctx.text(200, "static") })
+  router.add_named_route("dynamic", "GET", "/users/:id", fn(ctx) {
+    ctx.text(200, "dynamic")
+  })
+  // Static segments outrank parameters, so the literal `:id` path still hits
+  // the static sibling; only the parameter match carries the dynamic name.
+  match router.route("GET", "/users/:id") {
+    @feather.RouteFound(route) => assert_eq(route.name, "")
+    _ => fail("expected the static sibling to match")
+  }
+  match router.route("GET", "/users/42") {
+    @feather.RouteFound(route) => {
+      assert_eq(route.name, "dynamic")
+      assert_eq(route.params.get("id"), Some("42"))
+    }
+    _ => fail("expected the named parameter route to match")
+  }
+}
+
