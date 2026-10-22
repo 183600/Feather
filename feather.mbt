@@ -2416,6 +2416,9 @@ pub fn Context::append_header(
   key : String,
   value : String,
 ) -> Unit {
+  if sanitize_response_header_name(key) == "" {
+    return
+  }
   match get_header_ignore_case(self.response.headers, key) {
     Some(existing) =>
       if existing == "" {
@@ -2441,6 +2444,9 @@ pub fn Context::set_header_if_absent(
   key : String,
   value : String,
 ) -> Bool {
+  if sanitize_response_header_name(key) == "" {
+    return false
+  }
   if get_header_ignore_case(self.response.headers, key) is Some(_) {
     false
   } else {
@@ -6930,13 +6936,61 @@ fn cached_header_spelling(
 }
 
 ///|
+/// Whether `code` may appear in an HTTP field name (RFC 9110 §5.6.2 `token`).
+fn is_http_field_name_character(code : Int32) -> Bool {
+  (code >= 48 && code <= 57) ||
+  (code >= 65 && code <= 90) ||
+  (code >= 97 && code <= 122) ||
+  code == 33 ||
+  code == 35 ||
+  code == 36 ||
+  code == 37 ||
+  code == 38 ||
+  code == 39 ||
+  code == 42 ||
+  code == 43 ||
+  code == 45 ||
+  code == 46 ||
+  code == 94 ||
+  code == 95 ||
+  code == 96 ||
+  code == 124 ||
+  code == 126
+}
+
+///|
+/// Return `name` when it is a non-empty HTTP field name, or `""` when it could
+/// inject separators, whitespace or a whole extra header line.
+fn sanitize_response_header_name(name : String) -> String {
+  if name.is_empty() {
+    return ""
+  }
+  for i = 0; i < name.length(); i = i + 1 {
+    if !is_http_field_name_character(name[i].to_int()) {
+      return ""
+    }
+  }
+  name
+}
+
+///|
 /// Set a header under its canonical spelling, dropping any existing entry whose
 /// name differs only by case so the outgoing response has exactly one of it.
+///
+/// Header names and values are checked here because every response helper
+/// funnels through this function. An invalid field name is ignored rather than
+/// written, and control characters are removed from the value, so a handler
+/// that forwards client-controlled text cannot forge an extra header line.
 fn set_header_ignore_case(
   headers : Map[String, String],
   name : String,
   value : String,
 ) -> Unit {
+  let name = sanitize_response_header_name(name)
+  if name == "" {
+    return
+  }
+  let value = strip_control_characters(value)
   let stale : Array[String] = []
   for key in headers.keys() {
     if key.view().equal_ignore_ascii_case(name.view()) {
