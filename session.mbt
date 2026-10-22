@@ -182,6 +182,13 @@ const SESSION_LAZY_KEY : String = "__feather_session_ttl"
 const SESSION_TTL_STATE_KEY : String = "__feather_session_ttl_ms"
 
 ///|
+/// State key marking a request whose incoming session cookie named no live
+/// session. The middleware clears that stale cookie even when the handler
+/// never touches the session, so the browser stops sending an id the store has
+/// already dropped.
+const SESSION_STALE_COOKIE_KEY : String = "__feather_session_stale"
+
+///|
 /// Parse the TTL text recorded under `SESSION_LAZY_KEY`, falling back to the
 /// default lifetime for malformed values.
 fn session_ttl_from_text(text : String) -> Int64 {
@@ -760,8 +767,14 @@ fn session_persist(
   had_cookie : Bool,
   is_new : Bool,
 ) -> Unit {
+  let stale_cookie = ctx.state.contains(SESSION_STALE_COOKIE_KEY)
   match ctx.session {
-    None => ()
+    None =>
+      // A cookie that named no live session is expired even when the handler
+      // never materialized a session, so it does not keep being sent.
+      if stale_cookie {
+        session_send_cookie(ctx, config, "", Some(0L))
+      }
     Some(session) =>
       if session.destroyed {
         store.destroy(session.id)
@@ -803,6 +816,10 @@ fn session_persist(
               session_remaining_max_age(config, session, now),
             )
           }
+        } else if stale_cookie {
+          // The handler only read the session (or did not touch it), so no
+          // replacement cookie was written: still expire the stale one.
+          session_send_cookie(ctx, config, "", Some(0L))
         }
       }
   }
@@ -862,7 +879,12 @@ pub fn middleware_session(
           }
           ctx.session = Some(session)
         }
-        None => ctx.state.set(SESSION_LAZY_KEY, lazy_ttl_text)
+        None => {
+          if had_cookie {
+            ctx.state.set(SESSION_STALE_COOKIE_KEY, "1")
+          }
+          ctx.state.set(SESSION_LAZY_KEY, lazy_ttl_text)
+        }
       }
       errdefer session_persist(ctx, store, config, had_cookie, is_new)
       next(ctx)

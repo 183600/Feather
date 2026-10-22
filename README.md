@@ -232,7 +232,10 @@ shared session across subdomains. Sessions have a fixed lifetime by default;
 and `Context::session_touch()` performs the same refresh from a handler. If a
 session's deadline passes while a request is running, that request's write is
 discarded and the response expires the cookie instead of handing out a
-cookie for a session the store has already dropped.
+cookie for a session the store has already dropped. An incoming cookie that
+names no live session (unknown or already expired) is expired on the response
+as well, even when the handler never touches the session, so clients stop
+sending an id the store has dropped.
 
 ## Responses and conditional requests
 
