@@ -11895,6 +11895,12 @@ fn cors_middleware(
               ),
             )
           }
+          // A denied preflight still depends on `Origin`: its 204 carries no
+          // CORS grants, while an accepted one does. Add the key here when the
+          // origin itself was not already recorded as dynamic.
+          if dynamic_origin || allowed_origin == "" {
+            ctx.vary("Origin")
+          }
           // The preflight answer depends on the two request headers, so shared
           // caches must key on them as well (Fetch: Vary considerations).
           ctx.vary("Access-Control-Request-Method")
