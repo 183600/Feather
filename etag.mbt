@@ -268,6 +268,7 @@ fn apply_preconditions_input(
       ignore(remove_header_ignore_case(response.headers, "Content-Type"))
       ignore(remove_header_ignore_case(response.headers, "Content-Length"))
       ignore(remove_header_ignore_case(response.headers, "Content-Range"))
+      ignore(remove_header_ignore_case(response.headers, "Content-Disposition"))
     }
     PreconditionFailed => {
       response.status = 412
@@ -281,6 +282,7 @@ fn apply_preconditions_input(
       ignore(remove_header_ignore_case(response.headers, "Content-Length"))
       ignore(remove_header_ignore_case(response.headers, "Content-Encoding"))
       ignore(remove_header_ignore_case(response.headers, "Content-Range"))
+      clear_replaced_representation_headers(response.headers)
     }
   }
 }

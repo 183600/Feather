@@ -1589,6 +1589,19 @@ fn clear_replaced_body_headers(headers : Map[String, String]) -> Unit {
 }
 
 ///|
+/// Drop representation metadata that described a body which is being replaced
+/// by an error, a redirect or another empty response. Keeping an old `ETag` or
+/// `Last-Modified` would let a cache reuse the validator for different bytes,
+/// and an old `Content-Disposition` would turn an error body into a download.
+fn clear_replaced_representation_headers(
+  headers : Map[String, String],
+) -> Unit {
+  ignore(remove_header_ignore_case(headers, "ETag"))
+  ignore(remove_header_ignore_case(headers, "Last-Modified"))
+  ignore(remove_header_ignore_case(headers, "Content-Disposition"))
+}
+
+///|
 /// Media type of an RFC 7807 problem-details document.
 pub const PROBLEM_CONTENT_TYPE : String = "application/problem+json; charset=utf-8"
 
@@ -1637,6 +1650,7 @@ pub fn problem_response(
   ctx.file = None
   ctx.response.status = status
   clear_replaced_body_headers(ctx.response.headers)
+  clear_replaced_representation_headers(ctx.response.headers)
   set_header_ignore_case(
     ctx.response.headers,
     "Content-Type",
@@ -1661,6 +1675,7 @@ fn negotiated_error_body(
   plain_detail : String,
 ) -> Unit {
   clear_replaced_body_headers(ctx.response.headers)
+  clear_replaced_representation_headers(ctx.response.headers)
   // The rendering below is chosen from `Accept`, so the response must not be
   // reused for a request with different preferences.
   ctx.vary("Accept")
@@ -1718,6 +1733,7 @@ fn respond_options_with_allow(ctx : Context, allow : String) -> Unit {
   ctx.file = None
   ctx.response.status = 204
   clear_replaced_body_headers(ctx.response.headers)
+  clear_replaced_representation_headers(ctx.response.headers)
   // A 204 carries no representation, so a content type prepared for an
   // earlier response must not leak into the automatic OPTIONS answer.
   ignore(remove_header_ignore_case(ctx.response.headers, "Content-Type"))
@@ -1843,6 +1859,7 @@ pub fn error_response(ctx : Context, status : Int32, message : String) -> Unit {
   ctx.file = None
   ctx.response.status = status
   clear_replaced_body_headers(ctx.response.headers)
+  clear_replaced_representation_headers(ctx.response.headers)
   ctx.vary("Accept")
   if ctx.wants_problem_details() {
     set_header_ignore_case(
@@ -1910,6 +1927,7 @@ pub fn error_response_with_payload(
   }
   ctx.response.status = status
   clear_replaced_body_headers(ctx.response.headers)
+  clear_replaced_representation_headers(ctx.response.headers)
   if problem {
     set_header_ignore_case(
       ctx.response.headers,
@@ -2484,6 +2502,7 @@ pub fn Context::redirect(
   self.file = None
   self.response.status = status
   clear_replaced_body_headers(self.response.headers)
+  clear_replaced_representation_headers(self.response.headers)
   // A redirect has no body, so a representation type prepared for an earlier
   // response must not leak into it.
   ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
@@ -2504,6 +2523,7 @@ pub fn Context::no_content(self : Context) -> Unit {
   self.response.data = None
   ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
   clear_replaced_body_headers(self.response.headers)
+  clear_replaced_representation_headers(self.response.headers)
 }
 
 ///|
@@ -8082,6 +8102,7 @@ pub fn Context::not_modified(
   ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
   ignore(remove_header_ignore_case(self.response.headers, "Content-Length"))
   ignore(remove_header_ignore_case(self.response.headers, "Content-Range"))
+  ignore(remove_header_ignore_case(self.response.headers, "Content-Disposition"))
   match etag {
     Some(etag) => set_header_ignore_case(self.response.headers, "ETag", etag)
     None => ()
@@ -8123,6 +8144,25 @@ fn parse_byte_offset(view : StringView) -> Int64? {
 }
 
 ///|
+/// Whether `view` is a non-empty run of decimal digits. Used to distinguish a
+/// syntactically valid but out-of-range byte offset from a malformed one.
+fn is_decimal_offset(view : StringView) -> Bool {
+  let length = view.length()
+  if length == 0 {
+    return false
+  }
+  let mut i = 0
+  while i < length {
+    let digit = view.unsafe_get(i).to_int() - 48
+    if digit < 0 || digit > 9 {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+///|
 pub fn parse_byte_range(value : String, total : Int64) -> ByteRange {
   let view = trim_ascii_space(value.view())
   if !starts_with_ignore_ascii_case(view, "bytes=".view()) {
@@ -8141,7 +8181,17 @@ pub fn parse_byte_range(value : String, total : Int64) -> ByteRange {
   if start_text.is_empty() {
     let suffix = match parse_byte_offset(end_text) {
       Some(suffix) => suffix
-      None => return ByteRangeFull
+      // A numeric suffix larger than Int64 is still a valid suffix that
+      // selects the whole representation, not malformed syntax to ignore.
+      None =>
+        if is_decimal_offset(end_text) {
+          if total <= 0L {
+            return ByteRangeInvalid
+          }
+          return ByteRangeSpec(0L, total - 1L)
+        } else {
+          return ByteRangeFull
+        }
     }
     if suffix <= 0L || total <= 0L {
       return ByteRangeInvalid
@@ -8151,7 +8201,15 @@ pub fn parse_byte_range(value : String, total : Int64) -> ByteRange {
   }
   let start = match parse_byte_offset(start_text) {
     Some(start) => start
-    None => return ByteRangeFull
+    // Any numeric start that does not fit in Int64 is beyond every possible
+    // representation size, so the range is unsatisfiable rather than invalid
+    // syntax.
+    None =>
+      if is_decimal_offset(start_text) {
+        return ByteRangeInvalid
+      } else {
+        return ByteRangeFull
+      }
   }
   if end_text.is_empty() {
     if start >= total {
@@ -8161,7 +8219,10 @@ pub fn parse_byte_range(value : String, total : Int64) -> ByteRange {
   }
   let end = match parse_byte_offset(end_text) {
     Some(end) => end
-    None => return ByteRangeFull
+    // An overflowing last-byte position is clamped to the end below.
+    None => if is_decimal_offset(end_text) { 9223372036854775807L } else {
+      return ByteRangeFull
+    }
   }
   if start > end {
     return ByteRangeFull
@@ -9973,6 +10034,16 @@ fn strip_forbidden_body(response : Response) -> Unit {
     response.body = ""
     response.data = None
     ignore(remove_header_ignore_case(response.headers, "Content-Length"))
+    ignore(remove_header_ignore_case(response.headers, "Content-Type"))
+    ignore(remove_header_ignore_case(response.headers, "Content-Range"))
+    // A 304 keeps its validators and coding: they describe the selected
+    // representation. `1xx`, `204` and `205` have no representation at all.
+    if response.status != 304 {
+      clear_replaced_representation_headers(response.headers)
+      ignore(remove_header_ignore_case(response.headers, "Content-Encoding"))
+    } else {
+      ignore(remove_header_ignore_case(response.headers, "Content-Disposition"))
+    }
   }
 }
 
@@ -10112,6 +10183,7 @@ pub fn middleware_body_limit(max_bytes : Int32) -> Middleware {
     fn(ctx) raise {
       if ctx.body_bytes().length() > limit {
         clear_replaced_body_headers(ctx.response.headers)
+        clear_replaced_representation_headers(ctx.response.headers)
         ctx.text(413, "413 Payload Too Large")
       } else {
         next(ctx)
@@ -10945,6 +11017,7 @@ pub fn middleware_allowed_hosts(
         if allow_missing {
           next(ctx)
         } else {
+          clear_replaced_representation_headers(ctx.response.headers)
           ctx.text(400, "400 Bad Request")
         }
         return
@@ -10964,6 +11037,7 @@ pub fn middleware_allowed_hosts(
       if accepted {
         next(ctx)
       } else {
+        clear_replaced_representation_headers(ctx.response.headers)
         ctx.text(400, "400 Bad Request")
       }
     }
@@ -11099,6 +11173,7 @@ fn cors_middleware(
           ignore(
             remove_header_ignore_case(ctx.response.headers, "Content-Range"),
           )
+          clear_replaced_representation_headers(ctx.response.headers)
           // A rejected origin must not receive any CORS grant. The credentials
           // header is set before the origin decision, so remove it here when
           // this preflight has no accepted origin.
@@ -11324,6 +11399,7 @@ fn bearer_auth_middleware(
         ctx.file = None
         ctx.response.status = 401
         clear_replaced_body_headers(ctx.response.headers)
+        clear_replaced_representation_headers(ctx.response.headers)
         set_header_ignore_case(
           ctx.response.headers,
           "WWW-Authenticate",
@@ -11359,6 +11435,7 @@ fn basic_auth_middleware(
         ctx.file = None
         ctx.response.status = 401
         clear_replaced_body_headers(ctx.response.headers)
+        clear_replaced_representation_headers(ctx.response.headers)
         set_header_ignore_case(
           ctx.response.headers,
           "WWW-Authenticate",

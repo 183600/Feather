@@ -352,6 +352,7 @@ fn set_not_acceptable(response : Response) -> Unit {
   ignore(remove_header_ignore_case(response.headers, "Content-Range"))
   ignore(remove_header_ignore_case(response.headers, "ETag"))
   ignore(remove_header_ignore_case(response.headers, "Last-Modified"))
+  ignore(remove_header_ignore_case(response.headers, "Content-Disposition"))
 }
 
 ///|

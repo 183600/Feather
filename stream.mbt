@@ -76,6 +76,11 @@ async fn Stream::start(self : Stream) -> Unit {
   if !headers.contains(header_content_type) {
     headers.set(header_content_type, "text/plain; charset=utf-8")
   }
+  if !status_allows_body(self.status) {
+    clear_bodyless_representation_headers(
+      headers, keep_validators=self.status == 304,
+    )
+  }
   if self.cookies.length() > 0 {
     headers.remove(header_set_cookie)
   }

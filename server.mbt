@@ -42,6 +42,11 @@ let header_content_length : @http.CaseInsensitiveString = @http.CaseInsensitiveS
 )
 
 ///|
+let header_content_disposition : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Content-Disposition",
+)
+
+///|
 let header_content_range : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
   "Content-Range",
 )
@@ -366,6 +371,45 @@ fn request_content_encoding_is_gzip(value : StringView) -> Bool {
 }
 
 ///|
+/// Whether a response `Content-Encoding` field names any coding other than
+/// `identity`. A header carrying only `identity` still selects the unencoded
+/// representation and must obey an explicit refusal of identity.
+fn content_encoding_has_non_identity(value : StringView) -> Bool {
+  for part in value.split(",") {
+    let coding = trim_ascii_space(part)
+    if !coding.is_empty() &&
+      !coding.equal_ignore_ascii_case("identity".view()) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// Whether every non-identity coding in a response `Content-Encoding` field is
+/// acceptable to the client. A missing request header places no restriction on
+/// the encoding; an explicitly empty one accepts identity only.
+fn content_encoding_is_acceptable(
+  accept_encoding : String?,
+  value : StringView,
+) -> Bool {
+  let entries = match accept_encoding {
+    None => return true
+    Some(header) => encoding_entries_cached(header)
+  }
+  for part in value.split(",") {
+    let coding = trim_ascii_space(part)
+    if coding.is_empty() || coding.equal_ignore_ascii_case("identity".view()) {
+      continue
+    }
+    if encoding_quality_from(entries, coding) <= 0 {
+      return false
+    }
+  }
+  true
+}
+
+///|
 /// Build the framework `Request` from an HTTP request and its body stream.
 ///
 /// The second component carries the body exactly as received (after gzip
@@ -565,8 +609,7 @@ async fn send_file_response(
   if connect_tunnel {
     let headers = static_base_headers(response.headers, response.cookies, 1)
     headers.remove(header_content_length)
-    headers.remove(header_content_type)
-    headers.remove(header_content_encoding)
+    clear_bodyless_representation_headers(headers)
     send_with_date(
       conn,
       response.status,
@@ -632,6 +675,27 @@ async fn send_file_response(
     Some(value) => accept_encoding_refuses_identity(value)
     None => false
   }
+  let existing_encoding = get_header_ignore_case(
+    response.headers,
+    "Content-Encoding",
+  )
+  let existing_non_identity = match existing_encoding {
+    Some(value) => content_encoding_has_non_identity(value.view())
+    None => false
+  }
+  // A handler may hand over an already encoded file. Treat that as the
+  // selected representation instead of assuming the bytes are identity: the
+  // coding has to be acceptable, but refusing identity alone must not reject
+  // an acceptable non-identity coding.
+  let existing_encoding_acceptable = if existing_non_identity {
+    match existing_encoding {
+      Some(value) =>
+        content_encoding_is_acceptable(accept_encoding, value.view())
+      None => true
+    }
+  } else {
+    !refuses_identity
+  }
   let effective_content_type = match
     get_header_ignore_case(response.headers, "Content-Type") {
     Some(value) => value
@@ -688,7 +752,9 @@ async fn send_file_response(
     }
   }
   let serving_gzip = compressed_body is Some(_)
-  if !serving_gzip && refuses_identity && status_allows_body(response.status) {
+  if !serving_gzip &&
+    !existing_encoding_acceptable &&
+    status_allows_body(response.status) {
     send_static_error(
       conn,
       response.headers,
@@ -716,6 +782,16 @@ async fn send_file_response(
   let headers = static_base_headers(response.headers, response.cookies, 6)
   if !headers.contains(header_content_type) {
     headers.set(header_content_type, effective_content_type)
+  }
+  // `static_base_headers` strips a representation's coding because the static
+  // path chooses it itself. A queued file is different: a coding present at
+  // this point was supplied by the handler after `Context::file` and describes
+  // the bytes being sent, so it must survive.
+  if existing_non_identity {
+    match existing_encoding {
+      Some(value) => headers.set(header_content_encoding, value)
+      None => ()
+    }
   }
   if serving_gzip {
     headers.set(header_content_encoding, "gzip")
@@ -773,6 +849,7 @@ async fn send_file_response(
       PreconditionNotModified => {
         headers.remove(header_content_length)
         headers.remove(header_content_type)
+        headers.remove(header_content_disposition)
         send_with_date(
           conn,
           304,
@@ -807,6 +884,7 @@ async fn send_file_response(
               headers.remove(header_content_length)
               headers.remove(header_content_type)
               headers.remove(header_content_encoding)
+              headers.remove(header_content_disposition)
               headers.set(
                 header_content_range,
                 "bytes */" + representation_size.to_string(),
@@ -846,6 +924,9 @@ async fn send_file_response(
     headers.set(header_content_length, length.to_string())
   } else {
     headers.remove(header_content_length)
+    clear_bodyless_representation_headers(
+      headers, keep_validators=status == 304,
+    )
   }
   send_with_date(
     conn,
@@ -1064,6 +1145,11 @@ async fn send_response(
     response.status != 204 &&
     response.status != 205 &&
     response.status != 304
+  if connect_tunnel || !body_allowed {
+    clear_bodyless_representation_headers(
+      headers, keep_validators=response.status == 304,
+    )
+  }
   let has_body = body_allowed &&
     (match response.data {
       Some(data) => data.length() > 0
@@ -1568,6 +1654,24 @@ fn add_vary_header(headers : @http.Headers, value : String) -> Unit {
 }
 
 ///|
+/// Drop representation metadata for a status that cannot carry a body. A `304`
+/// keeps its validators and coding because they describe the selected
+/// representation, but `1xx`, `204` and `205` have no representation at all.
+fn clear_bodyless_representation_headers(
+  headers : @http.Headers,
+  keep_validators~ : Bool = false,
+) -> Unit {
+  if !keep_validators {
+    headers.remove(header_etag)
+    headers.remove(header_last_modified)
+    headers.remove(header_content_encoding)
+  }
+  headers.remove(header_content_type)
+  headers.remove(header_content_disposition)
+  headers.remove(header_content_range)
+}
+
+///|
 /// Build the outgoing headers for a static response, seeding them with the
 /// headers a request context accumulated. A `Set-Cookie` entry is dropped when
 /// the response carries cookies, which are sent separately.
@@ -1611,6 +1715,9 @@ fn static_redirect_headers(
 ) -> @http.Headers {
   let headers = static_base_headers(extra_headers, cookies, 1)
   headers.remove(header_content_type)
+  headers.remove(header_etag)
+  headers.remove(header_last_modified)
+  headers.remove(header_content_disposition)
   headers.set(header_location, location)
   headers
 }
@@ -1669,6 +1776,7 @@ async fn send_static_error(
   // cache could reuse a 404/406/412 for a different representation.
   headers.remove(header_etag)
   headers.remove(header_last_modified)
+  headers.remove(header_content_disposition)
   if precompressed || vary_encoding {
     // Whether this path resolves to a file depends on `Accept-Encoding`, so
     // caches must not reuse an identity error for a gzip-capable client.
@@ -2054,6 +2162,7 @@ async fn serve_static_file(
       // seeded for a body response must not leak into it.
       headers.remove(header_content_type)
       headers.remove(header_content_length)
+      headers.remove(header_content_disposition)
       if generated_etag != "" {
         set_header_if_absent(headers, etag_key, generated_etag)
       }
@@ -2095,6 +2204,7 @@ async fn serve_static_file(
     ByteRangeInvalid => {
       let headers = static_base_headers(extra_headers, cookies, 2)
       headers.remove(content_type_key)
+      headers.remove(header_content_disposition)
       headers.set(
         content_range_key,
         "bytes */" + representation_size.to_string(),

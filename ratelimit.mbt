@@ -253,6 +253,7 @@ pub fn middleware_rate_limit(
         ctx.set_header("X-RateLimit-Limit", max_string)
         ctx.set_header("X-RateLimit-Remaining", "0")
         clear_replaced_body_headers(ctx.response.headers)
+        clear_replaced_representation_headers(ctx.response.headers)
         ctx.text(429, "429 Too Many Requests")
       }
     }
