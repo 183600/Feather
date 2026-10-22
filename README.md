@@ -118,8 +118,8 @@ Route matching prefers static segments over parameters, and parameters over
 wildcards. Named routes support URL generation:
 
 ```moonbit
-app.route_named("user", "GET", "/users/:id", handler)
-let path = app.url_for("user", { "id": "42" })
+ignore(app.route_named("user", "GET", "/users/:id", handler))
+let path = app.url_for("user", params={ "id": "42" })
 ```
 
 ## Middleware
@@ -143,10 +143,10 @@ let app = @feather.App::new()
   .use(@feather.middleware_session(store))
   .use(@feather.middleware_csrf())
 
-app.post("/login", fn(ctx) {
-  ctx.session_set("user", "alice")
+ignore(app.post("/login", fn(ctx) {
+  ignore(ctx.session_set("user", "alice"))
   ctx.redirect(303, "/")
-})
+}))
 ```
 
 ## Responses and conditional requests
@@ -156,12 +156,12 @@ app.post("/login", fn(ctx) {
 cookie helpers:
 
 ```moonbit
-app.get("/report", fn(ctx) {
+ignore(app.get("/report", fn(ctx) {
   ctx.cache_public(60)
   ctx.file(200, "reports/latest.pdf")
-})
+}))
 
-app.get("/api/items/:id", fn(ctx) {
+ignore(app.get("/api/items/:id", fn(ctx) {
   let etag = "\"v1\""
   if ctx.fresh(etag) {
     ctx.not_modified()
@@ -169,7 +169,7 @@ app.get("/api/items/:id", fn(ctx) {
     ctx.set_header("ETag", etag)
     ctx.json(200, { "id": ctx.param("id") })
   }
-})
+}))
 ```
 
 `cache_public` and `cache_private` accept `immutable=true`; `no_store` and
@@ -236,7 +236,7 @@ let app = @feather.App::new()
 app.serve(@socket.Addr::parse("0.0.0.0:8080"))
 
 // Or stop accepting new requests and drain:
-app.serve_graceful_until(addr, stop=async fn { /* resolve on SIGTERM */ })
+app.serve_graceful_until(addr, stop=() => { /* resolve on SIGTERM */ })
 ```
 
 The default body-size limit is deliberately tiny (`DEFAULT_MAX_BODY_SIZE` is
