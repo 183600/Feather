@@ -372,14 +372,28 @@ fn accept_entry_asks_json(entry : AcceptEntry) -> Bool {
 }
 
 ///|
+/// Specificity of a parsed media range: an exact type/subtype outranks a
+/// subtype wildcard, which outranks `*/*`.
+fn accept_entry_specificity(entry : AcceptEntry) -> Int32 {
+  if entry.range_type == "*" {
+    0
+  } else if entry.range_subtype == "*" {
+    1
+  } else {
+    2
+  }
+}
+
+///|
 /// Whether the request prefers a JSON response.
 ///
 /// True when the client sends `X-Requested-With: XMLHttpRequest`, or when the
 /// most preferred media range of the `Accept` header asks for JSON
 /// (`application/json`, `application/problem+json`, ...). A missing or empty
 /// `Accept` header is not a JSON preference, so plain browser requests keep
-/// getting HTML. This is the usual switch for handlers that render JSON for
-/// API clients and HTML for browsers.
+/// getting HTML. Equal quality values are resolved by media-range specificity,
+/// so `*/*;q=0.5, application/json;q=0.5` still prefers JSON. This is the usual
+/// switch for handlers that render JSON for API clients and HTML for browsers.
 pub fn Context::wants_json(self : Context) -> Bool {
   let requested_with = trim_ascii_space(self.header("X-Requested-With").view())
   if requested_with.equal_ignore_ascii_case("XMLHttpRequest".view()) {
@@ -391,14 +405,19 @@ pub fn Context::wants_json(self : Context) -> Bool {
   }
   let mut found = false
   let mut best_quality = 0
+  let mut best_specificity = -1
   let mut best_asks_json = false
   for entry in accept_entries_cached(header) {
     if entry.quality <= 0 {
       continue
     }
-    if !found || entry.quality > best_quality {
+    let specificity = accept_entry_specificity(entry)
+    if !found ||
+      entry.quality > best_quality ||
+      (entry.quality == best_quality && specificity > best_specificity) {
       found = true
       best_quality = entry.quality
+      best_specificity = specificity
       best_asks_json = accept_entry_asks_json(entry)
     }
   }

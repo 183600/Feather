@@ -41,6 +41,30 @@ test "wants_json honors quality ordering and rejection" {
 }
 
 ///|
+test "wants_json breaks equal quality ties by media range specificity" {
+  assert_true(
+    wants_json_ctx(
+      Map([("Accept", "application/json;q=0.5, */*;q=0.5")]),
+    ).wants_json(),
+  )
+  assert_true(
+    wants_json_ctx(
+      Map([("Accept", "*/*;q=0.5, application/json;q=0.5")]),
+    ).wants_json(),
+  )
+  assert_true(
+    wants_json_ctx(
+      Map([("Accept", "application/*;q=0.5, application/json;q=0.5")]),
+    ).wants_json(),
+  )
+  assert_false(
+    wants_json_ctx(
+      Map([("Accept", "text/html;q=0.5, application/xml;q=0.5")]),
+    ).wants_json(),
+  )
+}
+
+///|
 test "wants_json recognizes ajax requests" {
   assert_true(
     wants_json_ctx(Map([("X-Requested-With", "XMLHttpRequest")])).wants_json(),
