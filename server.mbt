@@ -1101,7 +1101,10 @@ async fn send_continue_if_expected(
 
 ///|
 fn append_trailing_slash(path : String) -> String {
-  match path.find("?") {
+  // Insert the slash into the path component, before the first `?` or `#`.
+  // The fragment delimiter may come first, in which case a `?` inside it is
+  // part of the fragment and must not decide where the slash goes.
+  match path_head_end(path) {
     Some(index) => path[:index].to_owned() + "/" + path[index:].to_owned()
     None => path + "/"
   }

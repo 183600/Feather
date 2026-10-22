@@ -2561,16 +2561,16 @@ pub fn Context::forwarded_authority(self : Context) -> String {
 /// `Forwarded`/`X-Forwarded-Host` when building the URL, so links stay
 /// correct behind a reverse proxy.
 pub fn Context::full_url(self : Context) -> String {
-  let authority = self.forwarded_authority()
-  if authority.is_empty() {
-    return self.request.path
-  }
-  let scheme = self.protocol()
   let raw_path = self.request.path
   let path = match raw_path.find("#") {
     Some(index) => raw_path[:index].to_owned()
     None => raw_path
   }
+  let authority = self.forwarded_authority()
+  if authority.is_empty() {
+    return path
+  }
+  let scheme = self.protocol()
   let builder = StringBuilder(
     size_hint=scheme.length() + authority.length() + path.length() + 3,
   )
