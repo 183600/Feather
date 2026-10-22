@@ -28,8 +28,9 @@ long-term design notes are in [PLAN.md](PLAN.md).
 - **Context** – path/query/form/multipart access, typed query/param/form
   helpers (including 32- and 64-bit integers, booleans, and finite floats),
   JSON bodies,
-  matched-route identity (`route_pattern` / `route_method`) for logging and
-  metrics,
+  text bodies decoded with the request's declared charset,
+  matched-route identity (`route_pattern` / `route_method` / `route_name`) for
+  logging and metrics,
   text/HTML/JSON/bytes responses, files and downloads,
   cookies (including signed cookies), flash messages, content negotiation,
   conditional requests (ETag / `If-None-Match` / `If-Modified-Since`), range
@@ -130,6 +131,9 @@ wildcards. Named routes support URL generation:
 ignore(app.route_named("user", "GET", "/users/:id", handler))
 let path = app.url_for("user", params={ "id": "42" })
 ```
+
+`Context::route_name()` reports that registered name from a handler or
+middleware, so logs and metrics can group requests by named route.
 
 ## Middleware
 
@@ -272,6 +276,10 @@ let app = @feather.App::new()
     ws..start_message(msg.kind)..write(text).end_message()
   })
 ```
+
+Streaming handlers can set status and headers before the first write, and
+`Stream::add_cookie` / `Stream::clear_cookie` add or expire cookies at the same
+point; calls made after the response header has been sent are ignored.
 
 The WebSocket handshake is performed by `moonbitlang/async`; middleware that
 needs to add handshake headers (for example a cookie) cannot do so through the
