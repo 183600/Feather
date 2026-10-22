@@ -471,3 +471,29 @@ test "session store sweeps expired sessions before evicting live ones" {
   assert_true(store.get(live.id) is Some(_))
   assert_true(store.get(fresh.id) is Some(_))
 }
+
+///|
+test "lazy session ttl text does not overflow into the default lifetime" {
+  let store = @feather.SessionStore::new(ttl=9223372036854775807L)
+  let app = @feather.App::new()
+    .use(@feather.middleware_session(store))
+    .get("/touch", fn(ctx) {
+      ignore(ctx.session_set("k", "v"))
+      ctx.text(200, "ok")
+    })
+  let response = app.respond(session_request("/touch"))
+  assert_eq(response.status, 200)
+  assert_eq(response.cookies.length(), 1)
+  let id = response.cookies[0].value
+  assert_true(store.get(id) is Some(_))
+}
+
+///|
+test "session expiry is clamped instead of overflowing" {
+  let store = @feather.SessionStore::new(ttl=9223372036854775807L)
+  let session = store.create()
+  assert_true(session.expires_at > 0L)
+  store.save(session)
+  assert_true(session.expires_at > 0L)
+  assert_true(store.get(session.id) is Some(_))
+}

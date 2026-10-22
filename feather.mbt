@@ -2346,16 +2346,24 @@ pub fn Context::host(self : Context) -> String {
     }
     None => ()
   }
-  let host = if authority.unsafe_get(0) == ('[' : UInt16) {
-    match authority.find("]") {
-      Some(index) => authority[:index + 1].to_owned()
-      None => authority.to_owned()
-    }
-  } else {
-    match authority.find(":") {
-      Some(index) => authority[:index].to_owned()
-      None => authority.to_owned()
-    }
+  // Validate the authority before truncating it: otherwise a malformed value
+  // such as `[::1]evil` or `example.com:bad` would turn into an apparently
+  // valid host and could be trusted by callers that use the parsed value for
+  // host-based decisions.
+  let host = match host_authority_host(authority) {
+    None => ""
+    Some(_) =>
+      if authority.unsafe_get(0) == ('[' : UInt16) {
+        match authority.find("]") {
+          Some(index) => authority[:index + 1].to_owned()
+          None => ""
+        }
+      } else {
+        match authority.find(":") {
+          Some(index) => authority[:index].to_owned()
+          None => authority.to_owned()
+        }
+      }
   }
   if authority.length() <= PARSE_CACHE_MAX_KEY {
     parse_cache_set(host_cache, host_cache_ages, authority, host)
@@ -2421,11 +2429,17 @@ fn forwarded_first_param(header : StringView, name : StringView) -> String? {
 
 ///|
 /// Value of parameter `name` in a single element of an RFC 7239 `Forwarded`
-/// header, for example `host` in `for=192.0.2.60;host="example.com:8443"`.
+/// header, including the empty string when the parameter is present but
+/// carries no value.
 ///
 /// Parameter names are matched case-insensitively and quoted values are
-/// unescaped. Returns `None` when the parameter is absent or empty.
-fn forwarded_element_param(element : StringView, name : StringView) -> String? {
+/// unescaped. Returns `None` only when the parameter is absent, which lets the
+/// trusted-proxy path distinguish an addressless `for=` node from a header
+/// that never mentions `for` at all.
+fn forwarded_element_param_value(
+  element : StringView,
+  name : StringView,
+) -> String? {
   let mut pos = 0
   while pos < element.length() {
     let mut end = pos
@@ -2454,15 +2468,25 @@ fn forwarded_element_param(element : StringView, name : StringView) -> String? {
           trim_ascii_space(element[eq + 1:end]),
         )
         let value = trim_ascii_space(unquoted.view())
-        if value.is_empty() {
-          return None
-        }
         return Some(value.to_owned())
       }
     }
     pos = end + 1
   }
   None
+}
+
+///|
+/// Value of parameter `name` in a single element of an RFC 7239 `Forwarded`
+/// header, for example `host` in `for=192.0.2.60;host="example.com:8443"`.
+///
+/// Parameter names are matched case-insensitively and quoted values are
+/// unescaped. Returns `None` when the parameter is absent or empty.
+fn forwarded_element_param(element : StringView, name : StringView) -> String? {
+  match forwarded_element_param_value(element, name) {
+    Some(value) => if value.is_empty() { None } else { Some(value) }
+    None => None
+  }
 }
 
 ///|
@@ -3455,6 +3479,13 @@ fn build_cookie(
     Some(seconds) => Some(format_http_date(seconds))
     None => None
   }
+  // RFC 6265 `delta-seconds` is non-negative. A negative caller value still
+  // means "expire now", so render it as the canonical zero rather than an
+  // invalid negative `Max-Age`.
+  let clean_max_age = match max_age {
+    Some(seconds) => Some(if seconds < 0L { 0L } else { seconds })
+    None => None
+  }
   let clean_domain = match domain {
     Some(value) => {
       let cleaned = sanitize_cookie_domain(value)
@@ -3483,7 +3514,7 @@ fn build_cookie(
     sanitize_cookie_token(value, false),
     path?=clean_path,
     expires_raw?,
-    max_age?,
+    max_age?=clean_max_age,
     domain?=clean_domain,
     http_only~,
     secure~,
@@ -6578,7 +6609,10 @@ fn parse_multipart_uncached(
   let mut pos = match
     find_terminated_delimiter(view, delimiter_view, delimiter_table, 0) {
     Some(index) => index + delimiter_length
-    None => return Some([])
+    // A multipart body always contains at least one dash-boundary (a valid
+    // empty body is `--boundary--`). Without one the body is malformed, not
+    // an empty list of parts.
+    None => return None
   }
   let estimate = source.length() / (crlf_delimiter.length() + 8)
   let parts : Array[MultipartPart] = Array(
@@ -9780,6 +9814,11 @@ fn cache_control_has_directive(
 ///|
 /// Append `value` to the response's `Vary` header unless it is already listed.
 pub fn Context::vary(self : Context, value : String) -> Unit {
+  // `Vary` is a list of field names; an empty value is not a valid field name
+  // and must not create an empty header field.
+  if trim_ascii_space(value.view()).is_empty() {
+    return
+  }
   // RFC 9110 §12.5.5 defines `*` as the entire field value, so a wildcard
   // replaces whatever was already listed instead of being appended to it.
   if header_list_has_token(value.view(), "*".view()) {
@@ -10047,7 +10086,8 @@ fn valid_bracketed_host(view : StringView) -> Bool {
         code == 43 ||
         code == 44 ||
         code == 59 ||
-        code == 61
+        code == 61 ||
+        code == 126
       if !allowed {
         return false
       }

@@ -296,3 +296,33 @@ test "forwarded_ip normalizes legacy forwarded addresses" {
   })
   assert_eq(unknown.forwarded_ip(), "unknown")
 }
+
+///|
+test "an empty forwarded for marks the trusted hop addressless" {
+  let app = ip_app(1)
+  for header in ["for=\"\"", "for=\"   \"", "for="] {
+    assert_eq(
+      ip_of(
+        app,
+        Map([
+          ("Forwarded", header),
+          ("X-Forwarded-For", "203.0.113.7"),
+        ]),
+      ),
+      "10.0.0.9",
+      msg=header,
+    )
+  }
+  // Without a `for=` parameter the RFC 7239 header is not a usable chain, so
+  // the legacy header is still consulted.
+  assert_eq(
+    ip_of(
+      app,
+      Map([
+        ("Forwarded", "proto=https"),
+        ("X-Forwarded-For", "203.0.113.7"),
+      ]),
+    ),
+    "203.0.113.7",
+  )
+}

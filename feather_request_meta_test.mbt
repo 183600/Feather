@@ -30,6 +30,17 @@ test "context host strips the port" {
 }
 
 ///|
+test "Context host rejects a malformed authority instead of truncating it" {
+  for host in ["[::1]evil", "[::1", "[::1]:bad", "example.com:bad", "::1"] {
+    assert_eq(request_with_headers(Map([("Host", host)])).host(), "", msg=host)
+  }
+  assert_eq(
+    request_with_headers(Map([("Host", "example.com.")])).host(),
+    "example.com.",
+  )
+}
+
+///|
 test "context protocol honors forwarded proto" {
   assert_eq(request_with_headers(Map([])).protocol(), "http")
   assert_eq(

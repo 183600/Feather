@@ -389,3 +389,14 @@ test "cors does not duplicate an existing vary origin" {
     Some("https://app.test"),
   )
 }
+
+///|
+test "context vary ignores an empty field name" {
+  let ctx = @feather.create_context()
+  ctx.vary("")
+  ctx.vary("   ")
+  assert_eq(ctx.response.headers.get("Vary"), None)
+  ctx.vary("Origin")
+  ctx.vary("")
+  assert_eq(ctx.response.headers.get("Vary"), Some("Origin"))
+}

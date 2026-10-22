@@ -22,6 +22,17 @@ pub(all) struct Session {
 pub const DEFAULT_SESSION_TTL : Int64 = 86_400_000L
 
 ///|
+/// Expiry timestamp for a session created now with `ttl`, clamped so an
+/// extreme (but positive) lifetime cannot overflow into the past.
+fn session_expiry(now : Int64, ttl : Int64) -> Int64 {
+  if ttl > 0L && now > 9223372036854775807L - ttl {
+    9223372036854775807L
+  } else {
+    now + ttl
+  }
+}
+
+///|
 /// How often expired sessions are swept when the store is written to.
 const SESSION_SWEEP_INTERVAL : Int64 = 60_000L
 
@@ -133,7 +144,7 @@ pub fn SessionStore::create(self : SessionStore) -> Session {
   {
     id: self.generate_id(),
     data: Map([]),
-    expires_at: @async.now() + self.ttl,
+    expires_at: session_expiry(@async.now(), self.ttl),
     modified: false,
     destroyed: false,
     regenerate: false,
@@ -150,7 +161,7 @@ fn session_detached(ttl : Int64) -> Session {
   {
     id: "",
     data: Map([]),
-    expires_at: @async.now() + ttl,
+    expires_at: session_expiry(@async.now(), ttl),
     modified: false,
     destroyed: false,
     regenerate: false,
@@ -175,7 +186,14 @@ fn session_ttl_from_text(text : String) -> Int64 {
     if code < 48 || code > 57 {
       return DEFAULT_SESSION_TTL
     }
-    value = value * 10L + (code - 48).to_int64()
+    let digit = (code - 48).to_int64()
+    if value > (9223372036854775807L - digit) / 10L {
+      // The recorded lifetime is finite but too large for Int64. Clamp it
+      // instead of wrapping negative and silently falling back to a short
+      // default lifetime for the lazy session.
+      return 9223372036854775807L
+    }
+    value = value * 10L + digit
   }
   if value <= 0L {
     DEFAULT_SESSION_TTL
@@ -229,7 +247,7 @@ pub fn SessionStore::get(self : SessionStore, id : String) -> Session? {
 /// Store a session, refreshing its expiry to `ttl` from now.
 pub fn SessionStore::save(self : SessionStore, session : Session) -> Unit {
   let now = @async.now()
-  session.expires_at = now + self.ttl
+  session.expires_at = session_expiry(now, self.ttl)
   if !self.sessions.contains(session.id) {
     if self.sessions.length() >= SESSION_STORE_MAX_SESSIONS {
       // The throttle may have skipped the sweep even though expired sessions

@@ -112,3 +112,13 @@ test "cookies without a usable name are ignored" {
   assert_eq(ctx.response.headers.get("Set-Cookie"), None)
   assert_eq(ctx.response.cookies.length(), 0)
 }
+
+///|
+test "negative max_age is rendered as an immediate expiry" {
+  let ctx = cookie_attr_ctx()
+  ctx.set_cookie("sid", "1", max_age=-10L)
+  assert_eq(ctx.response.cookies[0].max_age, Some(0L))
+  let header = ctx.response.headers.get("Set-Cookie").unwrap()
+  assert_true(header.contains("Max-Age=0"))
+  assert_false(header.contains("Max-Age=-10"))
+}

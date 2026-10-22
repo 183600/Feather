@@ -1215,9 +1215,39 @@ fn append_trailing_slash(path : String) -> String {
   // Insert the slash into the path component, before the first `?` or `#`.
   // The fragment delimiter may come first, in which case a `?` inside it is
   // part of the fragment and must not decide where the slash goes.
-  match path_head_end(path) {
-    Some(index) => path[:index].to_owned() + "/" + path[index:].to_owned()
-    None => path + "/"
+  let (head, tail) = match path_head_end(path) {
+    Some(index) => (path[:index], path[index:])
+    None => (path, "")
+  }
+  // A location that starts with `//` is a scheme-relative URL, so a request
+  // target with duplicate leading slashes must not be echoed verbatim: a
+  // browser would interpret the redirect as a different host. Collapse the
+  // leading slashes to the origin-relative single slash the static lookup
+  // already used.
+  let view = head.view()
+  let length = view.length()
+  let mut first = 0
+  while first < length && view.unsafe_get(first) == ('/' : UInt16) {
+    first = first + 1
+  }
+  let normalized : String = if first == 0 {
+    if length == 0 {
+      ""
+    } else {
+      // A location is always origin-relative here. Prefixing the slash also
+      // keeps an absolute-form request target (`GET http://host/path`) from
+      // turning into an absolute redirect to that host.
+      "/" + head.to_owned()
+    }
+  } else if first == length {
+    "/"
+  } else {
+    "/" + view[first:].to_owned()
+  }
+  if normalized.has_suffix("/") {
+    normalized + tail.to_owned()
+  } else {
+    normalized + "/" + tail.to_owned()
   }
 }
 

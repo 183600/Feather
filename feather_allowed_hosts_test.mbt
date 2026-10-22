@@ -153,6 +153,7 @@ test "allowed hosts validates bracketed IP literals structurally" {
     "[::ffff:192.0.2.1]",
     "[fe80::1%25eth0]",
     "[v1.foo]",
+    "[v1.foo~bar]",
   ] {
     let ctx = host_test_context(host_test_headers(Some(host)))
     app.handle(ctx)

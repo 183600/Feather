@@ -146,6 +146,15 @@ test "parse_multipart returns none without a boundary" {
 }
 
 ///|
+test "parse_multipart rejects a body with no dash-boundary" {
+  let content_type = "multipart/form-data; boundary=X"
+  assert_eq(@feather.parse_multipart("body", content_type), None)
+  assert_eq(@feather.parse_multipart("", content_type), None)
+  // A valid multipart body with zero parts is still accepted.
+  assert_eq(@feather.parse_multipart("--X--\r\n", content_type), Some([]))
+}
+
+///|
 test "Context multipart helpers expose values and files" {
   let ctx = @feather.Context::new({
     method: "POST",

@@ -35,7 +35,10 @@ fn forwarded_for_values(header : StringView) -> (Array[String], Bool) {
     if unit == ('"' : UInt16) {
       in_quotes = !in_quotes
     } else if unit == (',' : UInt16) && !in_quotes {
-      match forwarded_element_param(header[start:i], "for".view()) {
+      // Presence of the parameter is what matters for the chain: `for=""` is
+      // an addressless node, exactly like `for=unknown`, and must suppress the
+      // spoofable legacy fallback instead of looking like an absent `for=`.
+      match forwarded_element_param_value(header[start:i], "for".view()) {
         Some(value) => {
           saw_for = true
           match normalize_forwarded_for(value.view()) {
