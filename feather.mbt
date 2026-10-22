@@ -859,6 +859,7 @@ pub fn Router::url_for(
   let mut i = skip_slashes(path, 0)
   let builder = StringBuilder(size_hint=length)
   let mut has_segment = false
+  let mut ended_with_wildcard = false
   while i < length {
     has_segment = true
     builder.write_char('/')
@@ -884,6 +885,7 @@ pub fn Router::url_for(
       }
       // Registration stops at `*`, so segments after it never match; do not
       // render them into a URL that would bind different parameters.
+      ended_with_wildcard = true
       break
     } else {
       builder.write_string(encode_static_route_segment(segment))
@@ -891,6 +893,11 @@ pub fn Router::url_for(
     i = skip_slashes(path, end)
   }
   if !has_segment {
+    builder.write_char('/')
+  } else if !ended_with_wildcard &&
+    path.unsafe_get(length - 1) == ('/' : UInt16) {
+    // A trailing slash is part of the registered spelling (for example the
+    // canonical `/files/` directory route), so generated URLs keep it.
     builder.write_char('/')
   }
   match query {

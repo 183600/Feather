@@ -71,6 +71,25 @@ test "url_for encodes literal percent and space and round trips" {
 }
 
 ///|
+test "url_for keeps a registered trailing slash" {
+  let app = @feather.App::new()
+  ignore(app.route_named("files", "GET", "/files/", fn(ctx) {
+    ctx.text(200, "files")
+  }))
+  assert_eq(app.url_for("files"), Some("/files/"))
+  assert_eq(route_encoding_get(app, "/files/").body, "files")
+  ignore(app.route_named("root", "GET", "/", fn(ctx) { ctx.text(200, "root") }))
+  assert_eq(app.url_for("root"), Some("/"))
+  ignore(app.route_named("assets", "GET", "/assets/*path", fn(ctx) {
+    ctx.text(200, ctx.param("path"))
+  }))
+  assert_eq(
+    app.url_for("assets", params={ "path": "a/b" }),
+    Some("/assets/a/b"),
+  )
+}
+
+///|
 test "static path decoding keeps parameter captures raw" {
   let app = @feather.App::new().get("/p/:id", fn(ctx) {
     ctx.text(200, ctx.param("id") + "|" + ctx.param_decoded("id"))
