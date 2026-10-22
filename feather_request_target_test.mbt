@@ -83,6 +83,82 @@ test "values that only look like absolute URIs are left alone" {
 }
 
 ///|
+test "OPTIONS asterisk-form describes the server methods" {
+  let app = @feather.App::new()
+    .get("/users", fn(ctx) { ctx.text(200, "users") })
+    .post("/users", fn(ctx) { ctx.text(201, "created") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "*",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.body, "")
+  let allow = response.headers.get("Allow").unwrap_or("")
+  for method in ["GET", "HEAD", "POST", "OPTIONS"] {
+    assert_true(allow.contains(method), msg=allow)
+  }
+  assert_eq(response.headers.get("Content-Type"), None)
+}
+
+///|
+test "OPTIONS asterisk-form works without any registered routes" {
+  let app = @feather.App::new()
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "*",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  let allow = response.headers.get("Allow").unwrap_or("")
+  for method in [
+    "CONNECT",
+    "DELETE",
+    "GET",
+    "HEAD",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
+    "TRACE",
+  ] {
+    assert_true(allow.contains(method), msg=allow)
+  }
+}
+
+///|
+test "other methods do not get a server-wide asterisk response" {
+  let app = @feather.App::new()
+  let response = app.respond({
+    method: "GET",
+    path: "*",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 404)
+  assert_eq(response.headers.get("Allow"), None)
+}
+
+///|
+async test "server answers OPTIONS asterisk-form" {
+  let app = @feather.App::new().get("/hello", fn(ctx) { ctx.text(200, "hi") })
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "OPTIONS * HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n",
+      ),
+    )
+    let head = @async.with_timeout(2000, () => read_http_head(conn)) catch {
+      _ => ""
+    }
+    assert_true(head.has_prefix("HTTP/1.1 204"), msg=head)
+    assert_true(head.to_lower().contains("allow: get, head, options"), msg=head)
+  })
+}
+
+///|
 async test "server routes an absolute-form request target" {
   let app = @feather.App::new().get("/hello", fn(ctx) {
     ctx.text(200, "hello " + ctx.query("name"))

@@ -1434,6 +1434,39 @@ pub fn Router::matching(self : Router, meth : String, path : String) -> Route? {
 }
 
 ///|
+/// Methods registered in this router, sorted. Used to describe server-wide
+/// capabilities for an `OPTIONS *` request.
+fn Router::registered_methods(self : Router) -> Array[String] {
+  let methods : Array[String] = []
+  for meth, _ in self.trees {
+    methods.push(meth)
+  }
+  methods.sort()
+  methods
+}
+
+///|
+/// Answer the asterisk-form `OPTIONS *` request from RFC 9110 §9.3.7, which
+/// asks about the server as a whole rather than a particular resource. The
+/// response lists the methods the application knows plus `OPTIONS`, and is
+/// handled here only when no explicit route (such as a fallback) matched the
+/// literal `*` target.
+fn respond_server_options(ctx : Context, router : Router) -> Unit {
+  let methods = router.registered_methods()
+  if methods.is_empty() {
+    let methods = standard_methods()
+    methods.sort()
+    respond_options(ctx, methods)
+  } else {
+    if !methods.contains("OPTIONS") {
+      methods.push("OPTIONS")
+    }
+    methods.sort()
+    respond_options(ctx, methods)
+  }
+}
+
+///|
 pub fn Router::dispatch(self : Router, ctx : Context) -> Unit raise {
   self.dispatch_with(ctx, None)
 }
@@ -1461,9 +1494,13 @@ pub fn Router::dispatch_with(
         method_not_allowed_with_allow(ctx, allow)
       }
     DispatchMissing =>
-      match fallback {
-        Some(handler) => handler(ctx)
-        None => not_found(ctx)
+      if meth == "OPTIONS" && clean_path == "*" {
+        respond_server_options(ctx, self)
+      } else {
+        match fallback {
+          Some(handler) => handler(ctx)
+          None => not_found(ctx)
+        }
       }
   }
 }
