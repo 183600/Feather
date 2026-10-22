@@ -551,12 +551,14 @@ pub fn Context::session_regenerate(self : Context) -> Bool {
 ///
 /// A cookie is only sent when the handler writes to the session, so read-only
 /// requests stay cookie-free. Destroyed sessions clear the cookie and are
-/// removed from the store. Sessions are keyed by an unguessable random id, but
-/// the id itself is not signed; deploy behind HTTPS and treat the store as
-/// server-local state.
+/// removed from the store. Pass `domain` to scope the cookie to a parent
+/// domain, for example when several subdomains share one session. Sessions are
+/// keyed by an unguessable random id, but the id itself is not signed; deploy
+/// behind HTTPS and treat the store as server-local state.
 priv struct SessionCookieConfig {
   name : String
   path : String
+  domain : String?
   same_site : String
   http_only : Bool
   secure : Bool
@@ -577,6 +579,7 @@ fn session_send_cookie(
     id,
     path=config.path,
     max_age?,
+    domain?=config.domain,
     same_site=config.same_site,
     http_only=config.http_only,
     secure=config.secure,
@@ -628,6 +631,7 @@ pub fn middleware_session(
   store : SessionStore,
   cookie~ : String = "feather_session",
   path~ : String = "/",
+  domain? : String,
   same_site~ : String = "Lax",
   http_only~ : Bool = true,
   secure~ : Bool = false,
@@ -636,6 +640,7 @@ pub fn middleware_session(
   let config : SessionCookieConfig = {
     name: cookie,
     path,
+    domain,
     same_site,
     http_only,
     secure,

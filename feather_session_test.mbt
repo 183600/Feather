@@ -208,6 +208,7 @@ test "session middleware honors cookie options" {
         store,
         cookie="sid",
         path="/app",
+        domain="example.com",
         same_site="Strict",
         http_only=false,
         secure=true,
@@ -222,6 +223,7 @@ test "session middleware honors cookie options" {
   let cookie = response.cookies[0]
   assert_eq(cookie.name, "sid")
   assert_eq(cookie.path, Some("/app"))
+  assert_eq(cookie.domain, Some("example.com"))
   assert_eq(cookie.http_only, false)
   assert_eq(cookie.secure, true)
   assert_eq(cookie.max_age, Some(3600L))

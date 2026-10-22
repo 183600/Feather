@@ -172,6 +172,10 @@ ignore(app.post("/login", fn(ctx) {
 }))
 ```
 
+`middleware_session` also accepts `cookie`, `path`, `domain`, `same_site`,
+`http_only`, `secure`, and `partitioned` cookie options; `domain` scopes a
+shared session across subdomains.
+
 ## Responses and conditional requests
 
 `Context` exposes convenience writers (`text`, `html`, `json`, `bytes`,
