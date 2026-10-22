@@ -437,7 +437,13 @@ async fn compress_response(
     Some(data) => data
     None =>
       if response.body.is_empty() {
-        return
+        // An empty body still has the identity coding. When the client
+        // accepts gzip but explicitly refuses identity, encode the empty
+        // representation instead of silently returning identity bytes.
+        if !refuses_identity {
+          return
+        }
+        b""
       } else {
         encode_utf8_lossy(response.body.view())
       }

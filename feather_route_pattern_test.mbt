@@ -112,3 +112,18 @@ async test "async endpoints expose their matched route identity" {
   })
   assert_eq(observed.val, "/rooms/:room GET lobby")
 }
+
+///|
+test "Router::route reports the GET method for a HEAD fallback" {
+  let router = @feather.create_router()
+  router.add_route("GET", "/report", fn(_ctx) { () })
+  match router.route("HEAD", "/report") {
+    @feather.RouteFound(route) => assert_eq(route.method, "GET")
+    _ => fail("expected the HEAD request to fall back to the GET route")
+  }
+  router.add_route("HEAD", "/explicit", fn(_ctx) { () })
+  match router.route("HEAD", "/explicit") {
+    @feather.RouteFound(route) => assert_eq(route.method, "HEAD")
+    _ => fail("expected the explicit HEAD route")
+  }
+}

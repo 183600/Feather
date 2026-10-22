@@ -199,3 +199,26 @@ test "allowed hosts cannot be bypassed with a forwarded host header" {
   assert_eq(ctx.response.body, "400 Bad Request")
   assert_eq(calls.val, 0)
 }
+
+///|
+test "allowed hosts rejects empty interior host labels" {
+  let (app, calls) = host_test_app(["*", "*.example.com"])
+  for host in [
+    "example..com",
+    "example..",
+    "a..b",
+    "..example.com",
+    "a.example..com",
+  ] {
+    let ctx = host_test_context(host_test_headers(Some(host)))
+    app.handle(ctx)
+    assert_eq(ctx.response.status, 400, msg=host)
+    assert_eq(ctx.response.body, "400 Bad Request")
+  }
+  for host in ["example.com.", "a.example.com.", "[::1]"] {
+    let ctx = host_test_context(host_test_headers(Some(host)))
+    app.handle(ctx)
+    assert_eq(ctx.response.status, 200, msg=host)
+  }
+  assert_eq(calls.val, 3)
+}

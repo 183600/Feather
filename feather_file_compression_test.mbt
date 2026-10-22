@@ -184,3 +184,36 @@ async test "HEAD describes the compressed queued file representation" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+async test "queued file precondition failures vary on accept-encoding" {
+  let dir = @fs.tmpdir(prefix="feather-file-compress-412-vary")
+  @fs.write_file(dir + "/data.txt", "queued precondition ".repeat(64))
+  let app = @feather.App::new()
+    .compress(min_size=0)
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set_header("ETag", "\"custom\"")
+        next(ctx)
+      }
+    })
+    .get("/download", fn(ctx) { ctx.file(200, dir + "/data.txt") })
+  with_server(app, client => {
+    let response = client.get(
+      "/download",
+      extra_headers=Map([
+        (accept_encoding_key, "gzip"),
+        (@http.CaseInsensitiveString("If-Match"), "\"stale\""),
+      ]),
+    )
+    assert_eq(response.code, 412)
+    assert_true(
+      response.headers
+      .get(@http.CaseInsensitiveString("Vary"))
+      .unwrap_or("")
+      .contains("Accept-Encoding"),
+    )
+    ignore(client.read_all())
+  })
+  @fs.rmdir(dir, recursive=true)
+}

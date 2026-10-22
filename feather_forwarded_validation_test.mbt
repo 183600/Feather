@@ -95,3 +95,78 @@ test "forwarded_ip rejects malformed bare IPv6 node identifiers" {
     assert_eq(ctx.forwarded_ip(), value, msg=value)
   }
 }
+
+///|
+test "forwarded_ip skips malformed bare node identifiers" {
+  for value in [
+    "999.999.999.999",
+    "192.0.2",
+    "example.com",
+    "example.com:80",
+    "192.0.2.60:bad",
+  ] {
+    let ctx = forwarded_validation_ctx(
+      Map([
+        ("Forwarded", "for=" + value),
+        ("X-Forwarded-For", "203.0.113.9"),
+      ]),
+    )
+    assert_eq(ctx.forwarded_ip(), "203.0.113.9", msg=value)
+  }
+}
+
+///|
+test "trusted proxy ignores malformed legacy client addresses" {
+  let app = @feather.App::new()
+    .trust_proxy(1)
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.state.set("remote_addr", "10.0.0.9")
+        next(ctx)
+      }
+    })
+    .get("/ip", fn(ctx) { ctx.text(200, ctx.ip()) })
+  for value in [
+    "999.999.999.999",
+    "192.0.2",
+    "example.com",
+    "example.com:80",
+    "192.0.2.60:bad",
+    "example..com",
+  ] {
+    let response = app.respond({
+      method: "GET",
+      path: "/ip",
+      headers: Map([("X-Forwarded-For", value)]),
+      body: "",
+    })
+    assert_eq(response.body, "10.0.0.9", msg=value)
+  }
+  let valid = app.respond({
+    method: "GET",
+    path: "/ip",
+    headers: Map([("X-Forwarded-For", "203.0.113.7:4711")]),
+    body: "",
+  })
+  assert_eq(valid.body, "203.0.113.7")
+}
+
+///|
+async test "server decodes the historical x-gzip request coding" {
+  let app = @feather.App::new().post("/echo", fn(ctx) {
+    ctx.bytes(200, ctx.body_bytes(), content_type="application/octet-stream")
+  })
+  with_server(app, client => {
+    let payload : Bytes = b"x-gzip request body \xff\x00"
+    let compressed = gzip_encode_for_test(payload)
+    let response = client.post(
+      "/echo",
+      compressed,
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("Content-Encoding"), "x-gzip"),
+      ]),
+    )
+    assert_eq(response.code, 200)
+    assert_eq(client.read_all().binary(), payload)
+  })
+}

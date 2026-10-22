@@ -343,9 +343,10 @@ fn request_method_to_string(meth : @http.RequestMethod) -> String {
 
 ///|
 /// Whether a request's `Content-Encoding` field describes exactly one `gzip`
-/// coding, optionally combined with `identity`, so the body can be decoded by
-/// a single gzip pass. Repeated or unknown codings are left untouched because
-/// decoding only one of them would corrupt the body.
+/// coding (or its historical `x-gzip` alias), optionally combined with
+/// `identity`, so the body can be decoded by a single gzip pass. Repeated or
+/// unknown codings are left untouched because decoding only one of them would
+/// corrupt the body.
 fn request_content_encoding_is_gzip(value : StringView) -> Bool {
   let mut gzip_count = 0
   let mut unsupported = false
@@ -354,7 +355,8 @@ fn request_content_encoding_is_gzip(value : StringView) -> Bool {
     if coding.is_empty() || coding.equal_ignore_ascii_case("identity".view()) {
       continue
     }
-    if coding.equal_ignore_ascii_case("gzip".view()) {
+    if coding.equal_ignore_ascii_case("gzip".view()) ||
+      coding.equal_ignore_ascii_case("x-gzip".view()) {
       gzip_count = gzip_count + 1
     } else {
       unsupported = true
@@ -764,6 +766,7 @@ async fn send_file_response(
           412,
           "412 Precondition Failed",
           false,
+          vary_encoding=vary_encoding,
         )
         return
       }
@@ -1662,6 +1665,10 @@ async fn send_static_error(
   // prepared for a file response.
   headers.remove(header_content_encoding)
   headers.remove(header_content_range)
+  // Validators supplied for the file must not describe the error body, or a
+  // cache could reuse a 404/406/412 for a different representation.
+  headers.remove(header_etag)
+  headers.remove(header_last_modified)
   if precompressed || vary_encoding {
     // Whether this path resolves to a file depends on `Accept-Encoding`, so
     // caches must not reuse an identity error for a gzip-capable client.

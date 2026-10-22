@@ -1452,7 +1452,15 @@ pub fn Router::route(
     MatchFound(node, params, wildcard) =>
       RouteFound({
         path: node.route_path,
-        method: meth,
+        // A HEAD request served by a GET route reports that registered
+        // method, matching `Context::route_method` and the router's own
+        // dispatch identity.
+        method: if meth == "HEAD" &&
+          self.find_node_raw("HEAD", clean_path) is None {
+          "GET"
+        } else {
+          meth
+        },
         params: match params {
           // Route values are handed to callers, so keep them separate from the
           // internally cached bindings.
@@ -2744,8 +2752,17 @@ fn normalize_forwarded_for(value : StringView) -> String? {
     }
     i = i + 1
   }
-  // A single colon separates an IPv4 address or host name from its port;
-  // several colons mean a bare IPv6 address, which has no port to strip.
+  // A node identifier is an IPv4address, a bracketed IPv6address, `unknown`
+  // or an obfuscated `_...` name. A single colon separates an IPv4 address
+  // from its port; several colons mean a bare IPv6 address. Anything else
+  // (a host name, an out-of-range octet, ...) is not an address and must stay
+  // addressless so trusted-hop counting cannot report client-chosen text.
+  if colons == 0 {
+    if !valid_ipv4_literal(value) {
+      return None
+    }
+    return Some(value.to_owned())
+  }
   if colons == 1 {
     if last_colon <= 0 {
       return None
@@ -2755,27 +2772,70 @@ fn normalize_forwarded_for(value : StringView) -> String? {
     if host.equal_ignore_ascii_case("unknown".view()) {
       return None
     }
-    if !valid_host_port(value[last_colon + 1:]) {
+    if !valid_ipv4_literal(host) ||
+      !valid_host_port(value[last_colon + 1:]) {
       return None
     }
     return Some(host.to_owned())
   }
   // Several colons without brackets are a bare IPv6 literal, so validate it
   // instead of trusting an arbitrary client-chosen string as an address.
-  if colons > 1 && !valid_bracketed_host(value) {
+  if !valid_bracketed_host(value) {
     return None
   }
   Some(value.to_owned())
 }
 
 ///|
+/// Whether `value` is a syntactically valid URI scheme (RFC 3986 §3.1).
+/// Forwarded protocol values are client-controlled, so a malformed value must
+/// not be spliced into `Context::full_url`.
+fn valid_url_scheme(value : StringView) -> Bool {
+  let length = value.length()
+  if length == 0 {
+    return false
+  }
+  let first = value.unsafe_get(0).to_int()
+  if !((first >= 65 && first <= 90) || (first >= 97 && first <= 122)) {
+    return false
+  }
+  let mut i = 1
+  while i < length {
+    if !is_uri_scheme_character(value.unsafe_get(i).to_int()) {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+///|
+/// Validate an authority (host plus optional port) before echoing a forwarded
+/// value. The original spelling is preserved, including an explicit port.
+fn valid_forwarded_authority(value : StringView) -> String? {
+  let authority = trim_ascii_space(value)
+  if authority.is_empty() {
+    return None
+  }
+  match host_authority_host(authority) {
+    Some(_) => Some(authority.to_owned())
+    None => None
+  }
+}
+
+///|
 /// The URL scheme of the request, honoring the RFC 7239 `Forwarded` `proto=`
 /// parameter first, then `X-Forwarded-Proto`, and defaulting to `"http"`.
+/// Malformed forwarded values are ignored so `Context::full_url` cannot be
+/// steered into another scheme.
 pub fn Context::protocol(self : Context) -> String {
   let forwarded = self.header("Forwarded")
   if forwarded != "" {
     match forwarded_first_param(forwarded.view(), "proto".view()) {
-      Some(value) => return value
+      Some(value) =>
+        if valid_url_scheme(value.view()) {
+          return value
+        }
       None => ()
     }
   }
@@ -2785,7 +2845,7 @@ pub fn Context::protocol(self : Context) -> String {
       Some(index) => trim_ascii_space(proto[:index])
       None => proto
     }
-    if !value.is_empty() {
+    if valid_url_scheme(value.view()) {
       return value.to_owned()
     }
   }
@@ -2807,7 +2867,11 @@ pub fn Context::forwarded_authority(self : Context) -> String {
   let forwarded = self.header("Forwarded")
   if forwarded != "" {
     match forwarded_first_param(forwarded.view(), "host".view()) {
-      Some(value) => return value
+      Some(value) =>
+        match valid_forwarded_authority(value.view()) {
+          Some(authority) => return authority
+          None => ()
+        }
       None => ()
     }
   }
@@ -2817,11 +2881,15 @@ pub fn Context::forwarded_authority(self : Context) -> String {
       Some(index) => trim_ascii_space(xfh[:index])
       None => xfh
     }
-    if !first.is_empty() {
-      return first.to_owned()
+    match valid_forwarded_authority(first) {
+      Some(authority) => return authority
+      None => ()
     }
   }
-  trim_ascii_space(self.header("Host").view()).to_owned()
+  match valid_forwarded_authority(self.header("Host").view()) {
+    Some(authority) => authority
+    None => ""
+  }
 }
 
 ///|
@@ -2836,9 +2904,22 @@ pub fn Context::full_url(self : Context) -> String {
     Some(index) => raw_path[:index].to_owned()
     None => raw_path
   }
+  // Asterisk-form names the whole server, not a URL path.
+  if path == "*" {
+    return path
+  }
   let authority = self.forwarded_authority()
   if authority.is_empty() {
     return path
+  }
+  // With an authority the result is an absolute URL, whose path must be
+  // absolute-path (and not concatenate onto the authority).
+  let path = if path.is_empty() {
+    "/"
+  } else if path.has_prefix("/") {
+    path
+  } else {
+    "/" + path
   }
   let scheme = self.protocol()
   let builder = StringBuilder(
@@ -7350,7 +7431,9 @@ fn month_from_name(name : StringView) -> Int32? {
     return None
   }
   for i, month in http_months {
-    if name == month.view() {
+    // RFC 9110's HTTP-date grammar uses case-insensitive ABNF literals, so a
+    // recipient must accept `nov` as well as `Nov` (and any other casing).
+    if name.equal_ignore_ascii_case(month.view()) {
       return Some(i + 1)
     }
   }
@@ -9164,6 +9247,16 @@ fn clean_relative_path(relative : String) -> String? {
     return None
   }
   let length = view.length()
+  // Control characters are not valid in a URL path and must never be turned
+  // into filesystem names (or echoed into a redirect/Location header).
+  let mut control_scan = 0
+  while control_scan < length {
+    let code = view.unsafe_get(control_scan).to_int()
+    if code < 0x20 || code == 0x7F {
+      return None
+    }
+    control_scan = control_scan + 1
+  }
   let mut needs_clean = false
   let mut i = 0
   let mut at_start = true
@@ -10633,7 +10726,26 @@ fn valid_host_name(view : StringView, bracketed : Bool) -> Bool {
     }
     i = i + 1
   }
-  view.unsafe_get(0) != ('.' : UInt16)
+  if view.unsafe_get(0) == ('.' : UInt16) {
+    return false
+  }
+  // A trailing dot denotes the DNS root and is allowed, but every other label
+  // must be non-empty: `example..com` and `example..` are malformed
+  // authorities, not subdomains of `example.com`.
+  let mut label_start = 0
+  let mut index = 0
+  while index <= length {
+    if index == length ||
+      view.unsafe_get(index) == ('.' : UInt16) {
+      if index == label_start &&
+        !(index == length && label_start > 0) {
+        return false
+      }
+      label_start = index + 1
+    }
+    index = index + 1
+  }
+  true
 }
 
 ///|
