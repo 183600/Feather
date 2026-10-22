@@ -205,3 +205,27 @@ async test "compressed static files honor an identity refusal" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+async test "no-transform static mounts are never compressed" {
+  let dir = @fs.tmpdir(prefix="feather-static-compress-notransform")
+  let payload = "do not transform this file ".repeat(64)
+  @fs.write_file(dir + "/fixed.txt", payload)
+  let app = @feather.App::new()
+    .compress(min_size=0)
+    .static_files(
+      "/assets",
+      dir,
+      cache_control="no-transform, max-age=60",
+    )
+  with_server(app, client => {
+    let response = client.get(
+      "/assets/fixed.txt",
+      extra_headers=Map([(static_gzip_accept, "gzip")]),
+    )
+    assert_eq(response.code, 200)
+    assert_eq(response.headers.get(static_content_encoding), None)
+    assert_eq(client.read_all().text(), payload)
+  })
+  @fs.rmdir(dir, recursive=true)
+}

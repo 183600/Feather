@@ -1744,8 +1744,18 @@ async fn serve_static_file(
   // compression setting as dynamic ones.
   let mut compressed_body : Bytes? = None
   let mut dynamic_gzip = false
+  let effective_cache_control = match
+    get_header_ignore_case(extra_headers, "Cache-Control") {
+    Some(value) => value
+    None => cache_control
+  }
+  let no_transform = cache_control_has_directive(
+    effective_cache_control.view(),
+    "no-transform".view(),
+  )
   let dynamic_eligible = !serving_gzip &&
     compress_enabled &&
+    !no_transform &&
     content_type_is_compressible(content_type_value.view())
   if dynamic_eligible {
     match accept_encoding {
