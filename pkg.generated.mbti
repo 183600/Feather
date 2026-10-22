@@ -57,6 +57,10 @@ pub fn middleware_basic_auth(Map[String, String], realm? : String) -> ((Context)
 
 pub fn middleware_basic_auth_with((String, String) -> Bool, realm? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
+pub fn middleware_bearer_auth(Array[String], realm? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_bearer_auth_with((String) -> Bool, realm? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
 pub fn middleware_cors(allow_origin? : String, allow_methods? : String, allow_headers? : String, expose_headers? : String, allow_credentials? : Bool, max_age? : Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_csrf(field? : String, header? : String, key? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise

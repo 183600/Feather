@@ -3370,6 +3370,48 @@ pub fn Context::clear_cookie(
 }
 
 ///|
+fn is_bearer_token_base_char(code : Int) -> Bool {
+  (code >= 65 && code <= 90) ||
+  (code >= 97 && code <= 122) ||
+  (code >= 48 && code <= 57) ||
+  code == 45 ||
+  code == 46 ||
+  code == 95 ||
+  code == 126 ||
+  code == 43 ||
+  code == 47
+}
+
+///|
+/// Whether `view` is an RFC 6750 `token68` credential: one or more base
+/// characters followed by zero or more `=` padding characters.
+fn bearer_token_is_valid(view : StringView) -> Bool {
+  let length = view.length()
+  if length == 0 {
+    return false
+  }
+  let mut i = 0
+  let mut has_base = false
+  let mut padding = false
+  while i < length {
+    let code = view.unsafe_get(i).to_int()
+    if code == 61 {
+      padding = true
+    } else {
+      if padding || !is_bearer_token_base_char(code) {
+        return false
+      }
+      has_base = true
+    }
+    i += 1
+  }
+  has_base
+}
+
+///|
+/// Parse an `Authorization: Bearer ...` header into the opaque bearer token.
+/// Returns `None` when the header is missing or the credential is not a valid
+/// RFC 6750 `token68` value.
 pub fn Context::bearer_token(self : Context) -> String? {
   let authorization = self.header("Authorization")
   let view = authorization.view()
@@ -3377,16 +3419,11 @@ pub fn Context::bearer_token(self : Context) -> String? {
     return None
   }
   let rest = view[6:]
-  let trimmed = trim_ascii_space(rest)
-  if trimmed.length() != rest.length() - (rest.length() - trimmed.length()) {
-    // not directly available; easier: skip whitespace after scheme
-  }
-  // Allow one or more SP/HTAB after scheme per RFC 6750/RFC 7235
-  let mut i = 0
   let len = rest.length()
+  let mut i = 0
   while i < len {
     let c = rest.unsafe_get(i).to_int()
-    if c == 32 || c == 9 || c == 13 || c == 10 {
+    if c == 32 || c == 9 {
       i += 1
     } else {
       break
@@ -3395,12 +3432,11 @@ pub fn Context::bearer_token(self : Context) -> String? {
   if i == 0 {
     return None
   }
-  let token_view = rest[i:]
-  let token = trim_ascii_space(token_view)
-  if token.is_empty() {
-    None
-  } else {
+  let token = trim_ascii_space(rest[i:])
+  if bearer_token_is_valid(token) {
     Some(token.to_owned())
+  } else {
+    None
   }
 }
 
@@ -9350,12 +9386,13 @@ pub fn middleware_cors(
 }
 
 ///|
-fn basic_auth_challenge(realm : String) -> String {
+fn auth_challenge(scheme : String, realm : String) -> String {
   let clean = strip_control_characters(realm)
   let view = clean.view()
   let length = view.length()
-  let builder = StringBuilder(size_hint=length + 24)
-  builder.write_string("Basic realm=\"")
+  let builder = StringBuilder(size_hint=scheme.length() + length + 16)
+  builder.write_string(scheme)
+  builder.write_string(" realm=\"")
   let mut i = 0
   while i < length {
     let code = view.unsafe_get(i).to_int()
@@ -9367,6 +9404,16 @@ fn basic_auth_challenge(realm : String) -> String {
   }
   builder.write_char('"')
   builder.to_string()
+}
+
+///|
+fn basic_auth_challenge(realm : String) -> String {
+  auth_challenge("Basic", realm)
+}
+
+///|
+fn bearer_auth_challenge(realm : String) -> String {
+  auth_challenge("Bearer", realm)
 }
 
 ///|
@@ -9387,6 +9434,41 @@ fn constant_time_equal(left : String, right : String) -> Bool {
     difference = difference | (a ^ b).to_int()
   }
   difference == 0
+}
+
+///|
+fn bearer_auth_middleware(
+  check : (String) -> Bool,
+  realm : String,
+) -> Middleware {
+  let challenge = bearer_auth_challenge(realm)
+  fn(next) {
+    fn(ctx) raise {
+      let authorized = match ctx.bearer_token() {
+        Some(token) => check(token)
+        None => false
+      }
+      if authorized {
+        next(ctx)
+      } else {
+        ctx.file = None
+        ctx.response.status = 401
+        clear_replaced_body_headers(ctx.response.headers)
+        set_header_ignore_case(
+          ctx.response.headers,
+          "WWW-Authenticate",
+          challenge,
+        )
+        set_header_ignore_case(
+          ctx.response.headers,
+          "Content-Type",
+          "text/plain; charset=utf-8",
+        )
+        ctx.response.data = None
+        ctx.response.body = "401 Unauthorized"
+      }
+    }
+  }
 }
 
 ///|
@@ -9422,6 +9504,38 @@ fn basic_auth_middleware(
       }
     }
   }
+}
+
+///|
+/// Middleware that challenges requests with a bearer token and accepts any
+/// configured opaque token. Tokens are compared with the same constant-time
+/// helper used by basic authentication.
+pub fn middleware_bearer_auth(
+  tokens : Array[String],
+  realm~ : String = "Restricted",
+) -> Middleware {
+  bearer_auth_middleware(
+    fn(token) {
+      let mut accepted = false
+      for expected in tokens {
+        if constant_time_equal(token, expected) {
+          accepted = true
+        }
+      }
+      accepted
+    },
+    realm,
+  )
+}
+
+///|
+/// Middleware that challenges requests with a bearer token and accepts tokens
+/// approved by `check`.
+pub fn middleware_bearer_auth_with(
+  check : (String) -> Bool,
+  realm~ : String = "Restricted",
+) -> Middleware {
+  bearer_auth_middleware(check, realm)
 }
 
 ///|

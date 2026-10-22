@@ -20,8 +20,8 @@ long-term design notes are in [PLAN.md](PLAN.md).
   `options`/`all`), `:param` and `*wildcard` segments, route groups, named
   routes and `url_for`, per-route middleware, and a fallback handler.
 - **Middleware** – CORS, request logging, panic recovery, request IDs,
-  rate limiting, basic auth, CSRF, secure headers, HTTPS redirect, method
-  override, sessions, and a problem-details error handler.
+  rate limiting, basic and bearer auth, CSRF, secure headers, HTTPS redirect,
+  method override, sessions, and a problem-details error handler.
 - **Context** – path/query/form/multipart access, typed query and param
   helpers, JSON bodies, text/HTML/JSON/bytes responses, files and downloads,
   cookies (including signed cookies), flash messages, content negotiation,
@@ -134,6 +134,10 @@ let app = @feather.App::new()
   .use(@feather.middleware_cors(allow_origin="https://example.com"))
   .use(@feather.middleware_secure_headers())
 ```
+
+Authentication middleware is available for basic credentials
+(`middleware_basic_auth` / `middleware_basic_auth_with`) and bearer tokens
+(`middleware_bearer_auth` / `middleware_bearer_auth_with`).
 
 Sessions and CSRF are available as middleware plus `Context` helpers
 (`session_get`, `session_set`, `session_has`, `session_keys`, `session_remove`,
