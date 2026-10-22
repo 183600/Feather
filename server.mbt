@@ -1828,6 +1828,34 @@ async fn static_target_is_regular_file(path : String) -> Bool {
 }
 
 ///|
+/// Whether the configured directory index exists in any representation the
+/// client can receive. A precompressed-only `index.html.gz` must still trigger
+/// the canonical trailing-slash redirect for directory requests.
+async fn static_index_available(
+  directory : String,
+  index : String,
+  precompressed : Bool,
+  accept_encoding : String?,
+) -> Bool {
+  if index == "" {
+    return false
+  }
+  let index_path = join_fs_path(directory, index)
+  if static_target_is_regular_file(index_path) {
+    return true
+  }
+  if !precompressed {
+    return false
+  }
+  match accept_encoding {
+    Some(value) =>
+      accept_encoding_accepts_gzip(value) &&
+      static_target_is_regular_file(index_path + ".gz")
+    None => false
+  }
+}
+
+///|
 /// Serve a static file, seeding every response with the headers and cookies a
 /// request context accumulated (middleware and handler output), so static
 /// responses carry the same security, CORS and session headers as dynamic
@@ -1924,8 +1952,9 @@ async fn serve_static_file(
         // index exists, so a missing index reports 404 directly instead of
         // redirecting to another 404.
         if !redirect_directories ||
-          index == "" ||
-          !static_target_is_regular_file(join_fs_path(file_path, index)) {
+          !static_index_available(
+            file_path, index, precompressed, accept_encoding,
+          ) {
           send_static_error(
             conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
           )

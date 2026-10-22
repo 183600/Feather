@@ -73,3 +73,40 @@ async test "a mount root without an index still reports 404 instead of redirecti
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+async test "a precompressed-only subdirectory index still redirects" {
+  let dir = @fs.tmpdir(prefix="feather-static-gzip-index-redirect")
+  @fs.mkdir(dir + "/guide")
+  @fs.write_file(
+    dir + "/guide/index.html.gz",
+    gzip_encode_for_test(@utf8.encode("<h1>guide</h1>")),
+  )
+  let app = @feather.App::new().static_files("/assets", dir, precompressed=true)
+  with_server(app, client => {
+    let redirect = client.get(
+      "/assets/guide",
+      extra_headers=Map([(ext_accept_encoding, "gzip")]),
+    )
+    assert_eq(redirect.code, 301)
+    assert_eq(
+      redirect.headers.get(@http.CaseInsensitiveString("Location")),
+      Some("/assets/guide/"),
+    )
+    ignore(client.read_all())
+    let page = client.get(
+      "/assets/guide/",
+      extra_headers=Map([(ext_accept_encoding, "gzip")]),
+    )
+    assert_eq(page.code, 200)
+    assert_eq(
+      page.headers.get(ext_content_encoding),
+      Some("gzip"),
+    )
+    assert_eq(
+      @utf8.decode_lossy(gunzip_for_test(client.read_all().binary())),
+      "<h1>guide</h1>",
+    )
+  })
+  @fs.rmdir(dir, recursive=true)
+}
