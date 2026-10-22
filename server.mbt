@@ -767,7 +767,10 @@ async fn send_file_response(
     )
     return
   }
-  let vary_encoding = compressible
+  // Even when application compression is off, a handler-supplied coding means
+  // the selected representation depends on `Accept-Encoding`: the same URL can
+  // answer 200 for a client that accepts it and 406 for one that does not.
+  let vary_encoding = compressible || existing_encoding is Some(_)
   // `Context::no_etag` suppresses only the generated validator; an explicit
   // handler/middleware ETag is still preserved below.
   let generated_etag = if auto_etag {
@@ -889,6 +892,9 @@ async fn send_file_response(
                 header_content_range,
                 "bytes */" + representation_size.to_string(),
               )
+              if vary_encoding {
+                add_vary_header(headers, "Accept-Encoding")
+              }
               send_with_date(
                 conn,
                 416,

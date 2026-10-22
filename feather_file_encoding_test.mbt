@@ -27,6 +27,10 @@ async test "queued files with an existing gzip coding honor the coding" {
       Some("gzip"),
     )
     assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Vary")),
+      Some("Accept-Encoding"),
+    )
+    assert_eq(
       @utf8.decode_lossy(gunzip_for_test(client.read_all().binary())),
       payload,
     )
@@ -88,6 +92,32 @@ async test "ranges on an existing gzip coding use the encoded representation" {
       Some("bytes 0-9/" + encoded_size.to_string()),
     )
     assert_eq(client.read_all().binary().length(), 10)
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "a compressed queued-file 416 still varies on accept-encoding" {
+  let dir = @fs.tmpdir(prefix="feather-file-416-vary")
+  let payload = "queued range payload ".repeat(64)
+  @fs.write_file(dir + "/data.txt", payload)
+  let app = @feather.App::new()
+    .compress(min_size=0)
+    .get("/download", fn(ctx) { ctx.file(200, dir + "/data.txt") })
+  with_server(app, client => {
+    let response = client.get(
+      "/download",
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("Accept-Encoding"), "gzip"),
+        (@http.CaseInsensitiveString("Range"), "bytes=99999-"),
+      ]),
+    )
+    assert_eq(response.code, 416)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Vary")),
+      Some("Accept-Encoding"),
+    )
+    ignore(client.read_all())
   })
   @fs.rmdir(dir, recursive=true)
 }
