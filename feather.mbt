@@ -233,8 +233,30 @@ fn standard_methods() -> Array[String] {
 }
 
 ///|
+///|
+/// Position where the path component ends: the first `?` (query) or `#`
+/// (fragment), whichever comes first. Request targets normally carry no raw
+/// fragment, but accepting one keeps offline requests and hand-built contexts
+/// consistent with HTTP URL parsing.
+fn path_head_end(path : String) -> Int32? {
+  let mut end : Int32? = match path.find("?") {
+    Some(index) => Some(index)
+    None => None
+  }
+  match path.find("#") {
+    Some(index) =>
+      match end {
+        Some(current) => if index < current { end = Some(index) }
+        None => end = Some(index)
+      }
+    None => ()
+  }
+  end
+}
+
+///|
 fn clean_path_view(path : String) -> StringView {
-  match path_query_index(path) {
+  match path_head_end(path) {
     Some(index) => path[:index]
     None => path.view()
   }
@@ -409,7 +431,7 @@ fn match_static_node(
 
 ///|
 fn clean_route_path(path : String) -> String {
-  match path.find("?") {
+  match path_head_end(path) {
     Some(index) => path[:index].to_owned()
     None => path
   }
@@ -2544,7 +2566,11 @@ pub fn Context::full_url(self : Context) -> String {
     return self.request.path
   }
   let scheme = self.protocol()
-  let path = self.request.path
+  let raw_path = self.request.path
+  let path = match raw_path.find("#") {
+    Some(index) => raw_path[:index].to_owned()
+    None => raw_path
+  }
   let builder = StringBuilder(
     size_hint=scheme.length() + authority.length() + path.length() + 3,
   )
@@ -2848,7 +2874,8 @@ let last_query_index_path : Ref[String?] = Ref(None)
 let last_query_index : Ref[Int32] = Ref(-1)
 
 ///|
-/// Position of `?` in `path` for the most recent path.
+/// Position of `?` in `path` for the most recent path, or `None` when there is
+/// no query or a fragment starts before it.
 fn path_query_index(path : String) -> Int32? {
   match last_query_index_path.val {
     Some(cached) =>
@@ -2858,7 +2885,14 @@ fn path_query_index(path : String) -> Int32? {
       }
     None => ()
   }
-  let result = path.find("?")
+  let result = match path.find("?") {
+    Some(index) =>
+      match path.find("#") {
+        Some(fragment) => if fragment < index { None } else { Some(index) }
+        None => Some(index)
+      }
+    None => None
+  }
   last_query_index_path.val = Some(path)
   match result {
     Some(index) => {
@@ -2869,6 +2903,18 @@ fn path_query_index(path : String) -> Int32? {
       last_query_index.val = -1
       None
     }
+  }
+}
+
+///|
+/// The raw query text after `?`, stopping at a fragment delimiter. The path
+/// fragment is never part of the query string, even when a hand-built request
+/// carries one.
+fn query_source_view(path : String, index : Int32) -> StringView {
+  let source = path.view()[index + 1:]
+  match source.find("#") {
+    Some(fragment) => source[:fragment]
+    None => source
   }
 }
 
@@ -2894,7 +2940,7 @@ fn query_map_lookup(path : String, index : Int32) -> Map[String, String] {
       }
     None => ()
   }
-  let source = path.view()[index + 1:]
+  let source = query_source_view(path, index)
   let parsed = match queries_cache.get(source) {
     Some(cached) => {
       cache_touch(queries_cache_ages, source)
@@ -2948,7 +2994,7 @@ fn query_multi_lookup(
       }
     None => ()
   }
-  let source = path.view()[index + 1:]
+  let source = query_source_view(path, index)
   let parsed = match queries_multi_cache.get(source) {
     Some(cached) => {
       cache_touch(queries_multi_cache_ages, source)
@@ -5042,7 +5088,7 @@ pub fn Context::query(self : Context, name : String) -> String {
   match path_query_index(path) {
     Some(index) =>
       if name_needs_raw(name.view()) {
-        query_param(path.view()[index + 1:], name)
+        query_param(query_source_view(path, index), name)
       } else {
         match query_map_lookup(path, index).get(name) {
           Some(value) => value
@@ -5067,7 +5113,10 @@ pub fn Context::query_default(
   match path_query_index(self.request.path) {
     Some(index) =>
       if name_needs_raw(name.view()) {
-        match query_param_opt(self.request.path.view()[index + 1:], name) {
+        match query_param_opt(
+          query_source_view(self.request.path, index),
+          name,
+        ) {
           Some(value) => value
           None => default
         }
@@ -5177,7 +5226,7 @@ pub fn Context::query_values(self : Context, name : String) -> Array[String] {
   match path_query_index(self.request.path) {
     Some(index) =>
       if name_needs_raw(name.view()) {
-        collect_values(self.request.path.view()[index + 1:], name)
+        collect_values(query_source_view(self.request.path, index), name)
       } else {
         match query_multi_lookup(self.request.path, index).get(name) {
           Some(values) => values
