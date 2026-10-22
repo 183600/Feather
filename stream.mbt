@@ -60,6 +60,75 @@ pub fn Stream::set_header(self : Stream, name : String, value : String) -> Unit 
 }
 
 ///|
+/// Add a `Set-Cookie` header to a streaming response. Ignored after the header
+/// was sent, matching `Stream::set_header`; call it before the first write or
+/// `Stream::close`.
+///
+/// Each call adds a separate cookie line, so a stream can hand out several
+/// cookies without a middleware chain. The name, value and attributes are
+/// sanitized exactly like `Context::add_cookie`.
+pub fn Stream::add_cookie(
+  self : Stream,
+  name : String,
+  value : String,
+  path? : String,
+  max_age? : Int64,
+  expires? : Int64,
+  domain? : String,
+  same_site? : String,
+  http_only~ : Bool = false,
+  secure~ : Bool = false,
+  partitioned~ : Bool = false,
+) -> Unit {
+  if self.started {
+    return
+  }
+  let cookie = build_cookie(
+    name,
+    value,
+    path?,
+    max_age?,
+    expires?,
+    domain?,
+    same_site?,
+    http_only,
+    secure,
+    partitioned,
+  )
+  if cookie.name == "" {
+    return
+  }
+  self.cookies.push(cookie)
+}
+
+///|
+/// Add a cookie that expires immediately, removing it from the client. This is
+/// the streaming counterpart of `Context::clear_cookie`; it is ignored once the
+/// response header has been sent.
+pub fn Stream::clear_cookie(
+  self : Stream,
+  name : String,
+  path? : String,
+  domain? : String,
+  same_site? : String,
+  http_only~ : Bool = false,
+  secure~ : Bool = false,
+  partitioned~ : Bool = false,
+) -> Unit {
+  self.add_cookie(
+    name,
+    "",
+    path?,
+    max_age=0L,
+    domain?,
+    same_site?,
+    http_only~,
+    secure~,
+    partitioned~,
+  )
+}
+
+///|
 /// Send the response header. Called implicitly by the first write or by
 /// `Stream::close`, so an empty stream still produces a valid response.
 async fn Stream::start(self : Stream) -> Unit {

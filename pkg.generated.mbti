@@ -654,6 +654,8 @@ pub struct Stream {
   headers : Map[String, String]
   // private fields
 }
+pub fn Stream::add_cookie(Self, String, String, path? : String, max_age? : Int64, expires? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool, partitioned? : Bool) -> Unit
+pub fn Stream::clear_cookie(Self, String, path? : String, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool, partitioned? : Bool) -> Unit
 pub async fn Stream::close(Self) -> Unit
 pub async fn Stream::flush(Self) -> Unit
 pub fn Stream::is_closed(Self) -> Bool
