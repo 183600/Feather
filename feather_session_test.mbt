@@ -71,11 +71,29 @@ test "session helpers are inert without middleware" {
   assert_true(ctx.session() is None)
   assert_eq(ctx.session_id(), None)
   assert_eq(ctx.session_get("x"), "")
+  assert_eq(ctx.session_get_default("x", "fallback"), "fallback")
   assert_eq(ctx.session_set("x", "1"), false)
   assert_eq(ctx.session_remove("x"), false)
   assert_eq(ctx.session_destroy(), false)
   assert_eq(ctx.session_regenerate(), false)
   assert_true(ctx.session() is None)
+}
+
+///|
+test "session_get_default distinguishes empty values from missing keys" {
+  let store = @feather.SessionStore::new()
+  let app = @feather.App::new()
+    .use(@feather.middleware_session(store))
+    .get("/values", fn(ctx) {
+      ignore(ctx.session_set("empty", ""))
+      ctx.text(
+        200,
+        ctx.session_get_default("empty", "fallback") +
+        "|" +
+        ctx.session_get_default("missing", "fallback"),
+      )
+    })
+  assert_eq(app.respond(session_request("/values")).body, "|fallback")
 }
 
 ///|

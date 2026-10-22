@@ -318,6 +318,7 @@ pub fn Context::not_modified(Self, etag? : String, last_modified? : String) -> U
 pub fn Context::param(Self, String) -> String
 pub fn Context::param_bool(Self, String) -> Bool?
 pub fn Context::param_decoded(Self, String) -> String
+pub fn Context::param_default(Self, String, String) -> String
 pub fn Context::param_float(Self, String) -> Double?
 pub fn Context::param_int(Self, String) -> Int32?
 pub fn Context::params(Self) -> Map[String, String]
@@ -342,6 +343,7 @@ pub fn Context::session(Self) -> Session?
 pub fn Context::session_clear(Self) -> Bool
 pub fn Context::session_destroy(Self) -> Bool
 pub fn Context::session_get(Self, String) -> String
+pub fn Context::session_get_default(Self, String, String) -> String
 pub fn Context::session_get_json(Self, String) -> Json?
 pub fn Context::session_has(Self, String) -> Bool
 pub fn Context::session_id(Self) -> String?

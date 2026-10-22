@@ -79,6 +79,24 @@ test "Context query_default matches raw name spellings like query" {
 }
 
 ///|
+test "Context param_default falls back only for missing route parameters" {
+  let router = @feather.create_router()
+  router.add_route("GET", "/items/:id", fn(ctx) { ctx.text(200, "ok") })
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/items/42?tab=details",
+    headers: Map([]),
+    body: "",
+  })
+  router.dispatch(ctx)
+  assert_eq(ctx.param("id"), "42")
+  assert_eq(ctx.param_default("id", "none"), "42")
+  assert_eq(ctx.param_default("missing", "none"), "none")
+  let bare = @feather.create_context()
+  assert_eq(bare.param_default("id", "none"), "none")
+}
+
+///|
 test "Context form_default falls back only for absent fields" {
   let ctx = @feather.Context::new({
     method: "POST",

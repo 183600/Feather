@@ -329,6 +329,25 @@ pub fn Context::session_get(self : Context, key : String) -> String {
 }
 
 ///|
+/// Read a value from the session, returning `default` when there is no session
+/// or the key is absent. Unlike `Context::session_get`, a stored empty string
+/// is returned as-is instead of being replaced by `default`.
+pub fn Context::session_get_default(
+  self : Context,
+  key : String,
+  default : String,
+) -> String {
+  match self.session_materialized() {
+    Some(session) =>
+      match session.data.get(key) {
+        Some(value) => value
+        None => default
+      }
+    None => default
+  }
+}
+
+///|
 /// Whether the session contains `key`. Returns `false` when there is no
 /// session or the key is absent, so it distinguishes a missing key from one
 /// stored with an empty string value.

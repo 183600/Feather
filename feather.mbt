@@ -1868,6 +1868,25 @@ pub fn Context::param(self : Context, name : String) -> String {
 }
 
 ///|
+/// Look up the route parameter `name`, returning `default` when the route did
+/// not capture it. Route matching never produces an empty segment, so a
+/// parameter that matched has a non-empty value and the fallback is only used
+/// for parameters the route does not define.
+pub fn Context::param_default(
+  self : Context,
+  name : String,
+  default : String,
+) -> String {
+  if self.state.is_empty() {
+    return default
+  }
+  match self.state.get(param_state_key(name)) {
+    Some(value) => value
+    None => default
+  }
+}
+
+///|
 /// Like `Context::param`, but percent-decodes the captured segment.
 ///
 /// Route matching keeps the raw text (so `%2F` cannot act as another path
