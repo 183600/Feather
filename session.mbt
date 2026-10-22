@@ -680,6 +680,31 @@ fn session_send_cookie(
 }
 
 ///|
+/// The `Max-Age` a re-sent session cookie should advertise.
+///
+/// A fixed-lifetime session keeps its original server deadline even when its
+/// data changes, so the browser cookie must not be given a fresh full
+/// lifetime on every write. Round the remaining milliseconds up, matching the
+/// initial cookie, and never exceed the configured lifetime.
+fn session_remaining_max_age(
+  config : SessionCookieConfig,
+  session : Session,
+  now : Int64,
+) -> Int64? {
+  let full = match config.max_age {
+    Some(value) => value
+    None => return None
+  }
+  let remaining = session.expires_at - now
+  if remaining <= 0L {
+    return Some(0L)
+  }
+  let millis = remaining % 1000L
+  let seconds = remaining / 1000L + (if millis == 0L { 0L } else { 1L })
+  Some(if seconds < full { seconds } else { full })
+}
+
+///|
 /// Save, rotate or destroy the request's session and send or clear its cookie.
 fn session_persist(
   ctx : Context,
@@ -716,14 +741,20 @@ fn session_persist(
           // deadline passed during the request, discard the write and expire
           // the client cookie instead of advertising a fresh lifetime for a
           // session the store will drop on its next lookup.
-          if session.expires_at <= @async.now() {
+          let now = @async.now()
+          if session.expires_at <= now {
             store.destroy(session.id)
             if had_cookie {
               session_send_cookie(ctx, config, "", Some(0L))
             }
           } else {
             store.store(session)
-            session_send_cookie(ctx, config, session.id, config.max_age)
+            session_send_cookie(
+              ctx,
+              config,
+              session.id,
+              session_remaining_max_age(config, session, now),
+            )
           }
         }
       }
