@@ -10063,14 +10063,28 @@ pub fn middleware_https_redirect(
         None => trim_ascii_space(ctx.header("Host").view()).to_owned()
       }
       // A control character in the authority would forge extra header lines in
-      // the `Location` field. Such a host is not usable, so pass the request
-      // through exactly like a missing host.
-      let authority = strip_control_characters(raw_authority)
-      if authority != raw_authority || authority == "" {
+      // the `Location` field. An authority that is not a bare host (optionally
+      // with a port) would splice extra path, userinfo or scheme characters
+      // into the URL, so both cases pass the request through like a missing
+      // host instead of emitting a misleading redirect.
+      let cleaned = strip_control_characters(raw_authority)
+      let authority = trim_ascii_space(cleaned.view()).to_owned()
+      if cleaned != raw_authority ||
+        authority == "" ||
+        host_authority_host(authority.view()) is None {
+        next(ctx)
+        return
+      }
+      // The asterisk-form target names the server rather than a URL path, so
+      // there is no location to redirect it to.
+      if ctx.request.path == "*" {
         next(ctx)
         return
       }
       let path = strip_control_characters(ctx.request.path)
+      // Keep the location origin-relative even for hand-built contexts whose
+      // request target did not start with a slash.
+      let path = if path.has_prefix("/") { path } else { "/" + path }
       ctx.redirect(status, "https://" + authority + path)
     }
   }

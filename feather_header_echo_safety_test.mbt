@@ -81,3 +81,67 @@ test "redirect strips control characters from the location" {
   assert_false(location.contains("\n"))
   assert_eq(location, "https://example.test/nextX-Injected: yes")
 }
+
+///|
+test "https redirect refuses an authority with userinfo" {
+  let app = @feather.App::new()
+    .use(@feather.middleware_https_redirect())
+    .get("/", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "GET",
+    path: "/",
+    headers: Map([("Host", "trusted.test@evil.test")]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.headers.get("Location"), None)
+}
+
+///|
+test "https redirect refuses an authority with a path" {
+  let app = @feather.App::new()
+    .use(@feather.middleware_https_redirect())
+    .get("/", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "GET",
+    path: "/",
+    headers: Map([("Host", "example.test/extra")]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.headers.get("Location"), None)
+}
+
+///|
+test "https redirect leaves the asterisk-form target to the router" {
+  let app = @feather.App::new()
+    .use(@feather.middleware_https_redirect())
+    .get("/", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "*",
+    headers: Map([("Host", "example.test")]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Location"), None)
+  assert_true(response.headers.get("Allow") is Some(_))
+}
+
+///|
+test "https redirect makes a slashless target origin-relative" {
+  let app = @feather.App::new()
+    .use(@feather.middleware_https_redirect(permanent=false))
+    .get("/dashboard", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "GET",
+    path: "dashboard",
+    headers: Map([("Host", "example.test")]),
+    body: "",
+  })
+  assert_eq(response.status, 307)
+  assert_eq(
+    response.headers.get("Location"),
+    Some("https://example.test/dashboard"),
+  )
+}
