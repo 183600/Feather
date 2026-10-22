@@ -177,3 +177,29 @@ test "urlencoded parser round-trips encoded keys and values" {
     assert_eq(parsed.get(pair.0), Some(pair.1))
   }
 }
+
+///|
+test "wildcard media ranges respect more specific exclusions" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([("Accept", "*/*;q=1, text/*;q=0")]),
+    body: "",
+  })
+  assert_false(ctx.accepts("text/*"))
+  assert_false(ctx.accepts("text/html"))
+  assert_true(ctx.accepts("application/json"))
+}
+
+///|
+test "wildcard media ranges prefer the most specific matching range" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([("Accept", "text/*;q=0.5, */*;q=0.1")]),
+    body: "",
+  })
+  assert_true(ctx.accepts("text/*"))
+  assert_true(ctx.accepts("text/html"))
+  assert_true(ctx.accepts("image/png"))
+}
