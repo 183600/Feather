@@ -1520,7 +1520,10 @@ async fn serve_static_file(
       if precompressed {
         match request.headers.get(header_accept_encoding) {
           Some(value) =>
-            if accept_encoding_allows_gzip_cached(value) {
+            // Here identity is unavailable, so any positive gzip quality is
+            // enough; unlike the two-representation choice below, it does not
+            // have to outrank identity.
+            if accept_encoding_accepts_gzip(value) {
               gzip_handle = open_precompressed_gzip(file_path)
             }
           None => ()

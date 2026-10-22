@@ -177,6 +177,17 @@ fn accept_encoding_allows_gzip_cached(header : String) -> Bool {
 }
 
 ///|
+/// Whether the client accepts the `gzip` coding at all, regardless of how it
+/// ranks against identity. Used when gzip is the only available representation,
+/// so a positive quality is enough even if identity is preferred.
+fn accept_encoding_accepts_gzip(header : String) -> Bool {
+  if trim_ascii_space(header.view()).is_empty() {
+    return false
+  }
+  explicit_encoding_quality(encoding_entries_cached(header), "gzip".view()) > 0
+}
+
+///|
 /// Whether the client explicitly assigned `identity` a zero quality, leaving no
 /// acceptable content coding for a representation the server cannot encode.
 fn accept_encoding_refuses_identity(header : String) -> Bool {

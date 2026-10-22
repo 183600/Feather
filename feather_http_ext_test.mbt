@@ -372,6 +372,31 @@ async test "precompressed static files work without a source sibling" {
 }
 
 ///|
+async test "gzip-only precompressed files honor a lower accepted quality" {
+  let dir = @fs.tmpdir(prefix="feather-gz-only-q")
+  let plain = "only gzip is available for this asset\n".repeat(32)
+  let encoded = gzip_encode_for_test(@utf8.encode(plain))
+  @fs.write_file(dir + "/app.js.gz", encoded)
+  let app = @feather.App::new().static_files("/assets", dir, precompressed=true)
+  with_server(app, client => {
+    for accept_encoding in [
+      "gzip;q=0.5, identity;q=1",
+      "*;q=0.5, identity;q=1",
+    ] {
+      let response = client.get(
+        "/assets/app.js",
+        extra_headers=Map([(ext_accept_encoding, accept_encoding)]),
+      )
+      assert_eq(response.code, 200)
+      assert_eq(response.headers.get(ext_content_encoding), Some("gzip"))
+      let decoded = gunzip_for_test(client.read_all().binary())
+      assert_eq(@utf8.decode_lossy(decoded), plain)
+    }
+  })
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
 test "accepts_language lets the longest prefix decide" {
   assert_false(
     language_ctx("zh;q=0.4, zh-Hans;q=0").accepts_language("zh-Hans-CN"),
