@@ -57,6 +57,28 @@ test "context basic_auth rejects other schemes and bad payloads" {
 }
 
 ///|
+test "context basic_auth rejects empty credentials" {
+  for header in ["Basic ", "Basic \t ", "Basic\r\n"] {
+    let ctx = @feather.Context::new({
+      method: "GET",
+      path: "/private",
+      headers: Map([("Authorization", header)]),
+      body: "",
+    })
+    assert_eq(ctx.basic_auth(), None)
+  }
+  let empty_pair = @feather.Context::new({
+    method: "GET",
+    path: "/private",
+    headers: Map([
+      ("Authorization", "Basic " + @feather.base64_encode(@utf8.encode(":"))),
+    ]),
+    body: "",
+  })
+  assert_eq(empty_pair.basic_auth(), Some(("", "")))
+}
+
+///|
 test "basic auth middleware challenges missing credentials" {
   let app = @feather.App::new()
     .use(@feather.middleware_basic_auth(Map([("admin", "secret")])))

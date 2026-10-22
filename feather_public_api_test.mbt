@@ -14,6 +14,16 @@ test "url_decode handles plus, percent escapes and malformed input" {
 }
 
 ///|
+test "url_decode replaces lone surrogates instead of aborting" {
+  let lone_high = String::from_array([Char::from_int(0xD800)])
+  let lone_low = String::from_array([Char::from_int(0xDC00)])
+  assert_eq(@feather.url_decode(lone_high + "%41"), "\u{FFFD}A")
+  assert_eq(@feather.url_decode(lone_low + "+"), "\u{FFFD} ")
+  let pair = String::from_array([Char::from_int(0xD83D), Char::from_int(0xDE00)])
+  assert_eq(@feather.url_decode(pair + "%41"), pair + "A")
+}
+
+///|
 test "parse_urlencoded splits pairs and keeps later duplicates" {
   let fields = @feather.parse_urlencoded("a=1&b=hello+world&flag&a=2=3")
   assert_eq(fields.get("a"), Some("2=3"))

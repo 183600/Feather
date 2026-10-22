@@ -3428,6 +3428,9 @@ pub fn Context::basic_auth(self : Context) -> (String, String)? {
     return None
   }
   let encoded = trim_ascii_space(rest[i:])
+  if encoded.is_empty() {
+    return None
+  }
   let decoded = match base64_decode_view(encoded) {
     Some(decoded) => @utf8.decode_lossy(decoded)
     None => return None
@@ -3787,6 +3790,45 @@ fn decode_url_bytes(bytes : BytesView, plus_as_space : Bool) -> String {
 }
 
 ///|
+/// Encode `source` as UTF-8, replacing unpaired surrogates with U+FFFD so the
+/// conversion is total for any `String`.
+fn encode_url_source(source : StringView) -> Bytes {
+  let length = source.length()
+  let out : Array[Byte] = Array(capacity=length)
+  let mut i = 0
+  while i < length {
+    let code = source.unsafe_get(i).to_int()
+    if code >= 0xD800 &&
+      code <= 0xDBFF &&
+      i + 1 < length &&
+      source.unsafe_get(i + 1).to_int() >= 0xDC00 &&
+      source.unsafe_get(i + 1).to_int() <= 0xDFFF {
+      let low = source.unsafe_get(i + 1).to_int()
+      let full = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+      out.push(((full >> 18) | 0xF0).to_byte())
+      out.push((((full >> 12) & 0x3F) | 0x80).to_byte())
+      out.push((((full >> 6) & 0x3F) | 0x80).to_byte())
+      out.push(((full & 0x3F) | 0x80).to_byte())
+      i = i + 2
+      continue
+    }
+    let scalar = if code >= 0xD800 && code <= 0xDFFF { 0xFFFD } else { code }
+    if scalar < 0x80 {
+      out.push(scalar.to_byte())
+    } else if scalar < 0x800 {
+      out.push(((scalar >> 6) | 0xC0).to_byte())
+      out.push(((scalar & 0x3F) | 0x80).to_byte())
+    } else {
+      out.push(((scalar >> 12) | 0xE0).to_byte())
+      out.push((((scalar >> 6) & 0x3F) | 0x80).to_byte())
+      out.push(((scalar & 0x3F) | 0x80).to_byte())
+    }
+    i = i + 1
+  }
+  Bytes::from_array(out)
+}
+
+///|
 fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
   let length = source.length()
   let mut ascii_only = true
@@ -3806,7 +3848,7 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
     return source.to_owned()
   }
   if !ascii_only {
-    return decode_url_bytes(@utf8.encode(source), plus_as_space)
+    return decode_url_bytes(encode_url_source(source), plus_as_space)
   }
   let out = FixedArray::make(length, b' ')
   let mut out_index = 0
