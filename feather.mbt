@@ -3610,8 +3610,25 @@ pub fn Context::clear_cookie(
   name : String,
   path? : String,
   domain? : String,
+  same_site? : String,
+  http_only~ : Bool = false,
+  secure~ : Bool = false,
+  partitioned~ : Bool = false,
 ) -> Unit {
-  self.set_cookie(name, "", path?, max_age=0L, domain?)
+  // Deletion keeps the attributes that are part of a cookie's storage key,
+  // most notably `Partitioned` for CHIPS cookies, so the browser removes the
+  // same cookie that was set earlier.
+  self.set_cookie(
+    name,
+    "",
+    path?,
+    max_age=0L,
+    domain?,
+    same_site?,
+    http_only~,
+    secure~,
+    partitioned~,
+  )
 }
 
 ///|

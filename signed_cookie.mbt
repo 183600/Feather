@@ -684,6 +684,18 @@ pub fn Context::clear_signed_cookie(
   name : String,
   path? : String,
   domain? : String,
+  same_site? : String,
+  http_only~ : Bool = false,
+  secure~ : Bool = false,
+  partitioned~ : Bool = false,
 ) -> Unit {
-  self.clear_cookie(name, path?, domain?)
+  self.clear_cookie(
+    name,
+    path?,
+    domain?,
+    same_site?,
+    http_only~,
+    secure~,
+    partitioned~,
+  )
 }
