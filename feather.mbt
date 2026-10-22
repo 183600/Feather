@@ -8892,6 +8892,43 @@ pub fn App::handle(self : App, ctx : Context) -> Unit raise {
 }
 
 ///|
+/// Drop the buffered body of a `HEAD` response while keeping the framing the
+/// server would send: a non-empty body leaves its byte length in
+/// `Content-Length`, an empty body on a status that forbids one clears the
+/// header, and a status without a body drops any seeded length. `App::respond`
+/// and `App::respond_async` call this so their offline replies match the wire
+/// format produced by `send_response`.
+fn strip_head_body(response : Response) -> Unit {
+  let body_allowed = response.status >= 200 &&
+    response.status != 204 &&
+    response.status != 205 &&
+    response.status != 304
+  let body_length = match response.data {
+    Some(data) => if data.length() > 0 { Some(data.length()) } else { None }
+    None => if response.body.is_empty() {
+      None
+    } else {
+      Some(utf8_byte_length(response.body.view()))
+    }
+  }
+  if body_allowed {
+    match body_length {
+      Some(length) =>
+        set_header_ignore_case(
+          response.headers,
+          "Content-Length",
+          length.to_string(),
+        )
+      None => ()
+    }
+  } else {
+    ignore(remove_header_ignore_case(response.headers, "Content-Length"))
+  }
+  response.body = ""
+  response.data = None
+}
+
+///|
 /// Run a request through the application without a server and return the
 /// response.
 ///
@@ -8927,6 +8964,9 @@ pub fn App::respond(self : App, request : Request) -> Response {
         finish_response(self, ctx.response, remaining, allows_not_modified)
       }
     }
+  }
+  if ctx.request.method == "HEAD" && ctx.file_response() is None {
+    strip_head_body(ctx.response)
   }
   ctx.response
 }
@@ -8981,6 +9021,9 @@ pub async fn App::respond_async(
         finish_response(self, ctx.response, remaining, allows_not_modified)
       }
     }
+  }
+  if ctx.request.method == "HEAD" && ctx.file_response() is None {
+    strip_head_body(ctx.response)
   }
   ctx.response
 }

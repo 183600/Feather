@@ -30,8 +30,9 @@ long-term design notes are in [PLAN.md](PLAN.md).
 - **Async endpoints** – server-sent events (`sse`), streaming responses
   (`stream`), and WebSocket handlers (`websocket`).
 - **Server** – keep-alive HTTP/1.1 connections, request timeouts, body-size
-  limits, trusted-proxy handling, graceful shutdown/drain, and configurable
-  connection limits.
+  limits, trusted-proxy handling, graceful shutdown/drain, configurable
+  connection limits, and `HEAD` framing that drops the body while keeping the
+  `Content-Length` the matching `GET` would send.
 - **Static files** – directory mounts with index files, cache control, range
   requests, and path-traversal protection.
 
