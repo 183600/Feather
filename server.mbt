@@ -551,6 +551,7 @@ async fn send_file_response(
   head : Bool,
   request : @http.Request,
   connect~ : Bool = false,
+  auto_etag~ : Bool = true,
 ) -> Unit {
   // A 2xx CONNECT response establishes a tunnel rather than carrying a
   // representation, so the prepared file is not sent and no length is framed.
@@ -622,19 +623,22 @@ async fn send_file_response(
     mtime_nanos,
     cache_key=file.path,
   )
+  // `Context::no_etag` suppresses only the generated validator; an explicit
+  // handler/middleware ETag is still preserved below.
+  let generated_etag = if auto_etag { etag } else { "" }
   let headers = static_base_headers(response.headers, response.cookies, 4)
   if !headers.contains(header_content_type) {
     headers.set(header_content_type, file.content_type)
   }
-  if !headers.contains(header_etag) {
-    headers.set(header_etag, etag)
+  if generated_etag != "" && !headers.contains(header_etag) {
+    headers.set(header_etag, generated_etag)
   }
   if !headers.contains(header_last_modified) {
     headers.set(header_last_modified, last_modified)
   }
   // A handler may override `ETag` / `Last-Modified`; preconditions must be
   // evaluated against the validators the response actually advertises.
-  let effective_etag = headers.get(header_etag).unwrap_or(etag)
+  let effective_etag = headers.get(header_etag).unwrap_or("")
   let effective_mtime = match headers.get(header_last_modified) {
     Some(value) =>
       match parse_http_date_view(trim_ascii_space(value.view())) {
@@ -1113,7 +1117,15 @@ async fn send_context_response(
   let connect = request.meth is @http.Connect
   match ctx.file_response() {
     Some(file) =>
-      send_file_response(conn, ctx.response, file, head, request, connect~)
+      send_file_response(
+        conn,
+        ctx.response,
+        file,
+        head,
+        request,
+        connect~,
+        auto_etag=response_file_etag_enabled(ctx),
+      )
     None => send_response(conn, ctx.response, head, connect~)
   }
 }
@@ -1511,6 +1523,7 @@ async fn serve_static_file(
   redirect_directories : Bool,
   extra_headers : Map[String, String],
   cookies : Array[@http.Cookie],
+  auto_etag~ : Bool = true,
 ) -> Unit {
   let mut gzip_handle : @fs.File? = None
   let base : @fs.File? = Some(@fs.open(file_path, mode=@fs.ReadOnly)) catch {
@@ -1614,6 +1627,9 @@ async fn serve_static_file(
     cache_key=file_path,
     gzip=serving_gzip,
   )
+  // `Context::no_etag` suppresses the generated static validator but keeps an
+  // explicit one supplied by middleware or the handler.
+  let generated_etag = if auto_etag { etag } else { "" }
   let etag_key = header_etag
   let last_modified_key = header_last_modified
   let cache_control_key = header_cache_control
@@ -1622,7 +1638,7 @@ async fn serve_static_file(
   // actually carries, matching `send_file_response`.
   let effective_etag = match get_header_ignore_case(extra_headers, "ETag") {
     Some(value) => value
-    None => etag
+    None => generated_etag
   }
   let effective_mtime = match
     get_header_ignore_case(extra_headers, "Last-Modified") {
@@ -1646,7 +1662,9 @@ async fn serve_static_file(
       // seeded for a body response must not leak into it.
       headers.remove(header_content_type)
       headers.remove(header_content_length)
-      set_header_if_absent(headers, etag_key, etag)
+      if generated_etag != "" {
+        set_header_if_absent(headers, etag_key, generated_etag)
+      }
       set_header_if_absent(headers, last_modified_key, last_modified)
       if cache_control != "" {
         set_header_if_absent(headers, cache_control_key, cache_control)
@@ -1699,7 +1717,9 @@ async fn serve_static_file(
         "/" +
         size.to_string(),
       )
-      set_header_if_absent(headers, etag_key, etag)
+      if generated_etag != "" {
+        set_header_if_absent(headers, etag_key, generated_etag)
+      }
       set_header_if_absent(headers, last_modified_key, last_modified)
       headers.set(accept_ranges_key, "bytes")
       if cache_control != "" {
@@ -1716,7 +1736,9 @@ async fn serve_static_file(
       let headers = static_base_headers(extra_headers, cookies, 5)
       set_header_if_absent(headers, content_type_key, content_type_value)
       headers.set(content_length_key, size.to_string())
-      set_header_if_absent(headers, etag_key, etag)
+      if generated_etag != "" {
+        set_header_if_absent(headers, etag_key, generated_etag)
+      }
       set_header_if_absent(headers, last_modified_key, last_modified)
       headers.set(accept_ranges_key, "bytes")
       if cache_control != "" {
@@ -1866,10 +1888,19 @@ async fn handle_static(
       !mount.index.is_empty(),
       ctx.response.headers,
       ctx.response.cookies,
+      auto_etag=response_file_etag_enabled(ctx),
     )
   } else {
     match ctx.file_response() {
-      Some(file) => send_file_response(conn, ctx.response, file, head, request)
+      Some(file) =>
+        send_file_response(
+          conn,
+          ctx.response,
+          file,
+          head,
+          request,
+          auto_etag=response_file_etag_enabled(ctx),
+        )
       None => {
         let (input, allows_not_modified) = precondition_input_http(request)
         let (failed, remaining) = precheck_preconditions(
@@ -1907,7 +1938,7 @@ async fn build_response(
   request : @http.Request,
   body : &@io.Reader,
   conn : @http.ServerConnection,
-) -> (Response, FileResponse?) {
+) -> (Response, FileResponse?, Bool) {
   let (req, raw_body) = request_from_http(request, body, app.max_body_size)
   let ctx = app.context_for_request(req)
   attach_raw_body(ctx, raw_body)
@@ -1921,8 +1952,9 @@ async fn build_response(
     err => internal_error(ctx, "\{err}")
   }
   let file = ctx.file_response()
+  let auto_etag = response_file_etag_enabled(ctx)
   finalize_dynamic_response(app, request, ctx)
-  (ctx.response, file)
+  (ctx.response, file, auto_etag)
 }
 
 ///|
@@ -2269,7 +2301,7 @@ async fn handle_request(
       None => ()
     }
   }
-  let (response, file) = if app.timeout > 0 {
+  let (response, file, auto_etag) = if app.timeout > 0 {
     @async.with_timeout(app.timeout, () => {
       build_response(app, request, body, conn)
     }) catch {
@@ -2317,6 +2349,7 @@ async fn handle_request(
         head,
         request,
         connect=request.meth is @http.Connect,
+        auto_etag~,
       )
     None =>
       send_response(
