@@ -64,13 +64,19 @@ fn Session::csrf_clear(self : Session, key : String) -> Bool {
 /// `Context::session_regenerate` performs this rotation automatically for the
 /// default token key. Call this helper directly when using a custom `key` (or
 /// when a privilege change happens without rotating the session id). Returns
-/// whether a token was actually removed.
+/// whether a token was actually removed; a destroyed session refuses the
+/// change because it will not be persisted.
 pub fn Context::csrf_rotate(
   self : Context,
   key~ : String = CSRF_TOKEN_KEY,
 ) -> Bool {
   match self.session() {
-    Some(session) => session.csrf_clear(key)
+    Some(session) =>
+      if session.destroyed {
+        false
+      } else {
+        session.csrf_clear(key)
+      }
     None => false
   }
 }

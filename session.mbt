@@ -553,20 +553,25 @@ fn session_parse_json_into_cache(
 }
 
 ///|
-/// Remove a key from the session. Returns whether the key was present.
+/// Remove a key from the session. Returns whether the key was present and the
+/// change can still be saved; a destroyed session refuses further changes.
 pub fn Context::session_remove(self : Context, key : String) -> Bool {
   match self.session_materialized() {
     Some(session) =>
-      match session.data.remove_and_get(key) {
-        Some(_) => {
-          match session.json_cache {
-            Some(cache) => ignore(cache.remove(key))
-            None => ()
+      if session.destroyed {
+        false
+      } else {
+        match session.data.remove_and_get(key) {
+          Some(_) => {
+            match session.json_cache {
+              Some(cache) => ignore(cache.remove(key))
+              None => ()
+            }
+            session.modified = true
+            true
           }
-          session.modified = true
-          true
+          None => false
         }
-        None => false
       }
     None => false
   }
@@ -576,20 +581,23 @@ pub fn Context::session_remove(self : Context, key : String) -> Bool {
 /// Remove every value from the session, including stored and queued flash
 /// messages, while keeping the session itself alive. The empty session is
 /// saved after the handler returns. Returns `false` when the request has no
-/// session.
+/// session or the session was destroyed.
 pub fn Context::session_clear(self : Context) -> Bool {
   match self.session_materialized() {
-    Some(session) => {
-      session.data.clear()
-      session.flash_pending = None
-      session.flash_pending_bytes = 0
-      match session.json_cache {
-        Some(cache) => cache.clear()
-        None => ()
+    Some(session) =>
+      if session.destroyed {
+        false
+      } else {
+        session.data.clear()
+        session.flash_pending = None
+        session.flash_pending_bytes = 0
+        match session.json_cache {
+          Some(cache) => cache.clear()
+          None => ()
+        }
+        session.modified = true
+        true
       }
-      session.modified = true
-      true
-    }
     None => false
   }
 }
