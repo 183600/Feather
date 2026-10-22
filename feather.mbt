@@ -2309,12 +2309,19 @@ pub fn Context::body_bytes(self : Context) -> Bytes {
 
 ///|
 pub fn Context::json_body(self : Context) -> Json raise HttpError {
+  // RFC 8259 requires UTF-8. Decode the exact request bytes rather than the
+  // lossy `Request::body` text so invalid byte sequences are rejected instead
+  // of quietly becoming U+FFFD and changing the document.
+  let bytes = self.body_bytes()
+  let text = @utf8.decode(bytes) catch {
+    @utf8.Malformed(_) => raise HttpError(400, "invalid JSON body")
+  }
   // RFC 8259 allows parsers to ignore a leading UTF-8 BOM, which otherwise
   // arrives as U+FEFF and makes an otherwise valid document fail to parse.
-  let body = if self.request.body.has_prefix("\u{FEFF}") {
-    self.request.body[1:].to_owned()
+  let body = if text.has_prefix("\u{FEFF}") {
+    text[1:].to_owned()
   } else {
-    self.request.body
+    text
   }
   @json.parse(body) catch {
     _ => raise HttpError(400, "invalid JSON body")
