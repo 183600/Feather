@@ -1673,6 +1673,22 @@ async fn serve_static_file(
           return
         }
         let location = append_trailing_slash(request.path)
+        // The redirect target may already be the requested path when the
+        // resolved index is itself a directory (for example a directory named
+        // `index.html`). Redirecting there would loop forever, so report the
+        // missing file instead.
+        if location == request.path {
+          send_static_error(
+            conn,
+            extra_headers,
+            cookies,
+            head,
+            404,
+            "404 Not Found",
+            precompressed,
+          )
+          return
+        }
         let headers = static_base_headers(extra_headers, cookies, 1)
         headers.remove(header_content_type)
         headers.set(header_location, location)
@@ -1753,10 +1769,17 @@ async fn serve_static_file(
     effective_cache_control.view(),
     "no-transform".view(),
   )
+  // Middleware may override the file's media type, and compression depends on
+  // the representation's actual type, not the extension-derived default.
+  let effective_content_type = match
+    get_header_ignore_case(extra_headers, "Content-Type") {
+    Some(value) => value
+    None => content_type_value
+  }
   let dynamic_eligible = !serving_gzip &&
     compress_enabled &&
     !no_transform &&
-    content_type_is_compressible(content_type_value.view())
+    content_type_is_compressible(effective_content_type.view())
   if dynamic_eligible {
     match accept_encoding {
       Some(value) =>
@@ -1820,6 +1843,20 @@ async fn serve_static_file(
   } else {
     ""
   }
+  // A gzipped body is only weakly equivalent to the source file when the
+  // framework produced it by transforming that file. Weaken a middleware-
+  // supplied strong validator in that case, matching the dynamic compression
+  // stage, so it cannot be reused for the identity bytes. A precompressed
+  // sibling also selects a different representation, so the same rule applies.
+  if serving_selected_gzip {
+    match get_header_ignore_case(extra_headers, "ETag") {
+      Some(value) =>
+        if !value.has_prefix("W/") {
+          set_header_ignore_case(extra_headers, "ETag", "W/" + value)
+        }
+      None => ()
+    }
+  }
   let etag_key = header_etag
   let last_modified_key = header_last_modified
   let cache_control_key = header_cache_control
@@ -1842,7 +1879,14 @@ async fn serve_static_file(
   match evaluate_preconditions(request, effective_etag, effective_mtime, true) {
     PreconditionFailed => {
       send_static_error(
-        conn, extra_headers, cookies, head, 412, "412 Precondition Failed", precompressed,
+        conn,
+        extra_headers,
+        cookies,
+        head,
+        412,
+        "412 Precondition Failed",
+        precompressed,
+        vary_encoding=vary_encoding,
       )
       return
     }
@@ -1967,6 +2011,13 @@ async fn serve_static_file(
 /// Context state key the static middleware chain sets when the request falls
 /// through to the file.
 const STATIC_CHAIN_PASS_KEY : String = "__feather_static_pass"
+
+///|
+/// Extra budget for static requests before a very small request timeout fires,
+/// so opening and statting the file cannot abort before the status line is
+/// written. The body transfer itself remains subject to the configured
+/// timeout.
+const STATIC_TIMEOUT_HEADROOM : Int32 = 50
 
 ///|
 /// How long a graceful shutdown keeps serving (answering `503`) after all
@@ -2108,6 +2159,11 @@ async fn handle_static(
       compress_min_size=min_size,
     )
   } else {
+    // The middleware chain produced a complete response (or an error), and the
+    // branch below writes it under the request timeout. Mark the response as
+    // started before the first write so a late timeout closes the connection
+    // instead of trying to send a second response on it.
+    response_started.val = true
     match ctx.file_response() {
       Some(file) =>
         send_file_response(
@@ -2497,7 +2553,17 @@ async fn handle_request(
           // response state machine.
           let response_started = Ref(false)
           if app.timeout > 0 {
-            @async.with_timeout(app.timeout, () => {
+            // Opening and statting a file can occasionally take longer than a
+            // very small timeout, which would otherwise abort before the status
+            // line is written. Give static responses a little headroom so they
+            // can commit the header; the body transfer is still bounded.
+            let static_timeout = if app.timeout >
+              2147483647 - STATIC_TIMEOUT_HEADROOM {
+              app.timeout
+            } else {
+              app.timeout + STATIC_TIMEOUT_HEADROOM
+            }
+            @async.with_timeout(static_timeout, () => {
               handle_static(
                 app, request, body, conn, file_path, cache_control, precompressed, mount,
                 head,
