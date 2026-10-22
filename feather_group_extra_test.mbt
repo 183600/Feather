@@ -212,3 +212,20 @@ test "feather facade mounts applications with outer middleware" {
   assert_eq(response.body, "ok")
   assert_eq(response.headers.get("X-Outer"), Some("on"))
 }
+
+///|
+test "group prefixes ignore query and fragment suffixes" {
+  let app = @feather.App::new()
+  let api = app.group("/api?x=1#frag")
+  ignore(api.get("/ping", fn(ctx) { ctx.text(200, "pong") }))
+  assert_true(app.has_route("GET", "/api/ping"))
+  assert_eq(app.routes(), [("GET", "/api/ping")])
+  let response = app.respond({
+    method: "GET",
+    path: "/api/ping",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "pong")
+}

@@ -7719,7 +7719,7 @@ pub fn parse_byte_range(value : String, total : Int64) -> ByteRange {
 
 ///|
 fn normalize_prefix(prefix : String) -> String {
-  let view = prefix.view()
+  let view = clean_path_view(prefix)
   let builder = StringBuilder(size_hint=view.length() + 1)
   let mut has_segment = false
   for segment in view.split("/") {
