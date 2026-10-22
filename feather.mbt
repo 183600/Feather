@@ -8617,10 +8617,11 @@ pub fn Context::fresh(
   if none_match != "" {
     // `If-None-Match` takes precedence over `If-Modified-Since` (RFC 9110
     // §13.1.3), so a present but non-matching tag must not fall back to the
-    // date condition. Without a validator there is nothing for the tag to
-    // match.
+    // date condition. Without a representation ETag only the wildcard can
+    // match: `*` names any existing representation, so it stays true even
+    // when the caller does not have a validator to pass.
     if etag == "" {
-      return false
+      return etag_header_matches(none_match.view(), "")
     }
     return etag_header_matches(none_match.view(), etag)
   }
