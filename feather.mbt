@@ -13245,7 +13245,8 @@ fn cors_middleware(
               max_age.to_string(),
             )
           }
-          if allow_private_network &&
+          if preflight &&
+            allow_private_network &&
             trim_ascii_space(
               ctx.header("Access-Control-Request-Private-Network").view(),
             ).equal_ignore_ascii_case("true".view()) {

@@ -147,4 +147,17 @@ test "cors private network grant is not emitted for ordinary requests" {
     response.headers.get("Access-Control-Allow-Private-Network"),
     None,
   )
+  let plain_options = app.respond({
+    method: "OPTIONS",
+    path: "/me",
+    headers: Map([
+      ("Origin", "https://app.example"),
+      ("Access-Control-Request-Private-Network", "true"),
+    ]),
+    body: "",
+  })
+  assert_eq(
+    plain_options.headers.get("Access-Control-Allow-Private-Network"),
+    None,
+  )
 }
