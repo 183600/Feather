@@ -309,3 +309,19 @@ async test "head describes an sse endpoint without starting it" {
     assert_eq(client.read_all().text(), "")
   })
 }
+
+///|
+test "server-wide OPTIONS includes async endpoints" {
+  let app = @feather.App::new().sse("/events", async fn(_ctx, _sse) { () })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "*",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  let allow = response.headers.get("Allow").unwrap_or("")
+  assert_true(allow.contains("GET"), msg=allow)
+  assert_true(allow.contains("HEAD"), msg=allow)
+  assert_true(allow.contains("OPTIONS"), msg=allow)
+}

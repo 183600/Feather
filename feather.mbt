@@ -1587,6 +1587,40 @@ fn respond_server_options(ctx : Context, router : Router) -> Unit {
 }
 
 ///|
+/// Methods the application can serve at all, including the implicit `GET`
+/// contributed by asynchronous endpoints. Used by the server-wide `OPTIONS *`
+/// reply so it does not over- or under-report when only SSE/WebSocket/stream
+/// routes exist.
+fn App::server_methods(self : App) -> Array[String] {
+  let methods = self.router.registered_methods()
+  if !self.ws_handlers.is_empty() ||
+    !self.sse_handlers.is_empty() ||
+    !self.stream_handlers.is_empty() {
+    if !methods.contains("GET") {
+      methods.push("GET")
+    }
+  }
+  methods
+}
+
+///|
+/// Answer `OPTIONS *` for an application, including async endpoints.
+fn respond_app_server_options(ctx : Context, app : App) -> Unit {
+  let methods = app.server_methods()
+  if methods.is_empty() {
+    let methods = standard_methods()
+    methods.sort()
+    respond_options(ctx, methods)
+  } else {
+    if !methods.contains("OPTIONS") {
+      methods.push("OPTIONS")
+    }
+    methods.sort()
+    respond_options(ctx, methods)
+  }
+}
+
+///|
 pub fn Router::dispatch(self : Router, ctx : Context) -> Unit raise {
   self.dispatch_with(ctx, None)
 }
@@ -10056,7 +10090,13 @@ pub fn App::handle(self : App, ctx : Context) -> Unit raise {
     None => {
       let router = self.router
       let terminal : Handler = fn(ctx) raise {
-        router.dispatch_with(ctx, self.no_route_handler)
+        let meth = normalize_method(ctx.request.method)
+        let clean_path = clean_path_view(ctx.request.path)
+        if meth == "OPTIONS" && clean_path == "*" {
+          respond_app_server_options(ctx, self)
+        } else {
+          router.dispatch_with(ctx, self.no_route_handler)
+        }
       }
       let chain = apply_middleware(self.middlewares, terminal)
       self.chain = Some(chain)
