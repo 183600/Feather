@@ -181,6 +181,11 @@ let app = @feather.App::new()
   .use(@feather.middleware_secure_headers())
 ```
 
+`middleware_logger` writes one line when the response is known; pass
+`with_duration=true` to include elapsed milliseconds, or `skip` with a
+predicate to omit health checks and other noisy requests (the handler still
+runs).
+
 CORS can be limited to a fixed set of origins with
 `middleware_cors_allowlist`, or decided per request with
 `middleware_cors_with`. Both echo the accepted `Origin` and add `Vary: Origin`,

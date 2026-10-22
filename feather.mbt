@@ -11754,12 +11754,28 @@ fn logger_record(
 }
 
 ///|
+/// Middleware that logs one line per request after the response is known.
+///
+/// The default line is `[status] METHOD request-target`; pass
+/// `with_duration=true` to append the elapsed milliseconds. `skip` is evaluated
+/// before the handler, so it can silence health checks or static noise based on
+/// the request, including state established by earlier middleware. Skipped
+/// requests still run normally; only the log line is omitted.
 pub fn middleware_logger(
   log~ : (String) -> Unit = println,
   with_duration~ : Bool = false,
+  skip? : (Context) -> Bool,
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
+      match skip {
+        Some(skip) =>
+          if skip(ctx) {
+            next(ctx)
+            return
+          }
+        None => ()
+      }
       let started = if with_duration { @async.now() } else { 0L }
       next(ctx) catch {
         HttpError(status, message) => {
