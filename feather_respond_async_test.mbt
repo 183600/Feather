@@ -145,6 +145,49 @@ async test "the async offline facade answers conditional requests" {
 }
 
 ///|
+test "the offline facade drops hop-by-hop framing headers" {
+  let app = @feather.App::new().get("/framed", fn(ctx) {
+    ctx.set_header("Transfer-Encoding", "chunked")
+    ctx.set_header("Connection", "keep-alive")
+    ctx.set_header("Keep-Alive", "timeout=5")
+    ctx.text(200, "hi")
+  })
+  let request : @feather.Request = {
+    method: "GET",
+    path: "/framed",
+    headers: Map([]),
+    body: "",
+  }
+  let response = app.respond(request)
+  assert_eq(response.body, "hi")
+  assert_eq(response.headers.get("Transfer-Encoding"), None)
+  assert_eq(response.headers.get("Connection"), None)
+  // `Keep-Alive` is not part of the framework's wire filter, so it survives
+  // exactly like it would on a server response.
+  assert_eq(response.headers.get("Keep-Alive"), Some("timeout=5"))
+}
+
+///|
+async test "the async offline facade drops hop-by-hop framing headers" {
+  let app = @feather.App::new()
+    .compress(min_size=0)
+    .get("/framed", fn(ctx) {
+      ctx.set_header("Transfer-Encoding", "chunked")
+      ctx.set_header("Connection", "close")
+      ctx.text(200, "hello ".repeat(100))
+    })
+  let response = app.respond_async({
+    method: "GET",
+    path: "/framed",
+    headers: Map([("Accept-Encoding", "gzip")]),
+    body: "",
+  })
+  assert_eq(response.headers.get("Content-Encoding"), Some("gzip"))
+  assert_eq(response.headers.get("Transfer-Encoding"), None)
+  assert_eq(response.headers.get("Connection"), None)
+}
+
+///|
 async test "the feather facade runs the async pipeline" {
   let config : @feather.Config = {
     host: "localhost",

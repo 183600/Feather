@@ -9741,6 +9741,16 @@ fn strip_forbidden_body(response : Response) -> Unit {
 }
 
 ///|
+/// Drop hop-by-hop framing headers that belong to a single connection rather
+/// than to the response representation. The server filters the same fields
+/// before handing headers to the HTTP runtime, so the offline facade must not
+/// expose them either.
+fn strip_offline_framing_headers(response : Response) -> Unit {
+  ignore(remove_header_ignore_case(response.headers, "Transfer-Encoding"))
+  ignore(remove_header_ignore_case(response.headers, "Connection"))
+}
+
+///|
 /// Run a request through the application without a server and return the
 /// response.
 ///
@@ -9784,6 +9794,7 @@ pub fn App::respond(self : App, request : Request) -> Response {
     ctx.file_response() is None {
     strip_head_body(ctx.response)
   }
+  strip_offline_framing_headers(ctx.response)
   ctx.response
 }
 
@@ -9845,6 +9856,7 @@ pub async fn App::respond_async(
     ctx.file_response() is None {
     strip_head_body(ctx.response)
   }
+  strip_offline_framing_headers(ctx.response)
   ctx.response
 }
 
