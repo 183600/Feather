@@ -7315,15 +7315,26 @@ fn parse_time_of_day(time : StringView) -> Int64? {
     Some(index) => first_colon + 1 + index
     None => return None
   }
-  let hour = match parse_decimal(time[:first_colon]) {
+  let hour_text = time[:first_colon]
+  let minute_text = time[first_colon + 1:second_colon]
+  let second_text = time[second_colon + 1:]
+  // HTTP-date's time-of-day grammar is fixed-width: `HH:MM:SS`. A one- or
+  // three-digit field is malformed and must be ignored rather than treated as
+  // a validator.
+  if hour_text.length() != 2 ||
+    minute_text.length() != 2 ||
+    second_text.length() != 2 {
+    return None
+  }
+  let hour = match parse_decimal(hour_text) {
     Some(hour) => hour
     None => return None
   }
-  let minute = match parse_decimal(time[first_colon + 1:second_colon]) {
+  let minute = match parse_decimal(minute_text) {
     Some(minute) => minute
     None => return None
   }
-  let second = match parse_decimal(time[second_colon + 1:]) {
+  let second = match parse_decimal(second_text) {
     Some(second) => second
     None => return None
   }

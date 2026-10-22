@@ -25,6 +25,10 @@ test "parse_http_date rejects malformed values" {
   assert_eq(@feather.parse_http_date("Sun, 32 Nov 1994 08:49:37 GMT"), None)
   assert_eq(@feather.parse_http_date("Sun, 06 Foo 1994 08:49:37 GMT"), None)
   assert_eq(@feather.parse_http_date("Sun, 06 Nov 1994 25:49:37 GMT"), None)
+  assert_eq(@feather.parse_http_date("Sun, 06 Nov 1994 8:49:37 GMT"), None)
+  assert_eq(@feather.parse_http_date("Sun, 06 Nov 1994 08:9:37 GMT"), None)
+  assert_eq(@feather.parse_http_date("Sun, 06 Nov 1994 08:49:7 GMT"), None)
+  assert_eq(@feather.parse_http_date("Sun Nov  6 8:49:37 1994"), None)
 }
 
 ///|
