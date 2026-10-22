@@ -596,7 +596,9 @@ async test "static mounts without an index do not redirect directory requests" {
   let dir = @fs.tmpdir(prefix="feather-static-no-index")
   @fs.mkdir(dir + "/guide")
   @fs.write_file(dir + "/app.css", "body { color: red; }")
-  let app = @feather.App::new().static_files("/assets", dir, index="")
+  let app = @feather.App::new()
+    .static_files("/assets", dir, index="")
+    .fallback(fn(ctx) { ctx.text(404, "router fallback") })
   with_server(app, client => {
     for path in ["/assets", "/assets/", "/assets/guide", "/assets/guide/"] {
       let response = client.get(path)
@@ -605,7 +607,7 @@ async test "static mounts without an index do not redirect directory requests" {
         response.headers.get(@http.CaseInsensitiveString("Location")),
         None,
       )
-      ignore(client.read_all())
+      assert_eq(client.read_all().text(), "router fallback")
     }
     let response = client.get("/assets/app.css")
     assert_eq(response.code, 200)

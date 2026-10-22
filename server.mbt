@@ -1246,6 +1246,15 @@ fn decorate_static_headers(
 }
 
 ///|
+/// Report whether `path` currently names a directory. A failed open is not a
+/// directory, so the static handler can still produce the usual 404.
+async fn static_target_is_directory(path : String) -> Bool {
+  let file = @fs.open(path, mode=@fs.ReadOnly) catch { _ => return false }
+  defer file.close()
+  file.kind() is @fs.Directory
+}
+
+///|
 /// Serve a static file, seeding every response with the headers and cookies a
 /// request context accumulated (middleware and handler output), so static
 /// responses carry the same security, CORS and session headers as dynamic
@@ -1915,11 +1924,16 @@ async fn handle_request(
   if static_eligible {
     match app.static_lookup(request.path) {
       Some((file_path, cache_control, precompressed, mount)) => {
-        handle_static(
-          app, request, body, conn, file_path, cache_control, precompressed, mount,
-          head,
-        )
-        return
+        // With no index configured, a slashless directory request must fall
+        // through to the router instead of being statically served (or
+        // redirected), matching the behaviour of trailing-slash requests.
+        if !(mount.index.is_empty() && static_target_is_directory(file_path)) {
+          handle_static(
+            app, request, body, conn, file_path, cache_control, precompressed, mount,
+            head,
+          )
+          return
+        }
       }
       None => ()
     }
