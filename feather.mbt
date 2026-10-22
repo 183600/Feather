@@ -8970,7 +8970,8 @@ pub fn App::respond(self : App, request : Request) -> Response {
       }
     }
   }
-  if ctx.request.method == "HEAD" && ctx.file_response() is None {
+  if ctx.request.method.view().equal_ignore_ascii_case("HEAD".view()) &&
+    ctx.file_response() is None {
     strip_head_body(ctx.response)
   }
   ctx.response
@@ -9027,7 +9028,8 @@ pub async fn App::respond_async(
       }
     }
   }
-  if ctx.request.method == "HEAD" && ctx.file_response() is None {
+  if ctx.request.method.view().equal_ignore_ascii_case("HEAD".view()) &&
+    ctx.file_response() is None {
     strip_head_body(ctx.response)
   }
   ctx.response

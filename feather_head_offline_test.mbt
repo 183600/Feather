@@ -69,6 +69,53 @@ test "offline HEAD falls back to the GET route" {
 }
 
 ///|
+test "offline respond strips lowercase head bodies" {
+  let app = @feather.App::new().get("/hello", fn(ctx) {
+    ctx.text(200, "hello")
+  })
+  let head = app.respond({
+    method: "head",
+    path: "/hello",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(head.status, 200)
+  assert_eq(head.body, "")
+  assert_eq(head.data, None)
+  assert_eq(head.headers.get("Content-Length"), Some("5"))
+}
+
+///|
+async test "offline respond_async strips mixed-case head bodies" {
+  let payload = "feather ".repeat(200)
+  let app = @feather.App::new()
+    .compress(min_size=0)
+    .get("/big", fn(ctx) { ctx.text(200, payload) })
+  let get = app.respond_async({
+    method: "GET",
+    path: "/big",
+    headers: Map([("Accept-Encoding", "gzip")]),
+    body: "",
+  })
+  assert_eq(get.headers.get("Content-Encoding"), Some("gzip"))
+  let compressed_length = get.data.unwrap().length()
+  let head = app.respond_async({
+    method: "Head",
+    path: "/big",
+    headers: Map([("Accept-Encoding", "gzip")]),
+    body: "",
+  })
+  assert_eq(head.status, 200)
+  assert_eq(head.body, "")
+  assert_eq(head.data, None)
+  assert_eq(head.headers.get("Content-Encoding"), Some("gzip"))
+  assert_eq(
+    head.headers.get("Content-Length"),
+    Some(compressed_length.to_string()),
+  )
+}
+
+///|
 async test "offline respond_async strips compressed HEAD bodies" {
   let payload = "feather ".repeat(200)
   let app = @feather.App::new()
