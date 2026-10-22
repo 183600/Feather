@@ -214,8 +214,9 @@ fn status_allows_preconditions(status : Int) -> Bool {
 ///
 /// Preconditions select a representation, so error responses are left
 /// untouched, as are ranged responses, whose `If-Range` handling happens where
-/// the range is computed. Responses that opt out of caching with `no-store`
-/// are treated as unvalidatable.
+/// the range is computed. `Cache-Control: no-store` only forbids storing the
+/// response; it does not disable precondition evaluation, so `If-Match` and
+/// `If-Unmodified-Since` still protect optimistic-concurrency updates.
 fn apply_preconditions_input(
   input : PreconditionInput,
   allows_not_modified : Bool,
@@ -238,13 +239,6 @@ fn apply_preconditions_input(
   let mut mtime_secs : Int64? = None
   if !response.headers.is_empty() {
     let validators = response_validators(response.headers)
-    match validators.cache_control {
-      Some(control) =>
-        if cache_control_has_directive(control.view(), "no-store".view()) {
-          return
-        }
-      None => ()
-    }
     if has_if_match || has_if_none_match {
       etag = match validators.etag {
         Some(existing) => existing
@@ -366,8 +360,8 @@ fn precheck_preconditions(
     response.status == 206 {
     return (false, input)
   }
-  // Requests without any precondition header need no `Cache-Control` check;
-  // the result is `(false, input)` either way.
+  // Requests without any precondition header need no further work; the result
+  // is `(false, input)` either way.
   if !has_precondition_headers(input) {
     return (false, input)
   }
@@ -375,13 +369,6 @@ fn precheck_preconditions(
     return (false, input)
   }
   let validators = response_validators(response.headers)
-  match validators.cache_control {
-    Some(control) =>
-      if cache_control_has_directive(control.view(), "no-store".view()) {
-        return (false, input)
-      }
-    None => ()
-  }
   let response_etag = validators.etag
   let response_mtime = validators.last_modified
   if response_etag is None && response_mtime is None {
