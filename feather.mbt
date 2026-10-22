@@ -6827,7 +6827,6 @@ fn parse_imf_fixdate(view : StringView) -> Int64? {
   }
   if day < 1 ||
     day > days_in_month(year.to_int64(), month) ||
-    year < 1970 ||
     hour > 23 ||
     minute > 59 ||
     second > 60 {
@@ -6837,6 +6836,28 @@ fn parse_imf_fixdate(view : StringView) -> Int64? {
     days_from_civil(year.to_int64(), month, day) * 86400L +
     (hour * 3600 + minute * 60 + second).to_int64(),
   )
+}
+
+///|
+/// The current Gregorian year, used to expand the obsolete two-digit years of
+/// `rfc850-date` values.
+fn http_current_year() -> Int64 {
+  let (year, _, _) = civil_from_days(@async.now() / 86_400_000L)
+  year
+}
+
+///|
+/// Expand an `rfc850-date` two-digit year as RFC 9110 §5.6.7 requires: a
+/// timestamp that would appear more than 50 years in the future is read as the
+/// most recent year in the past with the same last two digits.
+fn expand_two_digit_year(two_digit : Int32) -> Int64 {
+  let current = http_current_year()
+  let candidate = current / 100L * 100L + two_digit.to_int64()
+  if candidate > current + 50L {
+    candidate - 100L
+  } else {
+    candidate
+  }
 }
 
 ///|
@@ -6923,11 +6944,7 @@ fn parse_http_date_view(view : StringView) -> Int64? {
       None => return None
     }
     if year_text.length() == 2 {
-      year = (if parsed_year < 70 {
-        2000 + parsed_year
-      } else {
-        1900 + parsed_year
-      }).to_int64()
+      year = expand_two_digit_year(parsed_year)
     } else if year_text.length() == 4 {
       year = parsed_year.to_int64()
     } else {
@@ -6954,6 +6971,12 @@ fn parse_http_date_view(view : StringView) -> Int64? {
       Some(month) => month
       None => return None
     }
+    // Both the IMF-fixdate and the legacy RFC 1123 form spell the year with
+    // exactly four digits; a longer or zero-padded token is not an HTTP-date
+    // and must not be mistaken for a far-future validator.
+    if parts[3].length() != 4 {
+      return None
+    }
     year = match parse_decimal(parts[3]) {
       Some(year) => year.to_int64()
       None => return None
@@ -6978,12 +7001,15 @@ fn parse_http_date_view(view : StringView) -> Int64? {
       None => return None
     }
     time = parts[3]
+    if parts[4].length() != 4 {
+      return None
+    }
     year = match parse_decimal(parts[4]) {
       Some(year) => year.to_int64()
       None => return None
     }
   }
-  if day < 1 || day > days_in_month(year, month) || year < 1970 {
+  if day < 1 || day > days_in_month(year, month) {
     return None
   }
   let seconds_of_day = match parse_time_of_day(time) {
@@ -9476,7 +9502,7 @@ pub fn middleware_method_override(
   let header_name = header
   fn(next) {
     fn(ctx) raise {
-      if ctx.request.method == "POST" {
+      if ctx.get_method().view().equal_ignore_ascii_case("POST".view()) {
         let value = {
           let from_header = trim_ascii_space(ctx.header(header_name).view())
           if from_header.is_empty() {
@@ -9519,7 +9545,9 @@ fn cors_middleware(
   fn(next) {
     fn(ctx) raise {
       let origin = trim_ascii_space(ctx.header("Origin").view()).to_owned()
-      let is_options = ctx.request.method == "OPTIONS"
+      let is_options = ctx.get_method().view().equal_ignore_ascii_case(
+        "OPTIONS".view(),
+      )
       let (allowed_origin, dynamic_origin) = match policy {
         CorsOriginFixed(value) =>
           if value != "*" {
@@ -10330,5 +10358,5 @@ pub fn Feather::static_cache_control_for(
 
 ///|
 pub fn Feather::validate_body_size(self : Feather, body : String) -> Bool {
-  utf8_byte_length(body.view()) <= self.app.max_body_size
+  utf8_byte_length_lossy(body.view()) <= self.app.max_body_size
 }

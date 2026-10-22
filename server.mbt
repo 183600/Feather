@@ -746,6 +746,37 @@ fn utf8_byte_length(view : StringView) -> Int32 {
 }
 
 ///|
+/// UTF-8 byte length of the text `encode_utf8_lossy` would produce: a valid
+/// surrogate pair counts as four bytes and every other lone surrogate as the
+/// three bytes of U+FFFD. Unlike `utf8_byte_length` this never aborts, so it
+/// can size an arbitrary caller-supplied string.
+fn utf8_byte_length_lossy(view : StringView) -> Int32 {
+  let length = view.length()
+  let mut total = 0
+  let mut i = 0
+  while i < length {
+    let unit = view.unsafe_get(i)
+    let code = unit.to_int()
+    if code < 0x80 {
+      total = total + 1
+    } else if code < 0x800 {
+      total = total + 2
+    } else if unit.is_leading_surrogate() {
+      if i + 1 < length && view.unsafe_get(i + 1).is_trailing_surrogate() {
+        total = total + 4
+        i = i + 1
+      } else {
+        total = total + 3
+      }
+    } else {
+      total = total + 3
+    }
+    i = i + 1
+  }
+  total
+}
+
+///|
 /// Bounded cache of `CaseInsensitiveString` header keys.
 let header_name_cache : Map[String, @http.CaseInsensitiveString] = Map([])
 
@@ -1535,6 +1566,22 @@ async fn handle_static(
   head : Bool,
 ) -> Unit {
   if app.middlewares.length() == 0 && mount.middlewares.length() == 0 {
+    // The middleware-free fast path skips `request_from_http`, but the body
+    // still has to be consumed under the application-wide limit: a static
+    // request must not smuggle an unbounded body past `App::max_body_size`
+    // just because no handler ever asks for it.
+    ignore(
+      read_body_bytes(body, app.max_body_size) catch {
+        PayloadTooLarge => {
+          send_error_and_close(conn, 413, "413 Payload Too Large", head)
+          return
+        }
+        _ => {
+          send_error_and_close(conn, 500, "500 Internal Server Error", head)
+          return
+        }
+      },
+    )
     serve_static_file(
       conn,
       file_path,
