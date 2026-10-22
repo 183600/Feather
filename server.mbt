@@ -749,7 +749,7 @@ async fn send_file_response(
   if !headers.contains(header_accept_ranges) {
     headers.set(header_accept_ranges, "bytes")
   }
-  let body_allowed = status != 204 && status != 205 && status != 304
+  let body_allowed = status_allows_body(status)
   if body_allowed {
     headers.set(header_content_length, length.to_string())
   } else {
