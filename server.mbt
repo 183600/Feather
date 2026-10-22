@@ -2006,6 +2006,11 @@ fn static_redirect_headers(
   headers.remove(header_etag)
   headers.remove(header_last_modified)
   headers.remove(header_content_disposition)
+  // A redirect has no body, so its length is always zero. Set it explicitly
+  // instead of relying on the runtime's automatic framing: the runtime emits
+  // that zero length for GET but suppresses it for HEAD, which would make a
+  // HEAD redirect disagree with the matching GET.
+  headers.set(header_content_length, "0")
   headers.set(header_location, location)
   headers
 }
