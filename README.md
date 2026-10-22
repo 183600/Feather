@@ -22,8 +22,8 @@ long-term design notes are in [PLAN.md](PLAN.md).
 - **Middleware** – CORS, request logging, panic recovery, request IDs,
   rate limiting, basic and bearer auth, CSRF, secure headers, HTTPS redirect,
   method override, sessions, and a problem-details error handler.
-- **Context** – path/query/form/multipart access, typed query and param
-  helpers, JSON bodies, text/HTML/JSON/bytes responses, files and downloads,
+- **Context** – path/query/form/multipart access, typed query/param/form
+  helpers (including integers, booleans, and finite floats), JSON bodies, text/HTML/JSON/bytes responses, files and downloads,
   cookies (including signed cookies), flash messages, content negotiation,
   conditional requests (ETag / `If-None-Match` / `If-Modified-Since`), range
   requests, gzip response compression, and cache-control helpers.

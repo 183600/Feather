@@ -3555,6 +3555,54 @@ pub fn Context::query_bool(self : Context, name : String) -> Bool? {
 }
 
 ///|
+/// Parse a finite decimal floating-point value, rejecting malformed input and
+/// the non-finite spellings (`nan`, `inf`, `-inf`) that JSON cannot represent.
+fn parse_float_value(value : StringView) -> Double? {
+  if value.is_empty() {
+    return None
+  }
+  let parsed = @string.parse_double(value) catch { _ => return None }
+  if parsed.is_nan() || parsed.is_inf() {
+    None
+  } else {
+    Some(parsed)
+  }
+}
+
+///|
+/// The route parameter `name` parsed as a finite floating-point number.
+pub fn Context::param_float(self : Context, name : String) -> Double? {
+  parse_float_value(self.param(name).view())
+}
+
+///|
+/// The query parameter `name` parsed as a finite floating-point number.
+pub fn Context::query_float(self : Context, name : String) -> Double? {
+  parse_float_value(self.query(name).view())
+}
+
+///|
+/// The url-encoded form field `name` parsed as an integer. Returns `None`
+/// when the request body is not a form, the field is absent, or the value is
+/// not a valid 32-bit integer.
+pub fn Context::form_int(self : Context, name : String) -> Int32? {
+  parse_int_value(self.form(name).view())
+}
+
+///|
+/// The url-encoded form field `name` parsed as a boolean. Accepts the same
+/// spellings as `Context::query_bool` (`true`/`false` and `1`/`0`).
+pub fn Context::form_bool(self : Context, name : String) -> Bool? {
+  parse_bool_value(self.form(name).view())
+}
+
+///|
+/// The url-encoded form field `name` parsed as a finite floating-point number.
+pub fn Context::form_float(self : Context, name : String) -> Double? {
+  parse_float_value(self.form(name).view())
+}
+
+///|
 pub fn Context::set_json(self : Context, key : String, value : Json) -> Unit {
   self.json_state.set(key, value)
 }

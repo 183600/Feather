@@ -270,7 +270,10 @@ pub fn Context::flash_peek(Self, category? : String) -> Array[String]
 pub fn Context::flash_take(Self, category? : String) -> Array[String]
 pub fn Context::flash_take_all(Self) -> Map[String, Array[String]]
 pub fn Context::form(Self, String) -> String
+pub fn Context::form_bool(Self, String) -> Bool?
 pub fn Context::form_default(Self, String, String) -> String
+pub fn Context::form_float(Self, String) -> Double?
+pub fn Context::form_int(Self, String) -> Int32?
 pub fn Context::form_map(Self) -> Map[String, String]
 pub fn Context::form_values(Self, String) -> Array[String]
 pub fn Context::forwarded_authority(Self) -> String
@@ -309,6 +312,7 @@ pub fn Context::not_modified(Self, etag? : String, last_modified? : String) -> U
 pub fn Context::param(Self, String) -> String
 pub fn Context::param_bool(Self, String) -> Bool?
 pub fn Context::param_decoded(Self, String) -> String
+pub fn Context::param_float(Self, String) -> Double?
 pub fn Context::param_int(Self, String) -> Int32?
 pub fn Context::params(Self) -> Map[String, String]
 pub fn Context::preferred_encoding(Self, ArrayView[String]) -> String?
@@ -320,6 +324,7 @@ pub fn Context::queries(Self) -> Map[String, String]
 pub fn Context::query(Self, String) -> String
 pub fn Context::query_bool(Self, String) -> Bool?
 pub fn Context::query_default(Self, String, String) -> String
+pub fn Context::query_float(Self, String) -> Double?
 pub fn Context::query_int(Self, String) -> Int32?
 pub fn Context::query_values(Self, String) -> Array[String]
 pub fn Context::redirect(Self, Int32, String) -> Unit
