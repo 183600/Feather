@@ -115,3 +115,39 @@ test "session_touch persists a new deadline from a handler" {
     None => fail("expected the touched session to stay in the store")
   }
 }
+
+///|
+test "writing a fixed-lifetime session keeps its deadline and cookie" {
+  let store = @feather.SessionStore::new(ttl=600_000L)
+  let app = @feather.App::new()
+    .use(@feather.middleware_session(store))
+    .get("/seed", fn(ctx) {
+      ignore(ctx.session_set("user", "alice"))
+      ctx.text(200, "seeded")
+    })
+    .get("/write", fn(ctx) {
+      ignore(ctx.session_set("user", "bob"))
+      ctx.text(200, "written")
+    })
+  let seeded = app.respond(rolling_request("/seed"))
+  let id = seeded.cookies[0].value
+  let before = match store.get(id) {
+    Some(session) => {
+      session.expires_at = @async.now() + 1000L
+      session.modified = false
+      session.expires_at
+    }
+    None => fail("expected the seeded session in the store")
+  }
+  let written = app.respond(rolling_request("/write", cookie=id))
+  assert_eq(written.status, 200)
+  // The cookie may be re-sent, but it must not advertise a new server deadline.
+  assert_eq(written.cookies.length(), 1)
+  match store.get(id) {
+    Some(session) => {
+      assert_eq(session.expires_at, before)
+      assert_eq(session.data.get("user"), Some("bob"))
+    }
+    None => fail("expected the fixed-lifetime session in the store")
+  }
+}

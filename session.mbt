@@ -249,10 +249,11 @@ pub fn SessionStore::get(self : SessionStore, id : String) -> Session? {
 }
 
 ///|
-/// Store a session, refreshing its expiry to `ttl` from now.
-pub fn SessionStore::save(self : SessionStore, session : Session) -> Unit {
+/// Store a session without changing its expiry. Used by `middleware_session`,
+/// which must keep a fixed lifetime unless `rolling` or `session_touch` asked
+/// for a refresh.
+fn SessionStore::store(self : SessionStore, session : Session) -> Unit {
   let now = @async.now()
-  session.expires_at = session_expiry(now, self.ttl)
   if !self.sessions.contains(session.id) {
     if self.sessions.length() >= SESSION_STORE_MAX_SESSIONS {
       // The throttle may have skipped the sweep even though expired sessions
@@ -266,6 +267,18 @@ pub fn SessionStore::save(self : SessionStore, session : Session) -> Unit {
     }
   }
   self.sessions.set(session.id, session)
+}
+
+///|
+/// Store a session, refreshing its expiry to `ttl` from now.
+///
+/// This is the explicit "write and renew" entry point. The session middleware
+/// does not call it for ordinary writes, so a session keeps the fixed lifetime
+/// it was created with unless `rolling=true` or `Context::session_touch()`
+/// asks for a refresh.
+pub fn SessionStore::save(self : SessionStore, session : Session) -> Unit {
+  session.expires_at = session_expiry(@async.now(), self.ttl)
+  self.store(session)
 }
 
 ///|
@@ -603,6 +616,14 @@ pub fn Context::session_regenerate(self : Context) -> Bool {
     Some(session) => {
       ignore(session.csrf_clear(CSRF_TOKEN_KEY))
       session.regenerate = true
+      // Rotation is an explicit privilege-change operation, so it also renews
+      // the lifetime rather than carrying the old deadline to the new id.
+      let ttl = match self.state.get(SESSION_TTL_STATE_KEY) {
+        Some(text) => session_ttl_from_text(text)
+        None => DEFAULT_SESSION_TTL
+      }
+      session.expires_at = session_expiry(@async.now(), ttl)
+      session.modified = true
       true
     }
     None => false
@@ -683,7 +704,9 @@ fn session_persist(
         }
         session.regenerate = false
         if session.modified || rotated is Some(_) {
-          store.save(session)
+          // Keep the existing deadline for an ordinary write: a fixed-lifetime
+          // session must not slide just because its data changed.
+          store.store(session)
           session_send_cookie(ctx, config, session.id, config.max_age)
         }
       }
