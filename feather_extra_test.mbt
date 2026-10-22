@@ -172,6 +172,29 @@ test "Context multipart helpers ignore other content types" {
   })
   assert_eq(ctx.multipart().length(), 0)
   assert_eq(ctx.multipart_value("a"), "")
+  assert_eq(ctx.multipart_values("a").length(), 0)
+  assert_eq(ctx.multipart_files("a").length(), 0)
+}
+
+///|
+test "Context multipart collection helpers keep repeated fields in order" {
+  let ctx = @feather.Context::new({
+    method: "POST",
+    path: "/upload",
+    headers: { "Content-Type": "multipart/form-data; boundary=multi" },
+    body: "--multi\r\nContent-Disposition: form-data; name=\"tag\"\r\n\r\none\r\n--multi\r\nContent-Disposition: form-data; name=\"tag\"\r\n\r\ntwo\r\n--multi\r\nContent-Disposition: form-data; name=\"doc\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nalpha\r\n--multi\r\nContent-Disposition: form-data; name=\"doc\"; filename=\"b.txt\"\r\nContent-Type: text/plain\r\n\r\nbeta\r\n--multi--\r\n",
+  })
+  assert_eq(ctx.multipart_values("tag"), ["one", "two"])
+  assert_eq(ctx.multipart_values("doc").length(), 0)
+  assert_eq(ctx.multipart_values("missing").length(), 0)
+  let files = ctx.multipart_files("doc")
+  assert_eq(files.length(), 2)
+  assert_eq(files[0].filename, "a.txt")
+  assert_eq(files[0].data, "alpha")
+  assert_eq(files[1].filename, "b.txt")
+  assert_eq(files[1].data, "beta")
+  assert_eq(ctx.multipart_files("tag").length(), 0)
+  assert_eq(ctx.multipart_files("missing").length(), 0)
 }
 
 ///|

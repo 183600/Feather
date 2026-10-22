@@ -306,7 +306,9 @@ pub fn[T : ToJson] Context::json_of(Self, Int32, T) -> Unit
 pub fn Context::json_value(Self, Int32, Json) -> Unit
 pub fn Context::multipart(Self) -> Array[MultipartPart]
 pub fn Context::multipart_file(Self, String) -> MultipartPart?
+pub fn Context::multipart_files(Self, String) -> Array[MultipartPart]
 pub fn Context::multipart_value(Self, String) -> String
+pub fn Context::multipart_values(Self, String) -> Array[String]
 pub fn Context::new(Request) -> Self
 pub fn Context::no_cache(Self) -> Unit
 pub fn Context::no_compress(Self) -> Unit

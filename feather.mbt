@@ -6364,6 +6364,50 @@ pub fn Context::multipart_file(self : Context, name : String) -> MultipartPart? 
 }
 
 ///|
+/// Every text field named `name`, in the order the parts appear in the body.
+/// File parts with the same name are skipped; use `multipart_files` for those.
+/// Returns an empty array when the request is not multipart or carries no such
+/// field.
+pub fn Context::multipart_values(
+  self : Context,
+  name : String,
+) -> Array[String] {
+  let values : Array[String] = []
+  match self.multipart_entries() {
+    Some(parts) =>
+      for part in parts {
+        if part.filename == "" && part.name == name {
+          values.push(part.data)
+        }
+      }
+    None => ()
+  }
+  values
+}
+
+///|
+/// Every uploaded file named `name`, in the order the parts appear in the body.
+/// Each returned part owns a copy of its header map, so callers may mutate the
+/// result without disturbing the parse cache. Returns an empty array when the
+/// request is not multipart or carries no such file.
+pub fn Context::multipart_files(
+  self : Context,
+  name : String,
+) -> Array[MultipartPart] {
+  let files : Array[MultipartPart] = []
+  match self.multipart_entries() {
+    Some(parts) =>
+      for part in parts {
+        if part.name == name && part.filename != "" {
+          files.push(copy_multipart_part(part))
+        }
+      }
+    None => ()
+  }
+  files
+}
+
+///|
 pub fn status_text(code : Int32) -> String {
   match code {
     100 => "Continue"
