@@ -870,7 +870,7 @@ async fn send_response(
   } else {
     match response.data {
       Some(data) => Some(data)
-      None => Some(@utf8.encode(response.body))
+      None => Some(encode_utf8_lossy(response.body.view()))
     }
   }
   if has_body {
@@ -882,7 +882,7 @@ async fn send_response(
       None =>
         match response.data {
           Some(data) => data.length()
-          None => utf8_byte_length(response.body.view())
+          None => utf8_byte_length_lossy(response.body.view())
         }
     }
     headers.set(header_content_length, body_length.to_string())
@@ -921,7 +921,7 @@ async fn send_simple(
   body : String,
   head : Bool,
 ) -> Unit {
-  let bytes = @utf8.encode(body)
+  let bytes = encode_utf8_lossy(body.view())
   let headers : @http.Headers = Map([
     (header_content_type, "text/plain; charset=utf-8"),
     (header_content_length, bytes.length().to_string()),
@@ -1260,7 +1260,7 @@ async fn send_static_error(
   body : String,
   precompressed : Bool,
 ) -> Unit {
-  let bytes = @utf8.encode(body)
+  let bytes = encode_utf8_lossy(body.view())
   let headers = static_base_headers(extra_headers, cookies, 2)
   // The error body is plain text, not the representation a middleware may have
   // prepared for a file response.

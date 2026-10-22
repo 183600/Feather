@@ -120,7 +120,7 @@ fn apply_etag(response : Response) -> Unit {
       if response.body.is_empty() {
         return
       } else {
-        let encoded = @utf8.encode(response.body)
+        let encoded = encode_utf8_lossy(response.body.view())
         response.body = ""
         response.data = Some(encoded)
         encoded

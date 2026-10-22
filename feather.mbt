@@ -9106,7 +9106,7 @@ fn strip_head_body(response : Response) -> Unit {
     None => if response.body.is_empty() {
       None
     } else {
-      Some(utf8_byte_length(response.body.view()))
+      Some(utf8_byte_length_lossy(response.body.view()))
     }
   }
   if body_allowed {
@@ -9125,6 +9125,25 @@ fn strip_head_body(response : Response) -> Unit {
   }
   response.body = ""
   response.data = None
+}
+
+///|
+/// Whether an HTTP status allows a message body. `1xx`, `204`, `205` and `304`
+/// responses must not carry one.
+fn status_allows_body(status : Int32) -> Bool {
+  status >= 200 && status != 204 && status != 205 && status != 304
+}
+
+///|
+/// Drop any prepared body from a response whose status forbids one, keeping the
+/// headers a handler or middleware set so the offline facade matches what the
+/// server would put on the wire.
+fn strip_forbidden_body(response : Response) -> Unit {
+  if !status_allows_body(response.status) {
+    response.body = ""
+    response.data = None
+    ignore(remove_header_ignore_case(response.headers, "Content-Length"))
+  }
 }
 
 ///|
@@ -9164,6 +9183,7 @@ pub fn App::respond(self : App, request : Request) -> Response {
       }
     }
   }
+  strip_forbidden_body(ctx.response)
   if ctx.request.method.view().equal_ignore_ascii_case("HEAD".view()) &&
     ctx.file_response() is None {
     strip_head_body(ctx.response)
@@ -9222,6 +9242,7 @@ pub async fn App::respond_async(
       }
     }
   }
+  strip_forbidden_body(ctx.response)
   if ctx.request.method.view().equal_ignore_ascii_case("HEAD".view()) &&
     ctx.file_response() is None {
     strip_head_body(ctx.response)

@@ -313,7 +313,7 @@ async fn compress_response(
       if response.body.is_empty() {
         return
       } else {
-        @utf8.encode(response.body)
+        encode_utf8_lossy(response.body.view())
       }
   }
   if body_bytes.length() < min_size {

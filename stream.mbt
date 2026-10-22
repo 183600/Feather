@@ -93,7 +93,7 @@ async fn Stream::start(self : Stream) -> Unit {
 /// chunk is flushed immediately so clients observe data as it is produced.
 /// Writing after `close` is a no-op.
 pub async fn Stream::write(self : Stream, data : String) -> Unit {
-  self.write_bytes(@utf8.encode(data))
+  self.write_bytes(encode_utf8_lossy(data.view()))
 }
 
 ///|
