@@ -135,6 +135,11 @@ let path = app.url_for("user", params={ "id": "42" })
 `Context::route_name()` reports that registered name from a handler or
 middleware, so logs and metrics can group requests by named route.
 
+`app.routes()` lists ordinary `(method, path)` routes. `app.endpoints()`
+returns the same routes plus WebSocket, SSE, streaming and static registrations
+(`EndpointKind`), including endpoints contributed by mounted applications, for
+startup logging or generated API documentation.
+
 ## Middleware
 
 Middleware has the shape `(Handler) -> Handler` and can be installed globally

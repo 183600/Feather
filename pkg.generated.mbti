@@ -172,6 +172,7 @@ pub fn App::all(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::compress(Self, min_size? : Int32) -> Self
 pub fn App::connect(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::delete(Self, String, (Context) -> Unit raise) -> Self
+pub fn App::endpoints(Self) -> Array[Endpoint]
 pub fn App::etag(Self) -> Self
 pub fn App::fallback(Self, (Context) -> Unit raise) -> Self
 pub fn App::get(Self, String, (Context) -> Unit raise) -> Self
@@ -386,6 +387,20 @@ pub fn Context::vary(Self, String) -> Unit
 pub fn Context::wants_json(Self) -> Bool
 pub fn Context::wants_problem_details(Self) -> Bool
 
+pub(all) struct Endpoint {
+  method : String
+  path : String
+  kind : EndpointKind
+}
+
+pub(all) enum EndpointKind {
+  EndpointRoute
+  EndpointWebSocket
+  EndpointSse
+  EndpointStream
+  EndpointStatic
+}
+
 pub(all) struct Feather {
   config : Config
   app : App
@@ -394,6 +409,7 @@ pub fn Feather::all(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::compress(Self, min_size? : Int32) -> Self
 pub fn Feather::connect(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::delete(Self, String, (Context) -> Unit raise) -> Self
+pub fn Feather::endpoints(Self) -> Array[Endpoint]
 pub fn Feather::etag(Self) -> Self
 pub fn Feather::fallback(Self, (Context) -> Unit raise) -> Self
 pub fn Feather::get(Self, String, (Context) -> Unit raise) -> Self

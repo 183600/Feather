@@ -9956,8 +9956,100 @@ pub fn App::has_route(self : App, meth : String, path : String) -> Bool {
 ///|
 /// Every HTTP route registered on the application as sorted `(method, path)`
 /// pairs, including routes contributed by mounted applications.
+///
+/// This covers ordinary handlers only. Use `App::endpoints` to include
+/// WebSocket, server-sent events, streaming and static mounts as well.
 pub fn App::routes(self : App) -> Array[(String, String)] {
   self.router.routes()
+}
+
+///|
+/// The kind of endpoint reported by `App::endpoints`.
+pub(all) enum EndpointKind {
+  /// An ordinary handler registered with `get`/`post`/`route`/...
+  EndpointRoute
+  /// A WebSocket upgrade registered with `websocket`.
+  EndpointWebSocket
+  /// A server-sent events handler registered with `sse`.
+  EndpointSse
+  /// A chunked response handler registered with `stream`.
+  EndpointStream
+  /// A static file mount registered with `static_files`.
+  EndpointStatic
+}
+
+///|
+/// One registered endpoint, as reported by `App::endpoints`.
+pub(all) struct Endpoint {
+  method : String
+  path : String
+  kind : EndpointKind
+}
+
+///|
+/// Ordering used to keep endpoints with the same method and path deterministic.
+fn endpoint_kind_rank(kind : EndpointKind) -> Int {
+  match kind {
+    EndpointWebSocket => 0
+    EndpointSse => 1
+    EndpointStream => 2
+    EndpointRoute => 3
+    EndpointStatic => 4
+  }
+}
+
+///|
+/// Append the routes of one async router to `out`. These routers only accept
+/// `GET`, so a mounted or registered path is reported under that method.
+fn collect_async_endpoints(
+  kind : EndpointKind,
+  router : Router,
+  out : Array[Endpoint],
+) -> Unit {
+  for pair in router.routes() {
+    let (meth, path) = pair
+    out.push({ method: meth, path, kind })
+  }
+}
+
+///|
+/// Every registered endpoint, sorted by method, path and kind.
+///
+/// Unlike `App::routes`, this includes WebSocket, server-sent events and
+/// streaming handlers (all reported as `GET`) and static file mounts
+/// (`EndpointStatic`, reported at their mount prefix), including those
+/// contributed by `App::mount`. Useful for startup logging and generated API
+/// documentation. When one method and path has several registrations, the
+/// server's dispatch precedence is WebSocket, SSE, streaming, ordinary route,
+/// then static mount; all registrations are still listed here.
+pub fn App::endpoints(self : App) -> Array[Endpoint] {
+  let out : Array[Endpoint] = []
+  for pair in self.router.routes() {
+    let (meth, path) = pair
+    out.push({ method: meth, path, kind: EndpointRoute })
+  }
+  collect_async_endpoints(EndpointWebSocket, self.ws_router, out)
+  collect_async_endpoints(EndpointSse, self.sse_router, out)
+  collect_async_endpoints(EndpointStream, self.stream_router, out)
+  for mount in self.static_mounts {
+    out.push({
+      method: "GET",
+      path: if mount.url_prefix == "" { "/" } else { mount.url_prefix },
+      kind: EndpointStatic,
+    })
+  }
+  out.sort_by(fn(a, b) {
+    let by_method = a.method.lexical_compare(b.method)
+    if by_method != 0 {
+      return by_method
+    }
+    let by_path = a.path.lexical_compare(b.path)
+    if by_path != 0 {
+      return by_path
+    }
+    endpoint_kind_rank(a.kind) - endpoint_kind_rank(b.kind)
+  })
+  out
 }
 
 ///|
@@ -12272,6 +12364,13 @@ pub async fn Feather::handle_async(
 /// pairs, including routes contributed by mounted applications.
 pub fn Feather::routes(self : Feather) -> Array[(String, String)] {
   self.app.routes()
+}
+
+///|
+/// Every endpoint on the wrapped application, including asynchronous handlers
+/// and static mounts. See `App::endpoints`.
+pub fn Feather::endpoints(self : Feather) -> Array[Endpoint] {
+  self.app.endpoints()
 }
 
 ///|
