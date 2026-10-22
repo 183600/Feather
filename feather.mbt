@@ -190,15 +190,33 @@ pub fn create_router() -> Router {
 ///|
 pub fn Context::new(request : Request) -> Context {
   let normalized_path = normalize_request_target(request.path)
-  let request = if normalized_path == request.path {
-    request
-  } else {
-    {
-      method: request.method,
-      path: normalized_path,
-      headers: request.headers,
-      body: request.body,
+  let authority = absolute_target_authority(request.path)
+  let request = match authority {
+    Some(authority) => {
+      // An absolute-form target names the authority the request was sent to,
+      // which replaces any Host header the client also supplied (RFC 9112
+      // §3.2.2). The server already does this before dispatch; doing it here
+      // keeps the offline `App::respond` facade consistent.
+      let headers = request.headers.copy()
+      set_header_ignore_case(headers, "Host", authority)
+      {
+        method: request.method,
+        path: normalized_path,
+        headers,
+        body: request.body,
+      }
     }
+    None =>
+      if normalized_path == request.path {
+        request
+      } else {
+        {
+          method: request.method,
+          path: normalized_path,
+          headers: request.headers,
+          body: request.body,
+        }
+      }
   }
   {
     request,
