@@ -1201,9 +1201,9 @@ fn static_base_headers(
 }
 
 ///|
-/// Add a validator header only when the response does not already carry one,
-/// so middleware-supplied `ETag` / `Last-Modified` values survive static file
-/// serving just as handler-supplied values survive `send_file_response`.
+/// Add a response header only when the response does not already carry one,
+/// so middleware-supplied representation headers survive static file serving
+/// just as handler-supplied values survive `send_file_response`.
 fn set_header_if_absent(
   headers : @http.Headers,
   name : @http.CaseInsensitiveString,
@@ -1459,7 +1459,7 @@ async fn serve_static_file(
     ByteRangeSpec(start, end) => {
       let length = end - start + 1L
       let headers = static_base_headers(extra_headers, cookies, 6)
-      headers.set(content_type_key, content_type_value)
+      set_header_if_absent(headers, content_type_key, content_type_value)
       headers.set(content_length_key, length.to_string())
       headers.set(
         content_range_key,
@@ -1485,7 +1485,7 @@ async fn serve_static_file(
     }
     ByteRangeFull => {
       let headers = static_base_headers(extra_headers, cookies, 5)
-      headers.set(content_type_key, content_type_value)
+      set_header_if_absent(headers, content_type_key, content_type_value)
       headers.set(content_length_key, size.to_string())
       set_header_if_absent(headers, etag_key, etag)
       set_header_if_absent(headers, last_modified_key, last_modified)

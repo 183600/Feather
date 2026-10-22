@@ -86,16 +86,18 @@ async test "server keeps a custom cache policy on static responses" {
 }
 
 ///|
-async test "static middleware validators override file validators" {
+async test "static middleware representation headers override file headers" {
   let dir = @fs.tmpdir(prefix="feather-static-validators")
   @fs.write_file(dir + "/app.js", "console.log(1)")
   let custom_etag = "\"middleware-v1\""
   let custom_last_modified = "Thu, 01 Jan 1970 00:00:00 GMT"
+  let custom_content_type = "text/x-middleware"
   let app = @feather.App::new().static_files_with("/assets", dir, [
     fn(next) {
       fn(ctx) {
         ctx.set_header("ETag", custom_etag)
         ctx.set_header("Last-Modified", custom_last_modified)
+        ctx.set_header("Content-Type", custom_content_type)
         next(ctx)
       }
     },
@@ -112,6 +114,10 @@ async test "static middleware validators override file validators" {
     assert_eq(
       first.headers.get(last_modified_key),
       Some(custom_last_modified),
+    )
+    assert_eq(
+      first.headers.get(@http.CaseInsensitiveString("Content-Type")),
+      Some(custom_content_type),
     )
     assert_eq(client.read_all().text(), "console.log(1)")
     let not_modified = client.get(
@@ -130,6 +136,10 @@ async test "static middleware validators override file validators" {
     )
     assert_eq(range.code, 206)
     assert_eq(range.headers.get(etag_key), Some(custom_etag))
+    assert_eq(
+      range.headers.get(@http.CaseInsensitiveString("Content-Type")),
+      Some(custom_content_type),
+    )
     assert_eq(client.read_all().text(), "cons")
   })
   @fs.rmdir(dir, recursive=true)
