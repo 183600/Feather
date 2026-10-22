@@ -526,6 +526,7 @@ pub fn RouteGroup::get(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::group(Self, String) -> Self
 pub fn RouteGroup::head(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::mount(Self, String, App) -> Self
+pub fn RouteGroup::mount_with(Self, String, App, Array[((Context) -> Unit raise) -> (Context) -> Unit raise]) -> Self
 pub fn RouteGroup::options(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::patch(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::post(Self, String, (Context) -> Unit raise) -> Self
