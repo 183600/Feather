@@ -1297,9 +1297,12 @@ async fn finalize_dynamic_response(
       ctx.response,
     )
     if !failed {
-      let (compress, min_size) = compression_settings(app, ctx)
-      if compress {
-        compress_response(accept_encoding_of(request), ctx.response, min_size)
+      let accept_encoding = accept_encoding_of(request)
+      if !negotiate_existing_encoding(accept_encoding, ctx.response) {
+        let (compress, min_size) = compression_settings(app, ctx)
+        if compress {
+          compress_response(accept_encoding, ctx.response, min_size)
+        }
       }
       if response_etag_enabled(app, ctx) {
         apply_etag(ctx.response)
@@ -2493,13 +2496,12 @@ async fn handle_static(
           ctx.response,
         )
         if !failed {
-          let (compress, min_size) = compression_settings(app, ctx)
-          if compress {
-            compress_response(
-              accept_encoding_of(request),
-              ctx.response,
-              min_size,
-            )
+          let accept_encoding = accept_encoding_of(request)
+          if !negotiate_existing_encoding(accept_encoding, ctx.response) {
+            let (compress, min_size) = compression_settings(app, ctx)
+            if compress {
+              compress_response(accept_encoding, ctx.response, min_size)
+            }
           }
           if response_etag_enabled(app, ctx) {
             apply_etag(ctx.response)

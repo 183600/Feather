@@ -356,6 +356,37 @@ fn set_not_acceptable(response : Response) -> Unit {
 }
 
 ///|
+/// Validate a `Content-Encoding` supplied by a handler. A non-identity coding
+/// is a selected representation, so it is kept when the client accepts every
+/// listed coding, rejected with 406 otherwise, and always varies on
+/// `Accept-Encoding`. `identity` is removed so the normal compression stage can
+/// decide whether to encode the body.
+///
+/// Returns `true` when a non-identity coding was present and has been handled;
+/// the compression stage must then leave the representation alone.
+fn negotiate_existing_encoding(
+  accept_encoding : String?,
+  response : Response,
+) -> Bool {
+  match get_header_ignore_case(response.headers, "Content-Encoding") {
+    Some(value) =>
+      if content_encoding_has_non_identity(value.view()) {
+        add_vary_accept_encoding(response)
+        if !content_encoding_is_acceptable(accept_encoding, value.view()) {
+          set_not_acceptable(response)
+        }
+        true
+      } else {
+        ignore(
+          remove_header_ignore_case(response.headers, "Content-Encoding"),
+        )
+        false
+      }
+    None => false
+  }
+}
+
+///|
 /// Compress the response body when the client accepts gzip.
 ///
 /// `accept_encoding` is the `Accept-Encoding` header of the request, or
@@ -405,7 +436,7 @@ async fn compress_response(
     }
     return
   }
-  if get_header_ignore_case(response.headers, "Content-Encoding") is Some(_) {
+  if negotiate_existing_encoding(accept_encoding, response) {
     return
   }
   if get_header_ignore_case(response.headers, "Content-Range") is Some(_) {

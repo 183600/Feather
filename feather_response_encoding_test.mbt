@@ -93,3 +93,59 @@ test "generated ETags accept lone surrogates" {
   assert_eq(response.status, 200)
   assert_true(response.headers.get("ETag") is Some(_))
 }
+
+///|
+async test "handler supplied encodings honor accept-encoding" {
+  let payload = "pre-encoded dynamic payload ".repeat(64)
+  let encoded = gzip_encode_for_test(@utf8.encode(payload))
+  let app = @feather.App::new().get("/encoded", fn(ctx) {
+    ctx.bytes(200, encoded, content_type="text/plain; charset=utf-8")
+    ctx.set_header("Content-Encoding", "gzip")
+  })
+  let accepted = app.respond_async({
+    method: "GET",
+    path: "/encoded",
+    headers: Map([("Accept-Encoding", "gzip")]),
+    body: "",
+  })
+  assert_eq(accepted.status, 200)
+  assert_eq(accepted.headers.get("Content-Encoding"), Some("gzip"))
+  assert_eq(accepted.headers.get("Vary"), Some("Accept-Encoding"))
+  assert_eq(
+    @utf8.decode_lossy(gunzip_for_test(accepted.data.unwrap())),
+    payload,
+  )
+
+  let refused = app.respond_async({
+    method: "GET",
+    path: "/encoded",
+    headers: Map([("Accept-Encoding", "identity")]),
+    body: "",
+  })
+  assert_eq(refused.status, 406)
+  assert_eq(refused.headers.get("Content-Encoding"), None)
+  assert_eq(refused.headers.get("Vary"), Some("Accept-Encoding"))
+  assert_eq(refused.body, "406 Not Acceptable")
+}
+
+///|
+async test "an explicit identity coding is replaced when gzip is needed" {
+  let payload = "identity coded payload ".repeat(64)
+  let app = @feather.App::new().compress(min_size=0).get("/identity", fn(ctx) {
+    ctx.text(200, payload)
+    ctx.set_header("Content-Encoding", "identity")
+  })
+  let response = app.respond_async({
+    method: "GET",
+    path: "/identity",
+    headers: Map([("Accept-Encoding", "gzip, identity;q=0")]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.headers.get("Content-Encoding"), Some("gzip"))
+  assert_eq(response.headers.get("Vary"), Some("Accept-Encoding"))
+  assert_eq(
+    @utf8.decode_lossy(gunzip_for_test(response.data.unwrap())),
+    payload,
+  )
+}
