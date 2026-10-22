@@ -412,7 +412,12 @@ fn absolute_target_authority(path : String) -> String? {
   if host.is_empty() {
     None
   } else {
-    Some(host.to_owned())
+    match host_authority_host(host) {
+      Some(_) => Some(host.to_owned())
+      // A malformed authority must not be installed as `Host` or used to
+      // reduce a target that only resembles an absolute URI.
+      None => None
+    }
   }
 }
 
@@ -2275,6 +2280,17 @@ async fn serve_static_file(
     // redirect to another 404.
     let location = append_trailing_slash(request.path)
     if location != request.path {
+      // The file was only opened to prove that the index exists; the redirect
+      // itself serves no bytes, so release both probe handles before
+      // returning instead of leaving them open for the life of the process.
+      match base {
+        Some(handle) => handle.close()
+        None => ()
+      }
+      match gzip_handle {
+        Some(handle) => handle.close()
+        None => ()
+      }
       record_status(301)
       send_static_redirect(
         conn, extra_headers, cookies, location, vary_encoding=precompressed,
@@ -2663,6 +2679,17 @@ async fn handle_static(
       Some(value) => request_body_coding(value.view())
       None => RequestBodyIdentity
     }
+    // Reject an unsupported coding before reading the body, exactly like the
+    // dynamic path. Otherwise a chunked upload that exceeds the body limit on
+    // a static URL would be reported as 413 instead of the 415 that names the
+    // real problem, and the server would waste time reading a body it cannot
+    // decode anyway.
+    if coding is RequestBodyUnsupported {
+      send_error_and_close(
+        conn, 415, "415 Unsupported Media Type", head,
+      )
+      return
+    }
     let read_limit = match coding {
       RequestBodyGzip => gzip_body_read_limit(app.max_body_size)
       _ => app.max_body_size
@@ -2677,18 +2704,10 @@ async fn handle_static(
         return
       }
     }
-    // The dynamic path validates the content coding and decodes a single gzip
-    // pass before applying the limit to the expanded bytes. The fast path must
-    // do the same, otherwise a small compressed body could bypass
-    // `App::max_body_size` on a static URL and an unsupported coding would be
-    // silently ignored.
+    // The dynamic path decodes a single gzip pass before applying the limit to
+    // the expanded bytes. The fast path must do the same, otherwise a small
+    // compressed body could bypass `App::max_body_size` on a static URL.
     match coding {
-      RequestBodyUnsupported => {
-        send_error_and_close(
-          conn, 415, "415 Unsupported Media Type", head,
-        )
-        return
-      }
       RequestBodyGzip => {
         ignore(
           decode_gzip_body(raw_body, app.max_body_size) catch {
@@ -2710,6 +2729,7 @@ async fn handle_static(
         )
       }
       RequestBodyIdentity => ()
+      RequestBodyUnsupported => ()
     }
     serve_static_file(
       conn,
@@ -3141,17 +3161,28 @@ async fn handle_request(
     }
   }
   let head = request.meth is @http.Head
+  let request_coding = match request.headers.get(header_content_encoding) {
+    Some(value) => request_body_coding(value.view())
+    None => RequestBodyIdentity
+  }
+  // An undecodable coding is rejected before the body limit is considered, so
+  // the client learns that the representation cannot be decoded rather than
+  // receiving a misleading 413 for a body the server would never hand to a
+  // handler. This also avoids reading an upload whose coding is already known
+  // to be unusable.
+  if request_coding is RequestBodyUnsupported {
+    send_error_and_close(
+      conn, 415, "415 Unsupported Media Type", head,
+    )
+    return
+  }
   // Reject a declared oversized body before the `100-continue` handshake or
   // the first read, so a client that never uploads cannot pin the connection.
   // For a gzip-coded body the declared length describes the compressed input,
   // which is allowed to exceed the decoded limit by the codec overhead.
-  let declared_limit = match request.headers.get(header_content_encoding) {
-    Some(value) =>
-      match request_body_coding(value.view()) {
-        RequestBodyGzip => gzip_body_read_limit(app.max_body_size)
-        _ => app.max_body_size
-      }
-    None => app.max_body_size
+  let declared_limit = match request_coding {
+    RequestBodyGzip => gzip_body_read_limit(app.max_body_size)
+    _ => app.max_body_size
   }
   if declared_body_exceeds_limit(request, declared_limit) {
     send_oversized_and_close(conn, head)

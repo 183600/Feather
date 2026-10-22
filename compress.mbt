@@ -442,6 +442,14 @@ fn negotiate_existing_encoding(
   accept_encoding : String?,
   response : Response,
 ) -> Bool {
+  // A status that cannot carry a representation has no content coding to
+  // negotiate. A stray handler-supplied Content-Encoding must not turn a 204 or
+  // 205 into a 406 (or add a `Vary` key that describes no representation).
+  if response.status < 200 ||
+    response.status == 204 ||
+    response.status == 205 {
+    return false
+  }
   match get_header_ignore_case(response.headers, "Content-Encoding") {
     Some(value) =>
       if content_encoding_has_non_identity(value.view()) {

@@ -261,6 +261,13 @@ pub fn SessionStore::get(self : SessionStore, id : String) -> Session? {
 /// for a refresh.
 fn SessionStore::store(self : SessionStore, session : Session) -> Unit {
   let now = @async.now()
+  // A destroyed session must not be written back. `get` and `sweep` both treat
+  // it as gone, so reinserting it would only keep a dead entry in the store
+  // (and an explicit save must not resurrect it).
+  if session.destroyed {
+    ignore(self.sessions.remove(session.id))
+    return
+  }
   // A session that expired while the handler was running must not be written
   // back as if it were live: the next lookup would discard it, and the client
   // would keep a cookie for data that is already gone.

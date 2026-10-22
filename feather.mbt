@@ -371,6 +371,13 @@ fn normalize_request_target(path : String) -> String {
   if path_start == authority_start {
     return path
   }
+  // A non-empty authority is not enough: a malformed host, port or bracketed
+  // literal must leave the target untouched rather than routing its path. Ask
+  // the same parser that supplies the effective `Host` value so a value that
+  // cannot name an authority is never reduced to a request path.
+  if absolute_target_authority(path) is None {
+    return path
+  }
   if path_start >= length {
     return "/"
   }
@@ -9170,19 +9177,29 @@ fn normalize_prefix(prefix : String) -> String {
 ///|
 /// Whether `path` is `prefix` itself or lies below it as a whole path segment.
 ///
-/// `prefix` is expected to be normalized (a leading slash and no trailing
-/// slash, or `""` for the root). Segment-aware comparison keeps `/apiary`
-/// outside a `/api` scope, unlike a plain string prefix test.
+/// Both sides are compared using the router's segment model: empty segments
+/// from repeated or leading slashes are ignored and each segment is decoded the
+/// same way a static route segment is. That keeps a scoped middleware attached
+/// to `/admin` from being skipped by a request for `/ad%6Din/panel` or
+/// `//admin/panel`, which the router still resolves to the same route. Only
+/// whole segments are decoded, so an encoded slash stays inside its segment
+/// instead of creating a new one.
 fn path_is_within_prefix(path : StringView, prefix : StringView) -> Bool {
-  let prefix_length = prefix.length()
-  if prefix_length == 0 {
+  let prefix_segments = split_segments(prefix)
+  if prefix_segments.length() == 0 {
     return true
   }
-  if path.length() < prefix_length || path[:prefix_length] != prefix {
+  let path_segments = split_segments(path)
+  if path_segments.length() < prefix_segments.length() {
     return false
   }
-  path.length() == prefix_length ||
-  path[prefix_length:].has_prefix("/")
+  for i = 0; i < prefix_segments.length(); i = i + 1 {
+    if normalize_static_route_segment(path_segments[i]) !=
+      normalize_static_route_segment(prefix_segments[i]) {
+      return false
+    }
+  }
+  true
 }
 
 ///|
@@ -9203,10 +9220,31 @@ fn scoped_request_path(ctx : Context) -> StringView {
   let path = clean_path_view(ctx.request.path)
   match ctx.state.get(MOUNT_BASE_KEY) {
     Some(base) =>
-      if base != "" && path_is_within_prefix(path, base.view()) {
-        path[base.length():]
-      } else {
+      if base == "" {
         path
+      } else {
+        let base_segments = split_segments(base.view())
+        if base_segments.length() == 0 {
+          path
+        } else {
+          let length = path.length()
+          let mut pos = 0
+          let mut matched = 0
+          while matched < base_segments.length() {
+            pos = skip_slashes(path, pos)
+            if pos >= length {
+              return path
+            }
+            let end = segment_end(path, pos)
+            if normalize_static_route_segment(path[pos:end]) !=
+              normalize_static_route_segment(base_segments[matched]) {
+              return path
+            }
+            matched = matched + 1
+            pos = end
+          }
+          path[pos:]
+        }
       }
     None => path
   }
