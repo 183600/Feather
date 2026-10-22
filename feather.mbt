@@ -1958,6 +1958,54 @@ pub fn Context::remove_response_header(
 }
 
 ///|
+/// Append `value` to the comma-separated response header `key`, matching the
+/// name case-insensitively. When the header is absent it is created; when it
+/// is present the new value is joined with `", "`. An empty `value` leaves an
+/// existing field untouched (creating an empty field only when the header was
+/// absent), so callers can append an optional value unconditionally.
+///
+/// This is the right helper for list-valued fields such as `Vary`, `Link` or
+/// `Warning`. Do not use it for `Set-Cookie`: cookies must stay separate
+/// header lines, so use `Context::add_cookie` / `Context::set_cookie` instead.
+pub fn Context::append_header(
+  self : Context,
+  key : String,
+  value : String,
+) -> Unit {
+  match get_header_ignore_case(self.response.headers, key) {
+    Some(existing) =>
+      if existing == "" {
+        set_header_ignore_case(self.response.headers, key, value)
+      } else if value != "" {
+        set_header_ignore_case(
+          self.response.headers,
+          key,
+          existing + ", " + value,
+        )
+      }
+    None => set_header_ignore_case(self.response.headers, key, value)
+  }
+}
+
+///|
+/// Set the response header `key` to `value` only when no spelling of that
+/// header is present, and report whether it was set. A header that exists with
+/// an empty value still counts as present, so middleware can establish a
+/// default without overwriting a handler's deliberate empty value.
+pub fn Context::set_header_if_absent(
+  self : Context,
+  key : String,
+  value : String,
+) -> Bool {
+  if get_header_ignore_case(self.response.headers, key) is Some(_) {
+    false
+  } else {
+    set_header_ignore_case(self.response.headers, key, value)
+    true
+  }
+}
+
+///|
 fn Context::set_cache_control_scope(
   self : Context,
   scope : String,

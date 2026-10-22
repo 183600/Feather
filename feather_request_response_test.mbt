@@ -425,3 +425,36 @@ async test "server serves conditional queued files" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+test "Context append_header joins list-valued response headers" {
+  let ctx = @feather.create_context()
+  ctx.append_header("Vary", "Accept-Encoding")
+  assert_eq(ctx.response_header("vary"), "Accept-Encoding")
+  ctx.append_header("vary", "Origin")
+  assert_eq(ctx.response_header("VARY"), "Accept-Encoding, Origin")
+  // The case variants collapse into one field instead of accumulating.
+  assert_eq(ctx.response.headers.length(), 1)
+  ctx.append_header("Vary", "")
+  assert_eq(ctx.response_header("Vary"), "Accept-Encoding, Origin")
+  let empty = @feather.create_context()
+  empty.append_header("X-Empty", "")
+  assert_true(empty.has_response_header("x-empty"))
+  assert_eq(empty.response_header("X-Empty"), "")
+  empty.append_header("X-Empty", "first")
+  assert_eq(empty.response_header("X-Empty"), "first")
+}
+
+///|
+test "Context set_header_if_absent preserves an existing default" {
+  let ctx = @feather.create_context()
+  assert_true(ctx.set_header_if_absent("X-Cache", "miss"))
+  assert_eq(ctx.response_header("x-cache"), "miss")
+  assert_false(ctx.set_header_if_absent("x-cache", "hit"))
+  assert_eq(ctx.response_header("X-Cache"), "miss")
+  ctx.set_header("X-Empty", "")
+  assert_false(ctx.set_header_if_absent("x-empty", "fallback"))
+  assert_eq(ctx.response_header("X-Empty"), "")
+  assert_true(ctx.set_header_if_absent("X-Other", "value"))
+  assert_eq(ctx.response_header("X-Other"), "value")
+}

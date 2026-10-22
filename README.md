@@ -196,10 +196,13 @@ ignore(app.get("/api/items/:id", fn(ctx) {
 `cache_public` and `cache_private` accept `immutable=true`; `no_store` and
 `no_cache` cover the common non-storable and revalidate-first cases. Header
 helpers (`has_header`, `response_header`, `has_response_header`,
-`remove_response_header`) match names case-insensitively; the response helpers
-are useful in middleware that inspects or rewrites headers after calling
-through. Cookie helpers accept `max_age` and an absolute `expires` timestamp in
-Unix seconds.
+`remove_response_header`, `append_header`, `set_header_if_absent`) match names
+case-insensitively; the response helpers are useful in middleware that
+inspects or rewrites headers after calling through. `append_header` joins
+list-valued fields such as `Vary` and `Link` with a comma, while
+`set_header_if_absent` installs a default without clobbering a handler's value.
+Cookie helpers accept `max_age` and an absolute `expires` timestamp in Unix
+seconds.
 
 `app.compress(min_size=1024)` enables gzip compression for eligible responses.
 Handlers can override this per response with `ctx.compress(min_size=0)` to opt
