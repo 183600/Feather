@@ -185,6 +185,42 @@ fn body_size_hint(request : @http.Request, limit : Int32) -> Int32 {
 }
 
 ///|
+/// Whether a well-formed `Content-Length` already proves that the request body
+/// exceeds `limit`.
+///
+/// Checking the declared length before reading lets an oversized upload be
+/// rejected immediately instead of waiting for bytes that may never arrive.
+/// Malformed values are left to the runtime body reader, which reports them as
+/// a normal body-size failure.
+fn declared_body_exceeds_limit(
+  request : @http.Request,
+  limit : Int32,
+) -> Bool {
+  let view = match request.headers.get(header_content_length) {
+    Some(value) => trim_ascii_space(value.view())
+    None => return false
+  }
+  if view.is_empty() {
+    return false
+  }
+  let limit64 = limit.to_int64()
+  let mut total = 0L
+  let mut i = 0
+  while i < view.length() {
+    let digit = view.unsafe_get(i).to_int() - 48
+    if digit < 0 || digit > 9 {
+      return false
+    }
+    total = total * 10L + digit.to_int64()
+    if total > limit64 {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
 async fn read_body_bytes(
   reader : &@io.Reader,
   limit : Int32,
@@ -951,6 +987,27 @@ async fn send_error_and_close(
   head : Bool,
 ) -> Unit {
   send_simple(conn, code, body, head) catch {
+    _ => ()
+  }
+  conn.close()
+}
+
+///|
+/// Reject an upload whose declared length already exceeds the body limit.
+///
+/// The response is sent immediately, then the connection briefly drains any
+/// body bytes the client has already pipelined. Draining keeps the close
+/// graceful for well-behaved clients that sent the whole body with the
+/// headers, while the short timeout still bounds a client that only declared a
+/// length and never uploaded anything.
+async fn send_oversized_and_close(
+  conn : @http.ServerConnection,
+  head : Bool,
+) -> Unit {
+  send_simple(conn, 413, "413 Payload Too Large", head) catch {
+    _ => ()
+  }
+  @async.with_timeout(50, () => conn.skip_request_body()) catch {
     _ => ()
   }
   conn.close()
@@ -1967,8 +2024,14 @@ async fn handle_request(
   defer {
     app.in_flight.val = app.in_flight.val - 1
   }
-  send_continue_if_expected(request, conn)
   let head = request.meth is @http.Head
+  // Reject a declared oversized body before the `100-continue` handshake or
+  // the first read, so a client that never uploads cannot pin the connection.
+  if declared_body_exceeds_limit(request, app.max_body_size) {
+    send_oversized_and_close(conn, head)
+    return
+  }
+  send_continue_if_expected(request, conn)
   if request.meth is @http.Get {
     match app.resolve_websocket_full(request.path) {
       Some((handler, params, middlewares)) => {
