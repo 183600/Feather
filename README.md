@@ -246,6 +246,11 @@ ignore(app.post("/login", fn(ctx) {
 }))
 ```
 
+`middleware_csrf` exempts `GET`, `HEAD`, `OPTIONS` and `TRACE` by default.
+Pass `safe_methods` to replace that list, for example `safe_methods=[]` to
+protect every method or to exempt an extra verb while keeping the defaults
+explicit.
+
 `middleware_session` also accepts `cookie`, `path`, `domain`, `same_site`,
 `http_only`, `secure`, `partitioned`, and `rolling` options; `domain` scopes a
 shared session across subdomains. Sessions have a fixed lifetime by default;

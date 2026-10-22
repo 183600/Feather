@@ -120,29 +120,47 @@ pub fn Context::csrf_token(
 /// stored in the session.
 ///
 /// Install it after `middleware_session` so requests have a session. Safe
-/// methods (`GET`, `HEAD`, `OPTIONS`) pass through untouched; handlers for
-/// those methods can render `Context::csrf_token()` into forms. Unsafe methods
-/// (`POST`, `PUT`, `PATCH`, `DELETE`) must send the same token in the `header`
-/// (default `X-CSRF-Token`), in a `application/x-www-form-urlencoded` field, or
-/// in a multipart field, named by `field` (default `_csrf`); otherwise the
-/// request is answered with `403 Forbidden` before reaching the handler.
-/// Requests without a session and requests whose session has no token yet are
-/// rejected too.
+/// methods (`GET`, `HEAD`, `OPTIONS`, `TRACE`) pass through untouched; handlers
+/// for those methods can render `Context::csrf_token()` into forms. Unsafe
+/// methods (`POST`, `PUT`, `PATCH`, `DELETE`, ...) must send the same token in
+/// the `header` (default `X-CSRF-Token`), in a
+/// `application/x-www-form-urlencoded` field, or in a multipart field, named by
+/// `field` (default `_csrf`); otherwise the request is answered with
+/// `403 Forbidden` before reaching the handler. Requests without a session and
+/// requests whose session has no token yet are rejected too.
+///
+/// Pass `safe_methods` to replace the default exemption list, for example
+/// `safe_methods=[]` protects every method or an extra verb can be exempted
+/// without weakening the standard safe methods. Method names are matched
+/// case-insensitively.
 pub fn middleware_csrf(
   field~ : String = CSRF_TOKEN_KEY,
   header~ : String = "X-CSRF-Token",
   key~ : String = CSRF_TOKEN_KEY,
+  safe_methods? : Array[String],
 ) -> Middleware {
   let field_name = field
   let header_name = header
   let token_key = key
+  let safe : Map[String, Bool]? = match safe_methods {
+    Some(methods) => {
+      let table : Map[String, Bool] = Map([], capacity=methods.length())
+      for method in methods {
+        table.set(normalize_method(method), true)
+      }
+      Some(table)
+    }
+    None => None
+  }
   fn(next) {
     fn(ctx) raise {
-      let meth = ctx.get_method()
-      if meth.view().equal_ignore_ascii_case("GET".view()) ||
-        meth.view().equal_ignore_ascii_case("HEAD".view()) ||
-        meth.view().equal_ignore_ascii_case("OPTIONS".view()) ||
-        meth.view().equal_ignore_ascii_case("TRACE".view()) {
+      let meth = normalize_method(ctx.get_method())
+      let is_safe = match safe {
+        Some(table) => table.contains(meth)
+        None =>
+          meth == "GET" || meth == "HEAD" || meth == "OPTIONS" || meth == "TRACE"
+      }
+      if is_safe {
         next(ctx)
         return
       }
