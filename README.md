@@ -150,6 +150,10 @@ Authentication middleware is available for basic credentials
 (`middleware_basic_auth` / `middleware_basic_auth_with`) and bearer tokens
 (`middleware_bearer_auth` / `middleware_bearer_auth_with`).
 
+`middleware_body_limit` rejects oversized request bodies with `413` before the
+handler runs, which is useful for allowing only small payloads on a specific
+route while `App::max_body_size` keeps the server-wide bound.
+
 Sessions and CSRF are available as middleware plus `Context` helpers
 (`session_get`, `session_set`, `session_has`, `session_keys`, `session_remove`,
 `session_clear`, `session_destroy`, and JSON/flash variants):
@@ -190,8 +194,12 @@ ignore(app.get("/api/items/:id", fn(ctx) {
 ```
 
 `cache_public` and `cache_private` accept `immutable=true`; `no_store` and
-`no_cache` cover the common non-storable and revalidate-first cases. Cookie
-helpers accept `max_age` and an absolute `expires` timestamp in Unix seconds.
+`no_cache` cover the common non-storable and revalidate-first cases. Header
+helpers (`has_header`, `response_header`, `has_response_header`,
+`remove_response_header`) match names case-insensitively; the response helpers
+are useful in middleware that inspects or rewrites headers after calling
+through. Cookie helpers accept `max_age` and an absolute `expires` timestamp in
+Unix seconds.
 
 `app.compress(min_size=1024)` enables gzip compression for eligible responses.
 Handlers can override this per response with `ctx.compress(min_size=0)` to opt
