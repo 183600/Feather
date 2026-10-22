@@ -4394,7 +4394,17 @@ fn parse_float_value(value : StringView) -> Double? {
   if value.is_empty() {
     return None
   }
-  let parsed = @string.parse_double(value) catch { _ => return None }
+  // Accept the explicit `+` sign as the integer helpers do; `parse_double`
+  // otherwise expects the first character to be a digit, `-` or `.`.
+  let normalized = if value.unsafe_get(0) == ('+' : UInt16) {
+    value[1:]
+  } else {
+    value
+  }
+  if normalized.is_empty() {
+    return None
+  }
+  let parsed = @string.parse_double(normalized) catch { _ => return None }
   if parsed.is_nan() || parsed.is_inf() {
     None
   } else {

@@ -41,3 +41,19 @@ test "form typed accessors ignore non-form bodies" {
   assert_eq(ctx.form_bool("count"), None)
   assert_eq(ctx.form_float("count"), None)
 }
+
+///|
+test "float accessors accept an explicit plus sign" {
+  let router = @feather.create_router()
+  router.add_route("GET", "/n/:v", fn(ctx) { ctx.text(200, "ok") })
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/n/+1.5?d=%2B2.5&plain=%2B",
+    headers: Map([]),
+    body: "",
+  })
+  router.dispatch(ctx)
+  assert_eq(ctx.param_float("v"), Some(1.5))
+  assert_eq(ctx.query_float("d"), Some(2.5))
+  assert_eq(ctx.query_float("plain"), None)
+}
