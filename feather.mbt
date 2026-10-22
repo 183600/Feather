@@ -2812,6 +2812,32 @@ pub fn Context::get_path(self : Context) -> String {
 }
 
 ///|
+/// The path component of the request target, without the query string or a
+/// fragment. The spelling is preserved (including percent escapes), so a
+/// signature or access-log line can use it exactly as the client sent it.
+///
+/// `Context::get_path` returns the whole request target; use this helper when
+/// only the routing path is wanted.
+pub fn Context::pathname(self : Context) -> String {
+  clean_path_view(self.request.path).to_owned()
+}
+
+///|
+/// The raw query string of the request target, without the leading `?` or a
+/// trailing fragment.
+///
+/// Unlike `Context::queries` / `Context::query_values`, this preserves the
+/// original order, duplicate keys and percent-encoding. It is the right input
+/// for signature verification and for forwarding a request unchanged. Returns
+/// `""` when the target carries no query.
+pub fn Context::query_string(self : Context) -> String {
+  match path_query_index(self.request.path) {
+    Some(index) => query_source_view(self.request.path, index).to_owned()
+    None => ""
+  }
+}
+
+///|
 /// The registered pattern of the route that matched the request, with `:param`
 /// and `*wildcard` segments kept in place (for example `/users/:id`). Returns
 /// `""` when no ordinary route matched, including fallback and static-file

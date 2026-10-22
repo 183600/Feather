@@ -25,7 +25,8 @@ long-term design notes are in [PLAN.md](PLAN.md).
   rate limiting, basic and bearer auth, CSRF, secure headers, HTTPS redirect,
   method override, sessions, and a problem-details error handler whose
   negotiated bodies vary on `Accept`.
-- **Context** – path/query/form/multipart access, typed query/param/form
+- **Context** – path/query/form/multipart access, raw `pathname` /
+  `query_string` request-target accessors, typed query/param/form
   helpers (including 32- and 64-bit integers, booleans, and finite floats),
   JSON bodies,
   text bodies decoded with the request's declared charset,
