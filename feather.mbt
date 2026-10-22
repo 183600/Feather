@@ -2233,7 +2233,11 @@ pub fn Context::redirect(
   self.file = None
   self.response.status = status
   clear_replaced_body_headers(self.response.headers)
-  set_header_ignore_case(self.response.headers, "Location", location)
+  set_header_ignore_case(
+    self.response.headers,
+    "Location",
+    strip_control_characters(location),
+  )
   self.response.data = None
   self.response.body = ""
 }

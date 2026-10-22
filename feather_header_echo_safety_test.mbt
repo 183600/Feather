@@ -71,3 +71,13 @@ test "https redirect strips control characters from the request path" {
   assert_false(location.contains("\n"))
   assert_eq(location, "https://example.test/dashboardX-Injected: yes?tab=1")
 }
+
+///|
+test "redirect strips control characters from the location" {
+  let ctx = @feather.create_context()
+  ctx.redirect(303, "https://example.test/next\r\nX-Injected: yes")
+  let location = ctx.response.headers.get("Location").unwrap_or("")
+  assert_false(location.contains("\r"))
+  assert_false(location.contains("\n"))
+  assert_eq(location, "https://example.test/nextX-Injected: yes")
+}
