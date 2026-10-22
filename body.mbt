@@ -38,12 +38,14 @@ pub fn Context::body_charset(self : Context) -> String {
     return "utf-8"
   }
   match header_parameter(content_type.view(), "charset") {
-    Some(charset) =>
-      if trim_ascii_space(charset.view()).is_empty() {
+    Some(charset) => {
+      let name = trim_ascii_space(charset.view())
+      if name.is_empty() {
         "utf-8"
       } else {
-        charset
+        name.to_owned()
       }
+    }
     None => "utf-8"
   }
 }

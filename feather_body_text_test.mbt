@@ -149,3 +149,16 @@ test "body charset falls back to utf-8 for an empty charset parameter" {
     "utf-8",
   )
 }
+
+///|
+test "body charset trims optional whitespace around the charset name" {
+  assert_eq(
+    @feather.Context::new(
+      body_request(
+        "hello",
+        Map([("Content-Type", "text/plain; charset= iso-8859-1 ")]),
+      ),
+    ).body_charset(),
+    "iso-8859-1",
+  )
+}
