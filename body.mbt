@@ -5,8 +5,10 @@
 /// `Context::body_bytes` returns, so a body that is not valid UTF-8 is not
 /// mangled by the decoding.
 ///
-/// `charset` selects the character set: `utf-8` (the default) decodes the body
-/// as UTF-8 and replaces invalid sequences, `iso-8859-1` (also spelled
+/// When `charset` is omitted, the character set declared by the request's
+/// `Content-Type` is used, falling back to UTF-8 when the header names none;
+/// pass it explicitly to override the header. `utf-8` (the default) decodes the
+/// body as UTF-8 and replaces invalid sequences, `iso-8859-1` (also spelled
 /// `latin1`) maps every byte to the code point of the same value, and
 /// `us-ascii` (also spelled `ascii`) replaces the bytes above `0x7f`. Any
 /// other charset raises `415 Unsupported Media Type`.
@@ -17,13 +19,17 @@
 pub fn Context::body_text(
   self : Context,
   limit~ : Int32 = -1,
-  charset~ : String = "utf-8",
+  charset? : String,
 ) -> String raise HttpError {
   let bytes = self.body_bytes()
   if limit >= 0 && bytes.length() > limit {
     raise HttpError(413, "request body too large")
   }
-  decode_body_charset(bytes, charset)
+  let name = match charset {
+    Some(charset) => charset
+    None => self.body_charset()
+  }
+  decode_body_charset(bytes, name)
 }
 
 ///|
