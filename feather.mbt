@@ -7438,6 +7438,39 @@ fn expand_two_digit_year(two_digit : Int32) -> Int64 {
 }
 
 ///|
+/// Expand an `rfc850-date` two-digit year using the full timestamp.
+///
+/// RFC 9110 §5.6.7 applies the 50-year rule to the timestamp, not merely to
+/// the year: `31-Dec-76` is already more than 50 years in the future when
+/// today is in October 2026, even though 2076 is only exactly 50 years ahead.
+fn expand_two_digit_year_for_date(
+  two_digit : Int32,
+  month : Int32,
+  day : Int32,
+  seconds_of_day : Int64,
+) -> Int64 {
+  let now = @async.now() / 1000L
+  let now_days = now / 86400L
+  let now_time_of_day = now - now_days * 86400L
+  let (current_year, current_month, current_day) = civil_from_days(now_days)
+  let candidate = current_year / 100L * 100L + two_digit.to_int64()
+  let threshold = days_from_civil(
+    current_year + 50L,
+    current_month,
+    current_day,
+  ) *
+  86400L +
+  now_time_of_day
+  let candidate_seconds = days_from_civil(candidate, month, day) * 86400L +
+    seconds_of_day
+  if candidate_seconds > threshold {
+    candidate - 100L
+  } else {
+    candidate
+  }
+}
+
+///|
 pub fn parse_http_date(value : String) -> Int64? {
   parse_http_date_view(value.view())
 }
@@ -7491,6 +7524,7 @@ fn parse_http_date_view(view : StringView) -> Int64? {
   let mut day = 0
   let mut month = 0
   let mut year = 0L
+  let mut two_digit_year : Int32? = None
   let mut time = parts[0]
   if parts[1].contains("-") {
     let weekday = parts[0]
@@ -7521,7 +7555,11 @@ fn parse_http_date_view(view : StringView) -> Int64? {
       None => return None
     }
     if year_text.length() == 2 {
-      year = expand_two_digit_year(parsed_year)
+      // The final expansion depends on the full date and time, which is parsed
+      // below; start from the current-century candidate here.
+      let current = http_current_year()
+      year = current / 100L * 100L + parsed_year.to_int64()
+      two_digit_year = Some(parsed_year)
     } else if year_text.length() == 4 {
       year = parsed_year.to_int64()
     } else {
@@ -7586,12 +7624,19 @@ fn parse_http_date_view(view : StringView) -> Int64? {
       None => return None
     }
   }
-  if day < 1 || day > days_in_month(year, month) {
-    return None
-  }
   let seconds_of_day = match parse_time_of_day(time) {
     Some(seconds) => seconds
     None => return None
+  }
+  match two_digit_year {
+    Some(two_digit) =>
+      year = expand_two_digit_year_for_date(
+        two_digit, month, day, seconds_of_day,
+      )
+    None => ()
+  }
+  if day < 1 || day > days_in_month(year, month) {
+    return None
   }
   Some(days_from_civil(year, month, day) * 86400L + seconds_of_day)
 }
