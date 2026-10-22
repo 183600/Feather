@@ -42,8 +42,10 @@ long-term design notes are in [PLAN.md](PLAN.md).
 - **Server** – keep-alive HTTP/1.1 connections, request timeouts, body-size
   limits, trusted-proxy handling, graceful shutdown/drain, configurable
   connection limits, absolute-form request-target normalization, server-wide
-  `OPTIONS *` responses, and `HEAD` framing that drops the body while keeping
-  the `Content-Length` the matching `GET` would send.
+  `OPTIONS *` responses, `HEAD` framing that drops the body while keeping the
+  `Content-Length` the matching `GET` would send, and request-body decoding for
+  a single `gzip` coding (unsupported or repeated codings are rejected with
+  `415`).
 - **Static files** – directory mounts with index files, cache control, range
   requests, and path-traversal protection.
 
@@ -321,7 +323,12 @@ app.serve_graceful_until(addr, stop=() => { /* resolve on SIGTERM */ })
 
 The default body-size limit is deliberately tiny (`DEFAULT_MAX_BODY_SIZE` is
 1000 bytes; larger bodies are rejected with `413`), so real applications
-should raise it with `max_body_size` as shown above.
+should raise it with `max_body_size` as shown above. A request body declaring
+one `gzip` (or `x-gzip`) content coding is decoded before that limit is
+applied, so a small compressed payload cannot expand past it. Unknown, repeated
+or otherwise undecodable content codings are rejected with
+`415 Unsupported Media Type` instead of being handed to handlers as if they
+were the representation.
 
 ## Package layout
 

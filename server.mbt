@@ -116,6 +116,22 @@ let header_location : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
 priv suberror MalformedRequestBody
 
 ///|
+/// Raised when a request body declares a content coding this server cannot
+/// decode. RFC 9110 §8.4.1 lets a recipient reject an unsupported coding with
+/// `415 Unsupported Media Type` instead of handing compressed bytes to a
+/// handler as if they were the representation.
+priv suberror UnsupportedRequestBodyCoding
+
+///|
+/// How a request's `Content-Encoding` field relates to the one coding the
+/// server can decode.
+priv enum RequestBodyCoding {
+  RequestBodyIdentity
+  RequestBodyGzip
+  RequestBodyUnsupported
+}
+
+///|
 let cached_date_second : Ref[Int64] = Ref(-1L)
 
 ///|
@@ -415,12 +431,14 @@ fn request_method_to_string(meth : @http.RequestMethod) -> String {
 }
 
 ///|
-/// Whether a request's `Content-Encoding` field describes exactly one `gzip`
-/// coding (or its historical `x-gzip` alias), optionally combined with
-/// `identity`, so the body can be decoded by a single gzip pass. Repeated or
-/// unknown codings are left untouched because decoding only one of them would
-/// corrupt the body.
-fn request_content_encoding_is_gzip(value : StringView) -> Bool {
+/// Classify a request's `Content-Encoding` field.
+///
+/// A body may be decoded only when the field names exactly one `gzip` coding
+/// (or its historical `x-gzip` alias), optionally combined with `identity`.
+/// Repeated gzip codings would require two decode passes and any unknown
+/// coding selects bytes this server cannot decode; both are reported as
+/// unsupported instead of silently treating compressed bytes as the body.
+fn request_body_coding(value : StringView) -> RequestBodyCoding {
   let mut gzip_count = 0
   let mut unsupported = false
   for part in value.split(",") {
@@ -435,7 +453,13 @@ fn request_content_encoding_is_gzip(value : StringView) -> Bool {
       unsupported = true
     }
   }
-  gzip_count == 1 && !unsupported
+  if unsupported || gzip_count > 1 {
+    RequestBodyUnsupported
+  } else if gzip_count == 1 {
+    RequestBodyGzip
+  } else {
+    RequestBodyIdentity
+  }
 }
 
 ///|
@@ -507,6 +531,12 @@ async fn request_from_http_with_timeout(
         send_simple(conn, 400, "400 Bad Request", head)
         return None
       }
+      UnsupportedRequestBodyCoding => {
+        send_error_and_close(
+          conn, 415, "415 Unsupported Media Type", head,
+        )
+        return None
+      }
       _ => {
         send_error_and_close(conn, 500, "500 Internal Server Error", head)
         return None
@@ -520,6 +550,12 @@ async fn request_from_http_with_timeout(
       }
       MalformedRequestBody => {
         send_simple(conn, 400, "400 Bad Request", head)
+        return None
+      }
+      UnsupportedRequestBodyCoding => {
+        send_error_and_close(
+          conn, 415, "415 Unsupported Media Type", head,
+        )
         return None
       }
       _ => {
@@ -542,10 +578,14 @@ async fn request_from_http(
   body : &@io.Reader,
   max_body_size : Int32,
 ) -> (Request, Bytes?) {
-  let gzip_encoded = match request.headers.get(header_content_encoding) {
-    Some(value) => request_content_encoding_is_gzip(value.view())
-    None => false
+  let coding = match request.headers.get(header_content_encoding) {
+    Some(value) => request_body_coding(value.view())
+    None => RequestBodyIdentity
   }
+  if coding is RequestBodyUnsupported {
+    raise UnsupportedRequestBodyCoding
+  }
+  let gzip_encoded = coding is RequestBodyGzip
   let headers : Map[String, String] = Map([], capacity=request.headers.length())
   for name, value in request.headers {
     let text = match request_header_name_cache.get(name) {
@@ -2557,30 +2597,41 @@ async fn handle_static(
         return
       }
     }
-    // The dynamic path decodes a gzip request body before applying the limit
-    // to the expanded bytes. The fast path must do the same, otherwise a small
-    // compressed body could bypass `App::max_body_size` on a static URL.
+    // The dynamic path validates the content coding and decodes a single gzip
+    // pass before applying the limit to the expanded bytes. The fast path must
+    // do the same, otherwise a small compressed body could bypass
+    // `App::max_body_size` on a static URL and an unsupported coding would be
+    // silently ignored.
     match request.headers.get(header_content_encoding) {
       Some(value) =>
-        if request_content_encoding_is_gzip(value.view()) {
-          ignore(
-            decode_gzip_body(raw_body, app.max_body_size) catch {
-              PayloadTooLarge => {
-                send_error_and_close(conn, 413, "413 Payload Too Large", head)
-                return
-              }
-              MalformedRequestBody => {
-                send_simple(conn, 400, "400 Bad Request", head)
-                return
-              }
-              _ => {
-                send_error_and_close(
-                  conn, 500, "500 Internal Server Error", head,
-                )
-                return
-              }
-            },
-          )
+        match request_body_coding(value.view()) {
+          RequestBodyUnsupported => {
+            send_error_and_close(
+              conn, 415, "415 Unsupported Media Type", head,
+            )
+            return
+          }
+          RequestBodyGzip => {
+            ignore(
+              decode_gzip_body(raw_body, app.max_body_size) catch {
+                PayloadTooLarge => {
+                  send_error_and_close(conn, 413, "413 Payload Too Large", head)
+                  return
+                }
+                MalformedRequestBody => {
+                  send_simple(conn, 400, "400 Bad Request", head)
+                  return
+                }
+                _ => {
+                  send_error_and_close(
+                    conn, 500, "500 Internal Server Error", head,
+                  )
+                  return
+                }
+              },
+            )
+          }
+          RequestBodyIdentity => ()
         }
       None => ()
     }
@@ -2609,6 +2660,10 @@ async fn handle_static(
     }
     MalformedRequestBody => {
       send_simple(conn, 400, "400 Bad Request", head)
+      return
+    }
+    UnsupportedRequestBodyCoding => {
+      send_error_and_close(conn, 415, "415 Unsupported Media Type", head)
       return
     }
     _ => {
@@ -3162,6 +3217,14 @@ async fn handle_request(
         } else {
           send_simple(conn, 400, "400 Bad Request", head)
         }
+      UnsupportedRequestBodyCoding =>
+        if response_started.val {
+          conn.close()
+        } else {
+          send_error_and_close(
+            conn, 415, "415 Unsupported Media Type", head,
+          )
+        }
       err => {
         ignore(err)
         if response_started.val {
@@ -3180,6 +3243,10 @@ async fn handle_request(
         }
         MalformedRequestBody => {
           send_simple(conn, 400, "400 Bad Request", head)
+          return
+        }
+        UnsupportedRequestBodyCoding => {
+          send_error_and_close(conn, 415, "415 Unsupported Media Type", head)
           return
         }
         err => {
