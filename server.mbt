@@ -888,10 +888,11 @@ async fn send_file_response(
     )
     return
   }
-  // Even when application compression is off, a handler-supplied coding means
-  // the selected representation depends on `Accept-Encoding`: the same URL can
-  // answer 200 for a client that accepts it and 406 for one that does not.
-  let vary_encoding = compressible || existing_encoding is Some(_)
+  // The selected representation always depends on `Accept-Encoding`: even
+  // when application compression is off and the handler supplied no coding,
+  // this URL answers 406 to a client that refuses identity. A shared cache must
+  // not reuse the identity 200 for that client, so vary unconditionally.
+  let vary_encoding = true
   // `Context::no_etag` suppresses only the generated validator; an explicit
   // handler/middleware ETag is still preserved below.
   let generated_etag = if auto_etag {
@@ -2269,10 +2270,10 @@ async fn serve_static_file(
     return
   }
   // `Vary` describes the representation-selection process, not just this
-  // response: once application compression is enabled for a compressible
-  // static file, a gzip-capable client must not share a cache entry with an
-  // identity client even when this particular reply ended up uncompressed.
-  let vary_encoding = precompressed || dynamic_eligible
+  // response. This URL can answer 406 when the client refuses identity, even
+  // with application compression off and no precompressed sibling, so a shared
+  // cache must not reuse a 200 across different `Accept-Encoding` values.
+  let vary_encoding = true
   // A dynamic gzip representation is semantically equivalent to the source
   // file but has different bytes, so its generated validator must be weak.
   let generated_etag = if auto_etag {

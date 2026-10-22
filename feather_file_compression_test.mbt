@@ -75,8 +75,16 @@ async test "queued file compression honors per-response overrides" {
     )
     assert_eq(opted_out.code, 200)
     assert_eq(opted_out.headers.get(content_encoding_key), None)
-    assert_eq(opted_out.headers.get(vary_key), None)
+    // The same URL answers 406 when identity is refused, so the identity 200
+    // must still vary even though this response opted out of compression.
+    assert_eq(opted_out.headers.get(vary_key), Some("Accept-Encoding"))
     assert_eq(client.read_all().text(), payload)
+    let refused = client.get(
+      "/opt-out",
+      extra_headers=Map([(accept_encoding_key, "identity;q=0")]),
+    )
+    assert_eq(refused.code, 406)
+    assert_eq(client.read_all().text(), "406 Not Acceptable")
   })
   let plain = @feather.App::new().get("/opt-in", fn(ctx) {
     ctx.compress(min_size=0)
@@ -113,7 +121,9 @@ async test "queued binary files are not compressed" {
     )
     assert_eq(response.code, 200)
     assert_eq(response.headers.get(content_encoding_key), None)
-    assert_eq(response.headers.get(vary_key), None)
+    // Identity refusal still yields 406 for a non-compressible file, so the
+    // identity 200 varies on Accept-Encoding.
+    assert_eq(response.headers.get(vary_key), Some("Accept-Encoding"))
     assert_eq(client.read_all().binary(), bytes)
   })
   @fs.rmdir(dir, recursive=true)
