@@ -376,6 +376,9 @@ pub fn Context::session_id(self : Context) -> String? {
 pub fn Context::session_touch(self : Context) -> Bool {
   match self.session_materialized() {
     Some(session) => {
+      if session.destroyed {
+        return false
+      }
       let ttl = match self.state.get(SESSION_TTL_STATE_KEY) {
         Some(text) => session_ttl_from_text(text)
         None => DEFAULT_SESSION_TTL
@@ -621,6 +624,9 @@ pub fn Context::session_destroy(self : Context) -> Bool {
 pub fn Context::session_regenerate(self : Context) -> Bool {
   match self.session_materialized() {
     Some(session) => {
+      if session.destroyed {
+        return false
+      }
       ignore(session.csrf_clear(CSRF_TOKEN_KEY))
       session.regenerate = true
       // Rotation is an explicit privilege-change operation, so it also renews

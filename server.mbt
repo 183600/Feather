@@ -893,6 +893,11 @@ async fn send_file_response(
   // this URL answers 406 to a client that refuses identity. A shared cache must
   // not reuse the identity 200 for that client, so vary unconditionally.
   let vary_encoding = true
+  // Capture the validator supplied by the handler before compression weakens
+  // it, so a satisfied strong `If-Match` is not re-checked against `W/...`.
+  let handler_etag = get_header_ignore_case(response.headers, "ETag").unwrap_or(
+    "",
+  )
   // `Context::no_etag` suppresses only the generated validator; an explicit
   // handler/middleware ETag is still preserved below.
   let generated_etag = if auto_etag {
@@ -951,12 +956,18 @@ async fn send_file_response(
     None => mtime_secs
   }
   if status_allows_preconditions(response.status) {
+    let (precondition_input, allows_not_modified) = precondition_input_http(
+      request,
+    )
+    let remaining_preconditions = drop_satisfied_if_match(
+      precondition_input, handler_etag,
+    )
     match
-      evaluate_preconditions(
-        request,
+      evaluate_preconditions_input(
+        remaining_preconditions,
         effective_etag,
-        effective_mtime,
-        head || request.meth is @http.Get,
+        Some(effective_mtime),
+        allows_not_modified,
       ) {
       PreconditionFailed => {
         send_static_error(
@@ -1424,6 +1435,8 @@ async fn finalize_dynamic_response(
         let (compress, min_size) = compression_settings(app, ctx)
         if compress {
           compress_response(accept_encoding, ctx.response, min_size)
+        } else {
+          reject_unacceptable_identity(accept_encoding, ctx.response)
         }
       }
       if response_etag_enabled(app, ctx) {
@@ -2281,6 +2294,11 @@ async fn serve_static_file(
   } else {
     ""
   }
+  // Capture the validator supplied by middleware before compression weakens
+  // it, so a satisfied strong `If-Match` is not re-checked against `W/...`.
+  let handler_etag = get_header_ignore_case(extra_headers, "ETag").unwrap_or(
+    "",
+  )
   // A gzipped body is only weakly equivalent to the source file when the
   // framework produced it by transforming that file. Weaken a middleware-
   // supplied strong validator in that case, matching the dynamic compression
@@ -2314,7 +2332,19 @@ async fn serve_static_file(
       }
     None => mtime_secs
   }
-  match evaluate_preconditions(request, effective_etag, effective_mtime, true) {
+  let (precondition_input, allows_not_modified) = precondition_input_http(
+    request,
+  )
+  let remaining_preconditions = drop_satisfied_if_match(
+    precondition_input, handler_etag,
+  )
+  match
+    evaluate_preconditions_input(
+      remaining_preconditions,
+      effective_etag,
+      Some(effective_mtime),
+      allows_not_modified,
+    ) {
     PreconditionFailed => {
       send_static_error(
         conn,
@@ -2635,6 +2665,8 @@ async fn handle_static(
             let (compress, min_size) = compression_settings(app, ctx)
             if compress {
               compress_response(accept_encoding, ctx.response, min_size)
+            } else {
+              reject_unacceptable_identity(accept_encoding, ctx.response)
             }
           }
           if response_etag_enabled(app, ctx) {

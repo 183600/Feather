@@ -182,6 +182,9 @@ pub fn Context::flash(
 ) -> Bool {
   match self.session_materialized() {
     Some(session) => {
+      if session.destroyed {
+        return false
+      }
       let pending = session.flash_pending_map()
       let is_new_category = !pending.contains(category)
       let messages = match pending.get(category) {

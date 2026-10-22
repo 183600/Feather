@@ -89,13 +89,19 @@ pub fn Context::csrf_token(
 ) -> String {
   match self.session() {
     Some(session) =>
-      match session.data.get(key) {
-        Some(token) => token
-        None => {
-          let token = csrf_generate_token()
-          session.data.set(key, token)
-          session.modified = true
-          token
+      if session.destroyed {
+        // The session is removed when the response is sent, so a token minted
+        // now could never be validated by a later request.
+        ""
+      } else {
+        match session.data.get(key) {
+          Some(token) => token
+          None => {
+            let token = csrf_generate_token()
+            session.data.set(key, token)
+            session.modified = true
+            token
+          }
         }
       }
     None => ""

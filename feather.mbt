@@ -738,9 +738,39 @@ fn Router::add_route_node(
 }
 
 ///|
-/// Forget names attached to the exact method/path being re-registered without
-/// one, so `url_for` cannot keep generating a URL for a name whose route no
-/// longer reports it through `Context::route_name`.
+/// Canonical identity of a registered route pattern, independent of spelling
+/// details that share one `RouteNode`.
+///
+/// Empty path segments and a trailing slash are ignored, static segments use
+/// their decoded spelling, parameter names are irrelevant (a re-registration
+/// under `:name` replaces the node created for `:id`), and everything after a
+/// wildcard is ignored because registration stops there. The result is used to
+/// tie names to nodes rather than to raw path strings.
+fn route_pattern_identity(path : StringView) -> String {
+  let builder = StringBuilder(size_hint=path.length())
+  for segment in split_segments(path) {
+    if segment.has_prefix(":") {
+      builder.write_char('p')
+    } else if segment.has_prefix("*") {
+      builder.write_char('*')
+      break
+    } else {
+      let key = normalize_static_route_segment(segment)
+      builder.write_char('s')
+      builder.write_string(key.length().to_string())
+      builder.write_char(':')
+      builder.write_string(key)
+    }
+  }
+  builder.to_string()
+}
+
+///|
+/// Forget names attached to the route node being re-registered without one, so
+/// `url_for` cannot keep generating a URL for a name whose route no longer
+/// reports it through `Context::route_name`. Equivalent spellings (`/thing/`,
+/// `/caf%C3%A9`, `:name` instead of `:id`, ...) are the same node and must
+/// drop their old names too.
 fn Router::forget_route_names(
   self : Router,
   meth : String,
@@ -748,9 +778,11 @@ fn Router::forget_route_names(
 ) -> Unit {
   let method = normalize_method(meth)
   let clean_path = clean_route_path(path)
+  let identity = route_pattern_identity(clean_path.view())
   let stale : Array[String] = []
   for name, named in self.named {
-    if named.method == method && named.path == clean_path {
+    if named.method == method &&
+      route_pattern_identity(named.path.view()) == identity {
       stale.push(name)
     }
   }
@@ -787,17 +819,21 @@ pub fn Router::add_route_with(
 }
 
 ///|
-/// Find the node carrying the registered pattern `path` in one method tree.
+/// Find the node carrying the canonical pattern `identity` in one method tree.
 /// Named-route bookkeeping uses this to clear a name from the node it used to
 /// identify when the same name is attached to a different route.
-fn find_route_node_by_path(node : RouteNode, path : String) -> RouteNode? {
-  if node.handler is Some(_) && node.route_path == path {
+fn find_route_node_by_identity(
+  node : RouteNode,
+  identity : String,
+) -> RouteNode? {
+  if node.handler is Some(_) &&
+    route_pattern_identity(node.route_path.view()) == identity {
     return Some(node)
   }
   match node.static_children {
     Some(children) =>
       for _segment, child in children {
-        match find_route_node_by_path(child, path) {
+        match find_route_node_by_identity(child, identity) {
           Some(found) => return Some(found)
           None => ()
         }
@@ -806,7 +842,7 @@ fn find_route_node_by_path(node : RouteNode, path : String) -> RouteNode? {
   }
   match node.param_child {
     Some(child) =>
-      match find_route_node_by_path(child, path) {
+      match find_route_node_by_identity(child, identity) {
         Some(found) => return Some(found)
         None => ()
       }
@@ -814,7 +850,7 @@ fn find_route_node_by_path(node : RouteNode, path : String) -> RouteNode? {
   }
   match node.wildcard_child {
     Some(child) =>
-      match find_route_node_by_path(child, path) {
+      match find_route_node_by_identity(child, identity) {
         Some(found) => return Some(found)
         None => ()
       }
@@ -836,7 +872,8 @@ fn Router::detach_route_name(self : Router, name : String) -> Unit {
     Some(root) => root
     None => return
   }
-  let node = match find_route_node_by_path(root, previous.path) {
+  let identity = route_pattern_identity(previous.path.view())
+  let node = match find_route_node_by_identity(root, identity) {
     Some(node) => node
     None => return
   }
@@ -845,7 +882,8 @@ fn Router::detach_route_name(self : Router, name : String) -> Unit {
   }
   let mut replacement = ""
   for other, route in self.named {
-    if route.method == previous.method && route.path == previous.path {
+    if route.method == previous.method &&
+      route_pattern_identity(route.path.view()) == identity {
       replacement = other
       break
     }
@@ -1684,6 +1722,11 @@ fn respond_server_options(ctx : Context, router : Router) -> Unit {
 /// routes exist.
 fn App::server_methods(self : App) -> Array[String] {
   let methods = self.router.registered_methods()
+  // Static mounts also answer GET (and HEAD), even when no ordinary route is
+  // registered, so they must not fall back to the full standard method list.
+  if !self.static_mounts.is_empty() && !methods.contains("GET") {
+    methods.push("GET")
+  }
   if !self.ws_handlers.is_empty() ||
     !self.sse_handlers.is_empty() ||
     !self.stream_handlers.is_empty() {
@@ -1692,6 +1735,21 @@ fn App::server_methods(self : App) -> Array[String] {
     }
   }
   methods
+}
+
+///|
+/// Whether the application can answer `HEAD` somewhere. Ordinary `GET` routes,
+/// static mounts and SSE/streaming endpoints can; a WebSocket endpoint cannot,
+/// because its only successful GET response is the upgrade handshake.
+///
+/// `Allow` adds `HEAD` implicitly whenever `GET` is listed, so the server-wide
+/// `OPTIONS *` reply needs this distinction: a WebSocket-only application
+/// advertises `GET` but must not claim `HEAD`.
+fn App::server_allows_head(self : App) -> Bool {
+  self.router.registered_methods().contains("GET") ||
+  !self.static_mounts.is_empty() ||
+  !self.sse_handlers.is_empty() ||
+  !self.stream_handlers.is_empty()
 }
 
 ///|
@@ -1707,7 +1765,13 @@ fn respond_app_server_options(ctx : Context, app : App) -> Unit {
       methods.push("OPTIONS")
     }
     methods.sort()
-    respond_options(ctx, methods)
+    if app.server_allows_head() {
+      respond_options(ctx, methods)
+    } else {
+      // `respond_options` inserts `HEAD` for every listed `GET`; a WebSocket
+      // endpoint accepts GET but rejects HEAD, so render the list literally.
+      respond_options_with_allow(ctx, methods.join(", "))
+    }
   }
 }
 
@@ -1726,9 +1790,21 @@ pub fn Router::dispatch_with(
   let meth = normalize_method(ctx.request.method)
   // A context can be dispatched more than once (for example by tests or a
   // custom router wrapper), so never let a previous match describe this one.
+  // Parameter bindings use the reserved `param:` state namespace and must be
+  // cleared too: otherwise a route for another method or pattern could still
+  // read a parameter captured by the previous dispatch.
   ignore(ctx.state.remove(ROUTE_PATTERN_STATE_KEY))
   ignore(ctx.state.remove(ROUTE_METHOD_STATE_KEY))
   ignore(ctx.state.remove(ROUTE_NAME_STATE_KEY))
+  let stale_params : Array[String] = []
+  for key, _ in ctx.state {
+    if key.has_prefix(PARAM_PREFIX) {
+      stale_params.push(key)
+    }
+  }
+  for key in stale_params {
+    ignore(ctx.state.remove(key))
+  }
   // The asterisk-form names the server, not a path. Answer it here so a
   // catch-all or parameter route cannot shadow the server-wide reply.
   if meth == "OPTIONS" && clean_path == "*" {
@@ -3044,6 +3120,16 @@ fn valid_url_scheme(value : StringView) -> Bool {
 }
 
 ///|
+/// Whether `value` is a scheme a request to this HTTP server can actually
+/// use. Forwarded protocol headers are client-controlled, so a syntactically
+/// valid but unrelated scheme such as `javascript` or `file` must not be
+/// spliced into an absolute URL by `Context::full_url`.
+fn is_http_request_scheme(value : StringView) -> Bool {
+  value.equal_ignore_ascii_case("http".view()) ||
+  value.equal_ignore_ascii_case("https".view())
+}
+
+///|
 /// Validate an authority (host plus optional port) before echoing a forwarded
 /// value. The original spelling is preserved, including an explicit port.
 fn valid_forwarded_authority(value : StringView) -> String? {
@@ -3067,7 +3153,8 @@ pub fn Context::protocol(self : Context) -> String {
   if forwarded != "" {
     match forwarded_first_param(forwarded.view(), "proto".view()) {
       Some(value) =>
-        if valid_url_scheme(value.view()) {
+        if valid_url_scheme(value.view()) &&
+          is_http_request_scheme(value.view()) {
           return value
         }
       None => ()
@@ -3079,7 +3166,8 @@ pub fn Context::protocol(self : Context) -> String {
       Some(index) => trim_ascii_space(proto[:index])
       None => proto
     }
-    if valid_url_scheme(value.view()) {
+    if valid_url_scheme(value.view()) &&
+      is_http_request_scheme(value.view()) {
       return value.to_owned()
     }
   }
@@ -4488,19 +4576,74 @@ pub fn Context::query_bool(self : Context, name : String) -> Bool? {
 /// Parse a finite decimal floating-point value, rejecting malformed input and
 /// the non-finite spellings (`nan`, `inf`, `-inf`) that JSON cannot represent.
 fn parse_float_value(value : StringView) -> Double? {
-  if value.is_empty() {
+  let length = value.length()
+  if length == 0 {
     return None
   }
-  // Accept the explicit `+` sign as the integer helpers do; `parse_double`
-  // otherwise expects the first character to be a digit, `-` or `.`.
-  let normalized = if value.unsafe_get(0) == ('+' : UInt16) {
-    value[1:]
-  } else {
-    value
+  // Validate the literal before delegating to `parse_double`, which also
+  // accepts leading signs and digit separators such as underscores. Accept an
+  // optional leading sign, digits with an optional fractional part, and an
+  // optional exponent; at least one mantissa digit is required.
+  let mut index = 0
+  let first = value.unsafe_get(0)
+  if first == ('+' : UInt16) || first == ('-' : UInt16) {
+    index = 1
   }
-  if normalized.is_empty() {
+  let mut digits = 0
+  while index < length {
+    let code = value.unsafe_get(index).to_int()
+    if code < 48 || code > 57 {
+      break
+    }
+    digits = digits + 1
+    index = index + 1
+  }
+  if index < length && value.unsafe_get(index) == ('.' : UInt16) {
+    index = index + 1
+    while index < length {
+      let code = value.unsafe_get(index).to_int()
+      if code < 48 || code > 57 {
+        break
+      }
+      digits = digits + 1
+      index = index + 1
+    }
+  }
+  if digits == 0 {
     return None
   }
+  if index < length &&
+    (
+      value.unsafe_get(index) == ('e' : UInt16) ||
+      value.unsafe_get(index) == ('E' : UInt16)
+    ) {
+    index = index + 1
+    if index < length &&
+      (
+        value.unsafe_get(index) == ('+' : UInt16) ||
+        value.unsafe_get(index) == ('-' : UInt16)
+      ) {
+      index = index + 1
+    }
+    let mut exponent_digits = 0
+    while index < length {
+      let code = value.unsafe_get(index).to_int()
+      if code < 48 || code > 57 {
+        break
+      }
+      exponent_digits = exponent_digits + 1
+      index = index + 1
+    }
+    if exponent_digits == 0 {
+      return None
+    }
+  }
+  if index != length {
+    return None
+  }
+  // `parse_double` otherwise expects the first character to be a digit, `-` or
+  // `.`; the explicit plus sign is only stripped for the actual conversion.
+  let normalized = if first == ('+' : UInt16) { value[1:] } else { value }
   let parsed = @string.parse_double(normalized) catch { _ => return None }
   if parsed.is_nan() || parsed.is_inf() {
     None
@@ -8355,6 +8498,34 @@ fn evaluate_preconditions(
 }
 
 ///|
+/// Drop a satisfied `If-Match` (and the `If-Unmodified-Since` it suppresses)
+/// before a transformation weakens the response validator.
+///
+/// Compression turns a strong handler ETag into a weak one. Re-evaluating the
+/// original strong comparison after that would fail a request whose `If-Match`
+/// matched the representation when it was selected. File responses run after
+/// the dynamic pipeline's pre-compression check, so they apply this directly.
+fn drop_satisfied_if_match(
+  input : PreconditionInput,
+  etag : String,
+) -> PreconditionInput {
+  match input.if_match {
+    Some(value) =>
+      if if_match_header_matches(value.view(), etag) {
+        {
+          if_match: None,
+          if_none_match: input.if_none_match,
+          if_modified_since: input.if_modified_since,
+          if_unmodified_since: None,
+        }
+      } else {
+        input
+      }
+    None => input
+  }
+}
+
+///|
 pub fn Context::fresh(self : Context, etag : String) -> Bool {
   if etag == "" {
     return false
@@ -10547,12 +10718,20 @@ pub fn App::respond(self : App, request : Request) -> Response {
         ctx.response,
       )
       if !failed {
-        ignore(
-          negotiate_existing_encoding(
-            get_header_ignore_case(ctx.request.headers, "Accept-Encoding"),
-            ctx.response,
-          ),
+        let accept_encoding = get_header_ignore_case(
+          ctx.request.headers,
+          "Accept-Encoding",
         )
+        if !negotiate_existing_encoding(accept_encoding, ctx.response) {
+          let (compress, _) = compression_settings(self, ctx)
+          // This facade cannot encode a body; when the application would not
+          // compress either, an explicit identity refusal leaves no acceptable
+          // representation. Leave the documented inability to compress alone
+          // when the application has compression enabled.
+          if !compress {
+            reject_unacceptable_identity(accept_encoding, ctx.response)
+          }
+        }
         finish_response(
           self, ctx, ctx.response, remaining, allows_not_modified,
         )
@@ -10596,6 +10775,8 @@ pub async fn App::respond_async(
         let (compress, min_size) = compression_settings(self, ctx)
         if compress {
           compress_response(None, ctx.response, min_size)
+        } else {
+          reject_unacceptable_identity(None, ctx.response)
         }
       }
       if response_etag_enabled(self, ctx) {
@@ -10617,6 +10798,8 @@ pub async fn App::respond_async(
           let (compress, min_size) = compression_settings(self, ctx)
           if compress {
             compress_response(accept_encoding, ctx.response, min_size)
+          } else {
+            reject_unacceptable_identity(accept_encoding, ctx.response)
           }
         }
         finish_response(

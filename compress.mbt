@@ -356,6 +356,36 @@ fn set_not_acceptable(response : Response) -> Unit {
 }
 
 ///|
+/// Enforce an explicit refusal of the identity coding when compression is
+/// disabled for this response.
+///
+/// With no enabled codec the server can only send the unencoded
+/// representation. A client that sent `identity;q=0` (or `*;q=0`) cannot
+/// receive it, so the response becomes `406 Not Acceptable` instead of an
+/// unacceptable identity body. `compress_response` handles the same case when
+/// compression is enabled and may produce gzip instead.
+fn reject_unacceptable_identity(
+  accept_encoding : String?,
+  response : Response,
+) -> Unit {
+  if response.status < 200 ||
+    response.status == 204 ||
+    response.status == 205 ||
+    response.status == 304 ||
+    response.status == 206 {
+    return
+  }
+  match accept_encoding {
+    Some(value) =>
+      if accept_encoding_refuses_identity(value) {
+        add_vary_accept_encoding(response)
+        set_not_acceptable(response)
+      }
+    None => ()
+  }
+}
+
+///|
 /// Validate a `Content-Encoding` supplied by a handler. A non-identity coding
 /// is a selected representation, so it is kept when the client accepts every
 /// listed coding, rejected with 406 otherwise, and always varies on
@@ -402,11 +432,16 @@ async fn compress_response(
   response : Response,
   min_size : Int32,
 ) -> Unit {
+  if response.status == 304 {
+    // A handler-generated 304 selects the same negotiable representation a
+    // matching 200 would, so shared caches must still keep the encoded and
+    // identity variants apart. No body is compressed here.
+    add_vary_accept_encoding(response)
+    return
+  }
   if response.status < 200 ||
     response.status == 204 ||
-    response.status == 205 ||
-    response.status == 304 ||
-    response.status == 206 {
+    response.status == 205 {
     return
   }
   let allows_gzip = match accept_encoding {
@@ -416,6 +451,17 @@ async fn compress_response(
   let refuses_identity = match accept_encoding {
     Some(value) => accept_encoding_refuses_identity(value)
     None => false
+  }
+  // A ranged representation cannot be re-encoded as a range of the encoded
+  // representation without rewriting `Content-Range`. When identity is
+  // explicitly refused there is therefore no acceptable representation.
+  if response.status == 206 ||
+    get_header_ignore_case(response.headers, "Content-Range") is Some(_) {
+    if refuses_identity {
+      add_vary_accept_encoding(response)
+      set_not_acceptable(response)
+    }
+    return
   }
   // Without a compressible `Content-Type` the server can only send identity.
   let content_type = match
@@ -437,9 +483,6 @@ async fn compress_response(
     return
   }
   if negotiate_existing_encoding(accept_encoding, response) {
-    return
-  }
-  if get_header_ignore_case(response.headers, "Content-Range") is Some(_) {
     return
   }
   match get_header_ignore_case(response.headers, "Cache-Control") {

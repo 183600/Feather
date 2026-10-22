@@ -624,6 +624,13 @@ pub fn Context::set_signed_cookie(
   secure~ : Bool = false,
   partitioned~ : Bool = false,
 ) -> Unit {
+  // `set_cookie` stores the sanitized name, and the MAC must cover that exact
+  // name so `signed_cookie` can verify the cookie the client actually sends
+  // back, whichever spelling the caller uses.
+  let cookie_name = sanitize_cookie_token(name, true)
+  if cookie_name == "" {
+    return
+  }
   let by_max_age = match max_age {
     Some(seconds) => Some(signed_cookie_deadline(seconds, @async.now()))
     None => None
@@ -643,14 +650,14 @@ pub fn Context::set_signed_cookie(
   let token = match expires_at {
     Some(deadline) =>
       if deadline <= 0L {
-        signed_cookie_token(secret, name, value, expires_at=-1L)
+        signed_cookie_token(secret, cookie_name, value, expires_at=-1L)
       } else {
-        signed_cookie_token(secret, name, value, expires_at=deadline)
+        signed_cookie_token(secret, cookie_name, value, expires_at=deadline)
       }
-    None => signed_cookie_token(secret, name, value)
+    None => signed_cookie_token(secret, cookie_name, value)
   }
   self.set_cookie(
-    name,
+    cookie_name,
     token,
     path?,
     max_age?,
@@ -671,8 +678,12 @@ pub fn Context::signed_cookie(
   name : String,
   secret : String,
 ) -> String? {
-  match self.cookie(name) {
-    Some(token) => verify_signed_cookie_token(secret, name, token)
+  let cookie_name = sanitize_cookie_token(name, true)
+  if cookie_name == "" {
+    return None
+  }
+  match self.cookie(cookie_name) {
+    Some(token) => verify_signed_cookie_token(secret, cookie_name, token)
     None => None
   }
 }
