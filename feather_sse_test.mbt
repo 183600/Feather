@@ -285,3 +285,27 @@ async test "sse routes run application middleware and merge its headers" {
     assert_eq(client.read_all().text(), "data: live\n\n")
   })
 }
+
+///|
+async test "head describes an sse endpoint without starting it" {
+  let started : Ref[Bool] = Ref(false)
+  let app = @feather.App::new().sse("/events", async fn(_ctx, sse) {
+    started.val = true
+    sse.send("live")
+  })
+  with_sse_server(app, client => {
+    client.request(@http.RequestMethod::Head, "/events")
+    let response = client.end_request()
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Type")),
+      Some("text/event-stream; charset=utf-8"),
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Cache-Control")),
+      Some("no-cache"),
+    )
+    assert_false(started.val)
+    assert_eq(client.read_all().text(), "")
+  })
+}

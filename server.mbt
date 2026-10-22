@@ -538,7 +538,28 @@ async fn send_file_response(
   file : FileResponse,
   head : Bool,
   request : @http.Request,
+  connect~ : Bool = false,
 ) -> Unit {
+  // A 2xx CONNECT response establishes a tunnel rather than carrying a
+  // representation, so the prepared file is not sent and no length is framed.
+  let connect_tunnel = connect &&
+    response.status >= 200 &&
+    response.status < 300
+  if connect_tunnel {
+    let headers = static_base_headers(response.headers, response.cookies, 1)
+    headers.remove(header_content_length)
+    headers.remove(header_content_type)
+    headers.remove(header_content_encoding)
+    send_with_date(
+      conn,
+      response.status,
+      status_text(response.status),
+      headers,
+      cookies=response.cookies,
+    )
+    conn.end_response()
+    return
+  }
   let handle = @fs.open(file.path, mode=@fs.ReadOnly) catch {
     _ => {
       send_static_error(
@@ -891,6 +912,7 @@ async fn send_response(
   conn : @http.ServerConnection,
   response : Response,
   head : Bool,
+  connect~ : Bool = false,
 ) -> Unit {
   let headers : @http.Headers = Map([], capacity=response.headers.length() + 1)
   for name, value in response.headers {
@@ -900,7 +922,15 @@ async fn send_response(
     }
     headers.set(header_key(name), value)
   }
-  let body_allowed = response.status >= 200 &&
+  // RFC 9110 §9.3.6: a 2xx response to CONNECT has no content and must not
+  // carry Content-Length or Transfer-Encoding. The runtime refuses to write a
+  // body for such a response, so framing it with a length would abort the
+  // connection.
+  let connect_tunnel = connect &&
+    response.status >= 200 &&
+    response.status < 300
+  let body_allowed = !connect_tunnel &&
+    response.status >= 200 &&
     response.status != 204 &&
     response.status != 205 &&
     response.status != 304
@@ -917,7 +947,9 @@ async fn send_response(
       None => Some(encode_utf8_lossy(response.body.view()))
     }
   }
-  if has_body {
+  if connect_tunnel {
+    headers.remove(header_content_length)
+  } else if has_body {
     // The body is fully buffered, so its byte length is authoritative: a
     // `Content-Length` seeded by middleware or copied from the handler must not
     // frame a different number of bytes than are actually written.
@@ -1066,9 +1098,11 @@ async fn send_context_response(
   request : @http.Request,
 ) -> Unit {
   finalize_dynamic_response(app, request, ctx)
+  let connect = request.meth is @http.Connect
   match ctx.file_response() {
-    Some(file) => send_file_response(conn, ctx.response, file, head, request)
-    None => send_response(conn, ctx.response, head)
+    Some(file) =>
+      send_file_response(conn, ctx.response, file, head, request, connect~)
+    None => send_response(conn, ctx.response, head, connect~)
   }
 }
 
@@ -1885,18 +1919,19 @@ async fn handle_websocket(
   handler : WebSocketHandler,
   params : Map[String, String],
   route_chain : Handler,
+  head : Bool,
 ) -> Unit {
   let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
-      send_error_and_close(conn, 413, "413 Payload Too Large", false)
+      send_error_and_close(conn, 413, "413 Payload Too Large", head)
       return
     }
     MalformedRequestBody => {
-      send_simple(conn, 400, "400 Bad Request", false)
+      send_simple(conn, 400, "400 Bad Request", head)
       return
     }
     _ => {
-      send_error_and_close(conn, 500, "500 Internal Server Error", false)
+      send_error_and_close(conn, 500, "500 Internal Server Error", head)
       return
     }
   }
@@ -1908,7 +1943,15 @@ async fn handle_websocket(
     ctx.state.set(PARAM_PREFIX + name, value)
   }
   if !app.run_async_middleware(ctx, route_chain) {
-    send_context_response(app, conn, ctx, false, request)
+    send_context_response(app, conn, ctx, head, request)
+    return
+  }
+  if head {
+    // A WebSocket endpoint only has a successful GET response in the form of
+    // the `101` upgrade handshake, which cannot be represented by HEAD. Report
+    // the method as not allowed instead of pretending the route does not exist.
+    method_not_allowed_with_allow(ctx, "GET")
+    send_context_response(app, conn, ctx, true, request)
     return
   }
   let socket = @websocket.from_http_server(request, conn) catch { _ => return }
@@ -1920,45 +1963,10 @@ async fn handle_websocket(
 }
 
 ///|
-/// Stream server-sent events for a handler registered with `App::sse`.
-///
-/// The response header is sent before the handler runs so events are delivered
-/// while the handler is still producing them. A handler failure (most often a
-/// client disconnect surfacing as a write error) just tears the stream down.
-async fn handle_sse(
-  app : App,
-  request : @http.Request,
-  body : &@io.Reader,
-  conn : @http.ServerConnection,
-  handler : SseHandler,
-  params : Map[String, String],
-  route_chain : Handler,
-) -> Unit {
-  let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
-    PayloadTooLarge => {
-      send_error_and_close(conn, 413, "413 Payload Too Large", false)
-      return
-    }
-    MalformedRequestBody => {
-      send_simple(conn, 400, "400 Bad Request", false)
-      return
-    }
-    _ => {
-      send_error_and_close(conn, 500, "500 Internal Server Error", false)
-      return
-    }
-  }
-  let ctx = app.context_for_request(req)
-  defer ctx.run_cleanups()
-  attach_raw_body(ctx, raw_body)
-  ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
-  for name, value in params {
-    ctx.state.set(PARAM_PREFIX + name, value)
-  }
-  if !app.run_async_middleware(ctx, route_chain) {
-    send_context_response(app, conn, ctx, false, request)
-    return
-  }
+/// Headers the server sends when an SSE handler starts. Building them before
+/// invoking the handler also lets a HEAD request describe the same response
+/// without starting the event stream.
+fn sse_response_headers(ctx : Context) -> @http.Headers {
   let headers : @http.Headers = Map(
     [],
     capacity=ctx.response.headers.length() + 3,
@@ -1981,7 +1989,56 @@ async fn handle_sse(
   if ctx.response.cookies.length() > 0 {
     headers.remove(header_set_cookie)
   }
+  headers
+}
+
+///|
+/// Stream server-sent events for a handler registered with `App::sse`.
+///
+/// The response header is sent before the handler runs so events are delivered
+/// while the handler is still producing them. A handler failure (most often a
+/// client disconnect surfacing as a write error) just tears the stream down.
+async fn handle_sse(
+  app : App,
+  request : @http.Request,
+  body : &@io.Reader,
+  conn : @http.ServerConnection,
+  handler : SseHandler,
+  params : Map[String, String],
+  route_chain : Handler,
+  head : Bool,
+) -> Unit {
+  let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
+    PayloadTooLarge => {
+      send_error_and_close(conn, 413, "413 Payload Too Large", head)
+      return
+    }
+    MalformedRequestBody => {
+      send_simple(conn, 400, "400 Bad Request", head)
+      return
+    }
+    _ => {
+      send_error_and_close(conn, 500, "500 Internal Server Error", head)
+      return
+    }
+  }
+  let ctx = app.context_for_request(req)
+  defer ctx.run_cleanups()
+  attach_raw_body(ctx, raw_body)
+  ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
+  for name, value in params {
+    ctx.state.set(PARAM_PREFIX + name, value)
+  }
+  if !app.run_async_middleware(ctx, route_chain) {
+    send_context_response(app, conn, ctx, head, request)
+    return
+  }
+  let headers = sse_response_headers(ctx)
   send_with_date(conn, 200, "OK", headers, cookies=ctx.response.cookies)
+  if head {
+    conn.end_response()
+    return
+  }
   conn.flush() catch {
     _ => {
       conn.close()
@@ -2012,18 +2069,19 @@ async fn handle_stream(
   handler : StreamHandler,
   params : Map[String, String],
   route_chain : Handler,
+  head : Bool,
 ) -> Unit {
   let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
     PayloadTooLarge => {
-      send_error_and_close(conn, 413, "413 Payload Too Large", false)
+      send_error_and_close(conn, 413, "413 Payload Too Large", head)
       return
     }
     MalformedRequestBody => {
-      send_simple(conn, 400, "400 Bad Request", false)
+      send_simple(conn, 400, "400 Bad Request", head)
       return
     }
     _ => {
-      send_error_and_close(conn, 500, "500 Internal Server Error", false)
+      send_error_and_close(conn, 500, "500 Internal Server Error", head)
       return
     }
   }
@@ -2035,7 +2093,21 @@ async fn handle_stream(
     ctx.state.set(PARAM_PREFIX + name, value)
   }
   if !app.run_async_middleware(ctx, route_chain) {
-    send_context_response(app, conn, ctx, false, request)
+    send_context_response(app, conn, ctx, head, request)
+    return
+  }
+  if head {
+    // A HEAD request gets the response header an empty stream would send, but
+    // the handler is not started because it may stream indefinitely.
+    let stream = Stream::new(
+      conn,
+      status=ctx.response.status,
+      headers=stream_seed_headers(ctx.response),
+      cookies=ctx.response.cookies,
+    )
+    stream.close() catch {
+      _ => conn.close()
+    }
     return
   }
   let stream = Stream::new(
@@ -2102,23 +2174,27 @@ async fn handle_request(
     return
   }
   send_continue_if_expected(request, conn)
-  if request.meth is @http.Get {
+  if request.meth is @http.Get || head {
     match app.resolve_websocket_full(request.path) {
       Some((handler, params, middlewares)) => {
-        handle_websocket(app, request, body, conn, handler, params, middlewares)
+        handle_websocket(
+          app, request, body, conn, handler, params, middlewares, head,
+        )
         return
       }
       None =>
         match app.resolve_sse_full(request.path) {
           Some((handler, params, middlewares)) => {
-            handle_sse(app, request, body, conn, handler, params, middlewares)
+            handle_sse(
+              app, request, body, conn, handler, params, middlewares, head,
+            )
             return
           }
           None =>
             match app.resolve_stream_full(request.path) {
               Some((handler, params, middlewares)) => {
                 handle_stream(
-                  app, request, body, conn, handler, params, middlewares,
+                  app, request, body, conn, handler, params, middlewares, head,
                 )
                 return
               }
@@ -2128,7 +2204,7 @@ async fn handle_request(
     }
   }
   // Dynamic routes take precedence over static mounts, so check them first.
-  // A failed GET resolve above already proves there is no websocket, SSE or
+  // A failed async resolve above already proves there is no websocket, SSE or
   // stream route for the path, so only the ordinary route table still needs
   // checking.
   let static_eligible = if request.meth is @http.Get {
@@ -2217,8 +2293,22 @@ async fn handle_request(
     }
   }
   match file {
-    Some(file) => send_file_response(conn, response, file, head, request)
-    None => send_response(conn, response, head)
+    Some(file) =>
+      send_file_response(
+        conn,
+        response,
+        file,
+        head,
+        request,
+        connect=request.meth is @http.Connect,
+      )
+    None =>
+      send_response(
+        conn,
+        response,
+        head,
+        connect=request.meth is @http.Connect,
+      )
   }
 }
 

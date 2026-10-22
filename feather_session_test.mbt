@@ -434,6 +434,30 @@ test "session writes refresh the cookie on later requests" {
 }
 
 ///|
+test "session_set refuses a destroyed session" {
+  let store = @feather.SessionStore::new()
+  let app = @feather.App::new()
+    .use(@feather.middleware_session(store))
+    .get("/login", fn(ctx) {
+      ignore(ctx.session_set("user", "alice"))
+      ctx.text(200, "ok")
+    })
+    .get("/logout", fn(ctx) {
+      assert_true(ctx.session_destroy())
+      ctx.text(200, ctx.session_set("user", "bob").to_string())
+    })
+  let login = app.respond(session_request("/login"))
+  let id = login.cookies[0].value
+  let logout = app.respond(
+    session_request("/logout", cookie="feather_session=" + id),
+  )
+  assert_eq(logout.body, "false")
+  assert_eq(logout.cookies.length(), 1)
+  assert_eq(logout.cookies[0].value, "")
+  assert_eq(store.count(), 0)
+}
+
+///|
 test "session destroy clears a cookie with no live session" {
   let store = @feather.SessionStore::new()
   let app = @feather.App::new()

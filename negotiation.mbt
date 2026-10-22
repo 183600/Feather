@@ -610,7 +610,7 @@ fn encoding_quality_from(
   let mut exact_q = -1
   let mut star_q = -1
   for entry in entries {
-    if entry.token.equal_ignore_ascii_case(coding) {
+    if encoding_token_matches(entry.token, coding) {
       exact_q = entry.quality
     } else if entry.token == "*" {
       star_q = entry.quality

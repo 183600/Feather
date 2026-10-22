@@ -175,6 +175,17 @@ test "accepts_encoding rejects codings that are not listed" {
 }
 
 ///|
+test "accepts_encoding treats x-gzip as the gzip coding" {
+  assert_true(encoding_ctx("x-gzip").accepts_encoding("gzip"))
+  assert_true(encoding_ctx("gzip").accepts_encoding("x-gzip"))
+  assert_false(encoding_ctx("x-gzip;q=0").accepts_encoding("gzip"))
+  assert_eq(
+    encoding_ctx("x-gzip;q=0.9").preferred_encoding(["gzip"]),
+    Some("gzip"),
+  )
+}
+
+///|
 test "accepts_encoding treats identity as acceptable by default" {
   assert_true(encoding_ctx("gzip").accepts_encoding("identity"))
   assert_true(encoding_ctx("gzip, br").accepts_encoding("identity"))

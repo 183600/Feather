@@ -323,3 +323,19 @@ async test "stream header names are case-insensitive" {
     assert_eq(client.read_all().text(), "ok")
   })
 }
+
+///|
+async test "head describes a stream endpoint without starting it" {
+  let started : Ref[Bool] = Ref(false)
+  let app = @feather.App::new().stream("/feed", async fn(_ctx, stream) {
+    started.val = true
+    stream.write("live")
+  })
+  with_stream_server(app, client => {
+    client.request(@http.RequestMethod::Head, "/feed")
+    let response = client.end_request()
+    assert_eq(response.code, 200)
+    assert_false(started.val)
+    assert_eq(client.read_all().text(), "")
+  })
+}

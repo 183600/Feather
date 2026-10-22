@@ -79,6 +79,20 @@ test "context basic_auth rejects empty credentials" {
 }
 
 ///|
+test "context basic_auth rejects CRLF after the scheme" {
+  let token = @feather.base64_encode(@utf8.encode("alice:s3cret"))
+  for header in ["Basic\r\n" + token, "Basic\r" + token, "Basic\n" + token] {
+    let ctx = @feather.Context::new({
+      method: "GET",
+      path: "/private",
+      headers: Map([("Authorization", header)]),
+      body: "",
+    })
+    assert_eq(ctx.basic_auth(), None, msg=header)
+  }
+}
+
+///|
 test "basic auth middleware challenges missing credentials" {
   let app = @feather.App::new()
     .use(@feather.middleware_basic_auth(Map([("admin", "secret")])))

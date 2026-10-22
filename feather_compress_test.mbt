@@ -269,3 +269,38 @@ async test "feather facade can enable compression" {
     assert_eq(@utf8.decode_lossy(decoded), payload)
   })
 }
+
+///|
+async test "x-gzip negotiates the gzip coding" {
+  let payload = "historical gzip spelling ".repeat(128)
+  let app = @feather.App::new()
+    .compress(min_size=0)
+    .get("/big", fn(ctx) { ctx.text(200, payload) })
+  let response = app.respond_async({
+    method: "GET",
+    path: "/big",
+    headers: Map([("Accept-Encoding", "x-gzip")]),
+    body: "",
+  })
+  assert_eq(response.headers.get("Content-Encoding"), Some("gzip"))
+  let decoded = decode_gzip_body(response.data.unwrap())
+  assert_eq(@utf8.decode_lossy(decoded), payload)
+}
+
+///|
+async test "refusing identity without an alternative yields 406" {
+  let payload = "no acceptable coding ".repeat(128)
+  let app = @feather.App::new()
+    .compress(min_size=0)
+    .get("/big", fn(ctx) { ctx.text(200, payload) })
+  let response = app.respond_async({
+    method: "GET",
+    path: "/big",
+    headers: Map([("Accept-Encoding", "identity;q=0")]),
+    body: "",
+  })
+  assert_eq(response.status, 406)
+  assert_eq(response.body, "406 Not Acceptable")
+  assert_eq(response.headers.get("Content-Encoding"), None)
+  assert_eq(response.headers.get("Vary"), Some("Accept-Encoding"))
+}

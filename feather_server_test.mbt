@@ -321,3 +321,24 @@ async test "server strips bodies from no-content responses" {
     assert_eq(client.read_all().text(), "")
   })
 }
+
+///|
+async test "connect success responses are bodyless and unframed" {
+  let app = @feather.App::new().connect("/tunnel", fn(ctx) {
+    ctx.text(200, "hello-connect")
+  })
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "CONNECT /tunnel HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n",
+      ),
+    )
+    let head = @async.with_timeout(2000, () => read_http_head(conn)) catch {
+      _ => ""
+    }
+    assert_true(head.has_prefix("HTTP/1.1 200"), msg=head)
+    let lower = head.to_lower()
+    assert_false(lower.contains("content-length"), msg=head)
+    assert_false(lower.contains("transfer-encoding"), msg=head)
+  })
+}

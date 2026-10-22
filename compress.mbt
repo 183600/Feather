@@ -107,6 +107,19 @@ fn parse_quality(value : StringView) -> Int32 {
 }
 
 ///|
+/// Whether an `Accept-Encoding` token names the same coding as `coding`.
+///
+/// RFC 9110 §8.4.1.3 asks recipients to treat `x-gzip` as equivalent to
+/// `gzip`, so the historical spelling selects the same codec and quality.
+fn encoding_token_matches(token : StringView, coding : StringView) -> Bool {
+  token.equal_ignore_ascii_case(coding) ||
+  (coding.equal_ignore_ascii_case("gzip".view()) &&
+    token.equal_ignore_ascii_case("x-gzip".view())) ||
+  (coding.equal_ignore_ascii_case("x-gzip".view()) &&
+    token.equal_ignore_ascii_case("gzip".view()))
+}
+
+///|
 /// Quality explicitly assigned to `coding` by parsed entries, or `-1` when the
 /// header neither names it nor supplies a wildcard.
 fn explicit_encoding_quality(
@@ -116,7 +129,7 @@ fn explicit_encoding_quality(
   let mut exact : Int32 = -1
   let mut star : Int32 = -1
   for entry in entries {
-    if entry.token.equal_ignore_ascii_case(coding) {
+    if encoding_token_matches(entry.token, coding) {
       exact = entry.quality
     } else if entry.token == "*" {
       star = entry.quality
@@ -161,6 +174,19 @@ fn accept_encoding_allows_gzip_cached(header : String) -> Bool {
     return false
   }
   encoding_entries_prefer_gzip(encoding_entries_cached(header))
+}
+
+///|
+/// Whether the client explicitly assigned `identity` a zero quality, leaving no
+/// acceptable content coding for a representation the server cannot encode.
+fn accept_encoding_refuses_identity(header : String) -> Bool {
+  if trim_ascii_space(header.view()).is_empty() {
+    return false
+  }
+  explicit_encoding_quality(
+    encoding_entries_cached(header),
+    "identity".view(),
+  ) == 0
 }
 
 ///|
@@ -304,7 +330,9 @@ async fn gzip_compress(data : Bytes) -> Bytes {
 /// `accept_encoding` is the `Accept-Encoding` header of the request, or
 /// `None` when the request carries none. The body is left alone when the
 /// response is not compressible, when the client does not accept gzip, or
-/// when the compressed body would not be smaller than the original one.
+/// when the compressed body would not be smaller than the original one. If the
+/// client explicitly rejects identity and no other coding is acceptable, the
+/// response becomes `406 Not Acceptable`.
 async fn compress_response(
   accept_encoding : String?,
   response : Response,
@@ -345,6 +373,23 @@ async fn compress_response(
     None => return
   }
   if !accept_encoding_allows_gzip_cached(accept_encoding) {
+    // The client explicitly refused identity and the response has a
+    // compressible media type, so there is no acceptable content coding.
+    if accept_encoding_refuses_identity(accept_encoding) {
+      response.status = 406
+      response.body = "406 Not Acceptable"
+      response.data = None
+      set_header_ignore_case(
+        response.headers,
+        "Content-Type",
+        "text/plain; charset=utf-8",
+      )
+      ignore(remove_header_ignore_case(response.headers, "Content-Length"))
+      ignore(remove_header_ignore_case(response.headers, "Content-Encoding"))
+      ignore(remove_header_ignore_case(response.headers, "Content-Range"))
+      ignore(remove_header_ignore_case(response.headers, "ETag"))
+      ignore(remove_header_ignore_case(response.headers, "Last-Modified"))
+    }
     return
   }
   let body_bytes = match response.data {

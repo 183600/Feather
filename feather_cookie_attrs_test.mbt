@@ -122,3 +122,14 @@ test "negative max_age is rendered as an immediate expiry" {
   assert_true(header.contains("Max-Age=0"))
   assert_false(header.contains("Max-Age=-10"))
 }
+
+///|
+test "removing the Set-Cookie header drops pending cookies" {
+  let ctx = cookie_attr_ctx()
+  ctx.set_cookie("sid", "1")
+  ctx.add_cookie("pref", "dark")
+  assert_true(ctx.remove_response_header("set-cookie"))
+  assert_eq(ctx.response.headers.get("Set-Cookie"), None)
+  assert_eq(ctx.response.cookies.length(), 0)
+  assert_false(ctx.remove_response_header("Set-Cookie"))
+}

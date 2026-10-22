@@ -394,7 +394,7 @@ pub fn Context::session_keys(self : Context) -> Array[String] {
 ///|
 /// Write a value into the session, marking it for saving after the handler
 /// returns. Returns `false` when the request has no session, for example when
-/// `middleware_session` is not installed.
+/// `middleware_session` is not installed, or when the session was destroyed.
 pub fn Context::session_set(
   self : Context,
   key : String,
@@ -402,6 +402,11 @@ pub fn Context::session_set(
 ) -> Bool {
   match self.session_materialized() {
     Some(session) => {
+      // The middleware clears a destroyed session at persist time, so a write
+      // must not claim to have been saved when it will be discarded.
+      if session.destroyed {
+        return false
+      }
       session.data.set(key, value)
       session.modified = true
       true

@@ -1334,7 +1334,7 @@ pub fn Router::route(
 pub fn Router::matching(self : Router, meth : String, path : String) -> Route? {
   if self.trees.is_empty() {
     return Some({
-      path,
+      path: clean_path_view(path).to_owned(),
       method: normalize_method(meth),
       params: Map([], capacity=0),
       wildcard: "",
@@ -1997,7 +1997,17 @@ pub fn Context::remove_response_header(
   self : Context,
   key : String,
 ) -> Bool {
-  remove_header_ignore_case(self.response.headers, key)
+  let removed = remove_header_ignore_case(self.response.headers, key)
+  // `set_cookie` records a pending cookie in addition to the raw header, and
+  // the server sends that array as the authoritative `Set-Cookie` lines.
+  // Removing the header must therefore drop those pending cookies too.
+  if key.view().equal_ignore_ascii_case("Set-Cookie".view()) &&
+    !self.response.cookies.is_empty() {
+    self.response.cookies.clear()
+    true
+  } else {
+    removed
+  }
 }
 
 ///|
@@ -3752,7 +3762,7 @@ pub fn Context::basic_auth(self : Context) -> (String, String)? {
   let len = rest.length()
   while i < len {
     let c = rest.unsafe_get(i).to_int()
-    if c == 32 || c == 9 || c == 13 || c == 10 {
+    if c == 32 || c == 9 {
       i += 1
     } else {
       break
@@ -3884,20 +3894,25 @@ fn parse_bool_value(value : StringView) -> Bool? {
 }
 
 ///|
+///|
+/// The percent-decoded route parameter `name` parsed as a signed 32-bit
+/// integer. Returns `None` when the parameter is absent or out of range.
 pub fn Context::param_int(self : Context, name : String) -> Int32? {
-  parse_int_value(self.param(name).view())
+  parse_int_value(self.param_decoded(name).view())
 }
 
 ///|
-/// The route parameter `name` parsed as a signed 64-bit integer. Returns
-/// `None` when the parameter is absent or does not fit in `Int64`.
+/// The percent-decoded route parameter `name` parsed as a signed 64-bit
+/// integer. Returns `None` when the parameter is absent or does not fit in
+/// `Int64`.
 pub fn Context::param_int64(self : Context, name : String) -> Int64? {
-  parse_int64_value(self.param(name).view())
+  parse_int64_value(self.param_decoded(name).view())
 }
 
 ///|
+/// The percent-decoded route parameter `name` parsed as a boolean.
 pub fn Context::param_bool(self : Context, name : String) -> Bool? {
-  parse_bool_value(self.param(name).view())
+  parse_bool_value(self.param_decoded(name).view())
 }
 
 ///|
@@ -3933,9 +3948,10 @@ fn parse_float_value(value : StringView) -> Double? {
 }
 
 ///|
-/// The route parameter `name` parsed as a finite floating-point number.
+/// The percent-decoded route parameter `name` parsed as a finite
+/// floating-point number.
 pub fn Context::param_float(self : Context, name : String) -> Double? {
-  parse_float_value(self.param(name).view())
+  parse_float_value(self.param_decoded(name).view())
 }
 
 ///|
