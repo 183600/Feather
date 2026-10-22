@@ -3083,66 +3083,103 @@ async fn handle_request(
       None => ()
     }
   }
-  let (response, file, auto_etag, compress, compress_min_size) = if app.timeout >
-    0 {
-    @async.with_timeout(app.timeout, () => {
+  let response_started = Ref(false)
+  let send_dynamic = () => {
+    let (response, file, auto_etag, compress, compress_min_size) =
       build_response(app, request, body, conn)
-    }) catch {
-      @async.TimeoutError => {
-        send_error_and_close(conn, 504, "504 Gateway Timeout", head)
-        return
-      }
-      PayloadTooLarge => {
-        send_error_and_close(conn, 413, "413 Payload Too Large", head)
-        return
-      }
-      MalformedRequestBody => {
-        send_simple(conn, 400, "400 Bad Request", head)
-        return
-      }
+    // From here on the response header may be written. A timeout racing with
+    // the first write must close the connection instead of sending a second
+    // response on a connection that already started framing a body.
+    response_started.val = true
+    match file {
+      Some(file) =>
+        send_file_response(
+          conn,
+          response,
+          file,
+          head,
+          request,
+          connect=request.meth is @http.Connect,
+          auto_etag~,
+          compress_enabled=compress,
+          compress_min_size~,
+        )
+      None =>
+        send_response(
+          conn,
+          response,
+          head,
+          connect=request.meth is @http.Connect,
+        )
+    }
+  }
+  if app.timeout > 0 {
+    @async.with_timeout(app.timeout, send_dynamic) catch {
+      @async.TimeoutError =>
+        if response_started.val {
+          conn.close()
+        } else {
+          send_error_and_close(conn, 504, "504 Gateway Timeout", head)
+        }
+      PayloadTooLarge =>
+        if response_started.val {
+          conn.close()
+        } else {
+          send_error_and_close(conn, 413, "413 Payload Too Large", head)
+        }
+      MalformedRequestBody =>
+        if response_started.val {
+          conn.close()
+        } else {
+          send_simple(conn, 400, "400 Bad Request", head)
+        }
       err => {
         ignore(err)
-        send_error_and_close(conn, 500, "500 Internal Server Error", head)
-        return
+        if response_started.val {
+          conn.close()
+        } else {
+          send_error_and_close(conn, 500, "500 Internal Server Error", head)
+        }
       }
     }
   } else {
-    build_response(app, request, body, conn) catch {
-      PayloadTooLarge => {
-        send_error_and_close(conn, 413, "413 Payload Too Large", head)
-        return
+    let (response, file, auto_etag, compress, compress_min_size) =
+      build_response(app, request, body, conn) catch {
+        PayloadTooLarge => {
+          send_error_and_close(conn, 413, "413 Payload Too Large", head)
+          return
+        }
+        MalformedRequestBody => {
+          send_simple(conn, 400, "400 Bad Request", head)
+          return
+        }
+        err => {
+          ignore(err)
+          send_error_and_close(conn, 500, "500 Internal Server Error", head)
+          return
+        }
       }
-      MalformedRequestBody => {
-        send_simple(conn, 400, "400 Bad Request", head)
-        return
-      }
-      err => {
-        ignore(err)
-        send_error_and_close(conn, 500, "500 Internal Server Error", head)
-        return
-      }
+    match file {
+      Some(file) =>
+        send_file_response(
+          conn,
+          response,
+          file,
+          head,
+          request,
+          connect=request.meth is @http.Connect,
+          auto_etag~,
+          compress_enabled=compress,
+          compress_min_size~,
+        )
+      None =>
+        send_response(
+          conn,
+          response,
+          head,
+          connect=request.meth is @http.Connect,
+        )
     }
-  }
-  match file {
-    Some(file) =>
-      send_file_response(
-        conn,
-        response,
-        file,
-        head,
-        request,
-        connect=request.meth is @http.Connect,
-        auto_etag~,
-        compress_enabled=compress,
-        compress_min_size~,
-      )
-    None =>
-      send_response(
-        conn,
-        response,
-        head,
-        connect=request.meth is @http.Connect,
-      )
   }
 }
 
