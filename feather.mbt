@@ -425,7 +425,7 @@ fn match_dynamic_node(
   let end = segment_end(path, start)
   match node.static_children {
     Some(children) =>
-      match children.get_from_string(path[start:end]) {
+      match static_child_for(children, path[start:end]) {
         Some(child) =>
           match match_dynamic_node(child, path, end + 1) {
             Some(outcome) => return Some(outcome)
@@ -506,7 +506,7 @@ fn match_static_node(
   let end = segment_end(path, start)
   match node.static_children {
     Some(children) =>
-      match children.get_from_string(path[start:end]) {
+      match static_child_for(children, path[start:end]) {
         Some(child) => match_static_node(child, path, end + 1)
         None => None
       }
@@ -519,6 +519,42 @@ fn clean_route_path(path : String) -> String {
   match path_head_end(path) {
     Some(index) => path[:index].to_owned()
     None => path
+  }
+}
+
+///|
+/// Normalize one static route segment to the decoded spelling used for
+/// matching. A route registered as `/café` therefore matches both the raw and
+/// the percent-encoded request target, while a percent-encoded registration
+/// such as `/caf%C3%A9` is treated as the same route. Parameters and wildcard
+/// captures keep the raw request text, so `%2F` still cannot become a path
+/// separator.
+fn normalize_static_route_segment(segment : StringView) -> String {
+  if segment.contains("%") {
+    decode_url_path(segment)
+  } else {
+    segment.to_owned()
+  }
+}
+
+///|
+/// Encode a static route segment for URL generation. The stored route segment
+/// is decoded first so an already percent-encoded registration is not
+/// double-encoded.
+fn encode_static_route_segment(segment : StringView) -> String {
+  url_encode(decode_url_path(segment))
+}
+
+///|
+/// Look up a static child by the decoded form of the request segment.
+fn static_child_for(
+  children : Map[String, RouteNode],
+  segment : StringView,
+) -> RouteNode? {
+  if segment.contains("%") {
+    children.get(decode_url_path(segment))
+  } else {
+    children.get_from_string(segment)
   }
 }
 
@@ -608,7 +644,7 @@ pub fn Router::add_route(
       break
     } else {
       pattern_kinds.push(0)
-      let key = segment.to_owned()
+      let key = normalize_static_route_segment(segment)
       let child = match node.static_children {
         Some(children) =>
           match children.get(key) {
@@ -850,7 +886,7 @@ pub fn Router::url_for(
       // render them into a URL that would bind different parameters.
       break
     } else {
-      builder.write_stringview(segment)
+      builder.write_string(encode_static_route_segment(segment))
     }
     i = skip_slashes(path, end)
   }
@@ -2625,8 +2661,8 @@ fn forwarded_element_param(element : StringView, name : StringView) -> String? {
 ///|
 /// Normalize an RFC 7239 `for=` node identifier to a client address: an
 /// optional port is dropped and IPv6 literals keep their brackets, matching
-/// `Context::ip`. Obfuscated (`_...`) and `unknown` nodes carry no address,
-/// so they report `None`.
+/// `Context::ip`. Obfuscated (`_...`), `unknown`, and malformed nodes carry no
+/// address, so they report `None`.
 fn normalize_forwarded_for(value : StringView) -> String? {
   if value.is_empty() ||
     value.equal_ignore_ascii_case("unknown".view()) ||
@@ -2634,10 +2670,10 @@ fn normalize_forwarded_for(value : StringView) -> String? {
     return None
   }
   if value.unsafe_get(0) == ('[' : UInt16) {
-    return match value.find("]") {
-      Some(index) => Some(value[:index + 1].to_owned())
-      None => Some(value.to_owned())
-    }
+    // Reuse the authority validator so a malformed literal such as
+    // `[::1]junk`, `[::1]:bad`, or `[not-an-ip]` cannot be truncated into a
+    // trusted client address.
+    return host_authority_host(value)
   }
   let length = value.length()
   let mut i = 0
@@ -2650,15 +2686,26 @@ fn normalize_forwarded_for(value : StringView) -> String? {
     }
     i = i + 1
   }
-  // A single colon separates an IPv4 address from its port; several colons
-  // mean a bare IPv6 address, which has no port to strip.
-  if colons == 1 && last_colon > 0 {
+  // A single colon separates an IPv4 address or host name from its port;
+  // several colons mean a bare IPv6 address, which has no port to strip.
+  if colons == 1 {
+    if last_colon <= 0 {
+      return None
+    }
     let host = value[:last_colon]
     // `unknown` is a node name, not an address, even when it carries a port.
     if host.equal_ignore_ascii_case("unknown".view()) {
       return None
     }
+    if !valid_host_port(value[last_colon + 1:]) {
+      return None
+    }
     return Some(host.to_owned())
+  }
+  // Several colons without brackets are a bare IPv6 literal, so validate it
+  // instead of trusting an arbitrary client-chosen string as an address.
+  if colons > 1 && !valid_bracketed_host(value) {
+    return None
   }
   Some(value.to_owned())
 }
@@ -6879,11 +6926,24 @@ pub fn Context::multipart(self : Context) -> Array[MultipartPart] {
 }
 
 ///|
+/// Whether a part carries a `filename` (or RFC 8187 `filename*`) parameter.
+/// The parameter's presence marks a file part even when its value is empty,
+/// which is what browsers submit for an empty file input.
+fn multipart_part_is_file(part : MultipartPart) -> Bool {
+  match get_header_ignore_case(part.headers, "Content-Disposition") {
+    Some(value) =>
+      header_parameter(value.view(), "filename") is Some(_) ||
+      header_parameter(value.view(), "filename*") is Some(_)
+    None => false
+  }
+}
+
+///|
 pub fn Context::multipart_value(self : Context, name : String) -> String {
   match self.multipart_entries() {
     Some(parts) => {
       for part in parts {
-        if part.filename == "" && part.name == name {
+        if !multipart_part_is_file(part) && part.name == name {
           return part.data
         }
       }
@@ -6898,7 +6958,7 @@ pub fn Context::multipart_file(self : Context, name : String) -> MultipartPart? 
   match self.multipart_entries() {
     Some(parts) => {
       for part in parts {
-        if part.name == name && part.filename != "" {
+        if part.name == name && multipart_part_is_file(part) {
           return Some(copy_multipart_part(part))
         }
       }
@@ -6921,7 +6981,7 @@ pub fn Context::multipart_values(
   match self.multipart_entries() {
     Some(parts) =>
       for part in parts {
-        if part.filename == "" && part.name == name {
+        if !multipart_part_is_file(part) && part.name == name {
           values.push(part.data)
         }
       }
@@ -6933,8 +6993,9 @@ pub fn Context::multipart_values(
 ///|
 /// Every uploaded file named `name`, in the order the parts appear in the body.
 /// Each returned part owns a copy of its header map, so callers may mutate the
-/// result without disturbing the parse cache. Returns an empty array when the
-/// request is not multipart or carries no such file.
+/// result without disturbing the parse cache. A part with an empty `filename`
+/// parameter is still a file part. Returns an empty array when the request is
+/// not multipart or carries no such file.
 pub fn Context::multipart_files(
   self : Context,
   name : String,
@@ -6943,7 +7004,7 @@ pub fn Context::multipart_files(
   match self.multipart_entries() {
     Some(parts) =>
       for part in parts {
-        if part.name == name && part.filename != "" {
+        if part.name == name && multipart_part_is_file(part) {
           files.push(copy_multipart_part(part))
         }
       }
@@ -10291,8 +10352,9 @@ fn valid_bracketed_host(view : StringView) -> Bool {
     return true
   }
   // A zone identifier follows `%` and is not part of the IPv6 address. In a
-  // URI it is usually percent-encoded (`%25eth0`), so keep this part
-  // permissive but reject separators that would break the authority.
+  // URI it is usually percent-encoded (`%25eth0`), so validate the zone text
+  // as unreserved characters or complete `%HH` escapes instead of accepting
+  // stray percent signs and separators.
   let address = match view.find("%") {
     Some(index) => {
       if index == 0 || index + 1 >= length {
@@ -10301,10 +10363,18 @@ fn valid_bracketed_host(view : StringView) -> Bool {
       let mut i = index + 1
       while i < length {
         let code = view.unsafe_get(i).to_int()
-        if !(is_host_name_character(code) || code == 37) {
+        if code == 37 {
+          if i + 2 >= length ||
+            hex_digit_value(view.unsafe_get(i + 1)) < 0 ||
+            hex_digit_value(view.unsafe_get(i + 2)) < 0 {
+            return false
+          }
+          i = i + 3
+        } else if is_host_name_character(code) || code == 126 {
+          i = i + 1
+        } else {
           return false
         }
-        i = i + 1
       }
       view[:index]
     }

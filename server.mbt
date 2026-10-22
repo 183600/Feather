@@ -600,6 +600,25 @@ async fn send_file_response(
     )
     return
   }
+  // A queued file response has no compressed variant, so a client that
+  // explicitly refuses identity has no acceptable representation.
+  let refuses_identity = match request.headers.get(header_accept_encoding) {
+    Some(value) => accept_encoding_refuses_identity(value)
+    None => false
+  }
+  if refuses_identity && status_allows_body(response.status) {
+    send_static_error(
+      conn,
+      response.headers,
+      response.cookies,
+      head,
+      406,
+      "406 Not Acceptable",
+      false,
+      vary_encoding=true,
+    )
+    return
+  }
   let size = handle.size() catch {
     _ => {
       send_static_error(
@@ -1463,6 +1482,7 @@ async fn send_static_error(
   code : Int32,
   body : String,
   precompressed : Bool,
+  vary_encoding~ : Bool = false,
 ) -> Unit {
   let bytes = encode_utf8_lossy(body.view())
   let headers = static_base_headers(extra_headers, cookies, 2)
@@ -1470,9 +1490,9 @@ async fn send_static_error(
   // prepared for a file response.
   headers.remove(header_content_encoding)
   headers.remove(header_content_range)
-  if precompressed {
+  if precompressed || vary_encoding {
     // Whether this path resolves to a file depends on `Accept-Encoding`, so
-    // caches must not reuse an identity 404 for a gzip-capable client.
+    // caches must not reuse an identity error for a gzip-capable client.
     add_vary_header(headers, "Accept-Encoding")
   }
   headers.set(header_content_type, "text/plain; charset=utf-8")
@@ -1525,13 +1545,18 @@ async fn serve_static_file(
   cookies : Array[@http.Cookie],
   auto_etag~ : Bool = true,
 ) -> Unit {
+  let accept_encoding = request.headers.get(header_accept_encoding)
+  let refuses_identity = match accept_encoding {
+    Some(value) => accept_encoding_refuses_identity(value)
+    None => false
+  }
   let mut gzip_handle : @fs.File? = None
   let base : @fs.File? = Some(@fs.open(file_path, mode=@fs.ReadOnly)) catch {
     _ => {
       // A mount may ship only the precompressed sibling of an asset, so probe
       // it before reporting the source file as missing.
       if precompressed {
-        match request.headers.get(header_accept_encoding) {
+        match accept_encoding {
           Some(value) =>
             // Here identity is unavailable, so any positive gzip quality is
             // enough; unlike the two-representation choice below, it does not
@@ -1543,9 +1568,41 @@ async fn serve_static_file(
         }
       }
       if gzip_handle is None {
-        send_static_error(
-          conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
-        )
+        if refuses_identity {
+          // A gzip-only asset still exists even when the client accepts no
+          // coding for it, so distinguish that from a genuinely missing file.
+          let sibling_exists = if precompressed {
+            match open_precompressed_gzip(file_path) {
+              Some(handle) => {
+                handle.close()
+                true
+              }
+              None => false
+            }
+          } else {
+            false
+          }
+          if sibling_exists {
+            send_static_error(
+              conn,
+              extra_headers,
+              cookies,
+              head,
+              406,
+              "406 Not Acceptable",
+              precompressed,
+              vary_encoding=true,
+            )
+          } else {
+            send_static_error(
+              conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
+            )
+          }
+        } else {
+          send_static_error(
+            conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
+          )
+        }
         return
       }
       None
@@ -1574,7 +1631,7 @@ async fn serve_static_file(
   if precompressed && gzip_handle is None {
     match base {
       Some(_) =>
-        match request.headers.get(header_accept_encoding) {
+        match accept_encoding {
           Some(value) =>
             if accept_encoding_allows_gzip_cached(value) {
               // The probe always runs: a `.gz` sibling may appear (or vanish)
@@ -1589,6 +1646,23 @@ async fn serve_static_file(
     }
   }
   let serving_gzip = gzip_handle is Some(_)
+  if !serving_gzip && refuses_identity {
+    match base {
+      Some(handle) => handle.close()
+      None => ()
+    }
+    send_static_error(
+      conn,
+      extra_headers,
+      cookies,
+      head,
+      406,
+      "406 Not Acceptable",
+      precompressed,
+      vary_encoding=true,
+    )
+    return
+  }
   let file = match gzip_handle {
     Some(handle) => {
       match base {
