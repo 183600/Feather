@@ -148,6 +148,7 @@ pub struct App {
   mut static_chain : ((Context) -> Unit raise)?
   mut async_chain : ((Context) -> Unit raise)?
   static_mounts : Array[StaticMount]
+  mount_middlewares : Array[(String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise])]
   mut no_route_handler : ((Context) -> Unit raise)?
   ws_router : Router
   ws_handlers : Map[String, async (Context, @websocket.Conn) -> Unit]

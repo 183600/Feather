@@ -356,6 +356,27 @@ fn set_not_acceptable(response : Response) -> Unit {
 }
 
 ///|
+/// Whether the response carries a representation whose content coding is
+/// subject to `Accept-Encoding`.
+///
+/// A bodyless 3xx response only carries redirect metadata; there is no
+/// representation body to encode, so a client that refuses identity must still
+/// receive the redirect. Other bodyless statuses (1xx, 204, 205 and 304) are
+/// already excluded by `status_allows_body`.
+fn has_negotiable_representation(response : Response) -> Bool {
+  if !status_allows_body(response.status) {
+    return false
+  }
+  if response.status >= 300 && response.status < 400 {
+    return match response.data {
+      Some(data) => data.length() > 0
+      None => !response.body.is_empty()
+    }
+  }
+  true
+}
+
+///|
 /// Enforce an explicit refusal of the identity coding when compression is
 /// disabled for this response.
 ///
@@ -368,10 +389,7 @@ fn reject_unacceptable_identity(
   accept_encoding : String?,
   response : Response,
 ) -> Unit {
-  if response.status < 200 ||
-    response.status == 204 ||
-    response.status == 205 ||
-    response.status == 304 {
+  if !has_negotiable_representation(response) {
     return
   }
   // A ranged representation cannot be re-encoded as a range of the encoded
@@ -443,6 +461,11 @@ async fn compress_response(
   if response.status < 200 ||
     response.status == 204 ||
     response.status == 205 {
+    return
+  }
+  // A bodyless redirect has no representation coding to negotiate. Leave the
+  // redirect intact even when the client refuses identity.
+  if !has_negotiable_representation(response) {
     return
   }
   let allows_gzip = match accept_encoding {

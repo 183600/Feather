@@ -841,7 +841,11 @@ async fn send_file_response(
     status_allows_body(response.status) &&
     response.status != 206 &&
     !no_transform &&
-    get_header_ignore_case(response.headers, "Content-Encoding") is None &&
+    // `identity` selects the unencoded representation, not "leave the bytes
+    // alone": the compression stage may replace it exactly like a response
+    // with no Content-Encoding at all. A non-identity coding is already the
+    // selected representation and is kept below.
+    !existing_non_identity &&
     get_header_ignore_case(response.headers, "Content-Range") is None &&
     content_type_is_compressible(effective_content_type.view())
   let mut compressed_body : Bytes? = None
@@ -1999,12 +2003,14 @@ async fn static_index_available(
   if !precompressed {
     return false
   }
-  match accept_encoding {
-    Some(value) =>
-      accept_encoding_accepts_gzip(value) &&
-      static_target_is_regular_file(index_path + ".gz")
-    None => false
+  // A request without `Accept-Encoding` accepts any content coding
+  // (RFC 9110 §12.5.3), so a precompressed-only index is still a usable
+  // representation when identity is absent.
+  let accepts_gzip = match accept_encoding {
+    Some(value) => accept_encoding_accepts_gzip(value)
+    None => true
   }
+  accepts_gzip && static_target_is_regular_file(index_path + ".gz")
 }
 
 ///|
@@ -2044,15 +2050,16 @@ async fn serve_static_file(
       // A mount may ship only the precompressed sibling of an asset, so probe
       // it before reporting the source file as missing.
       if precompressed {
-        match accept_encoding {
-          Some(value) =>
-            // Here identity is unavailable, so any positive gzip quality is
-            // enough; unlike the two-representation choice below, it does not
-            // have to outrank identity.
-            if accept_encoding_accepts_gzip(value) {
-              gzip_handle = open_precompressed_gzip(file_path)
-            }
-          None => ()
+        // Identity is unavailable here, so gzip only has to be acceptable.
+        // A request without `Accept-Encoding` accepts every coding
+        // (RFC 9110 §12.5.3), which lets a gzip-only asset be served instead
+        // of reporting a spurious 404.
+        let accepts_gzip = match accept_encoding {
+          Some(value) => accept_encoding_accepts_gzip(value)
+          None => true
+        }
+        if accepts_gzip {
+          gzip_handle = open_precompressed_gzip(file_path)
         }
       }
       if gzip_handle is None {
@@ -2107,9 +2114,31 @@ async fn serve_static_file(
           !static_index_available(
             file_path, index, precompressed, accept_encoding,
           ) {
-          send_static_error(
-            conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
-          )
+          // The directory exists but its identity index does not. When only a
+          // precompressed index is available and the client refuses every
+          // coding the server can produce, report 406 just like the canonical
+          // trailing-slash URL does instead of claiming the directory is gone.
+          let precompressed_index_exists = precompressed &&
+            index != "" &&
+            static_target_is_regular_file(
+              join_fs_path(file_path, index) + ".gz",
+            )
+          if precompressed_index_exists && refuses_identity {
+            send_static_error(
+              conn,
+              extra_headers,
+              cookies,
+              head,
+              406,
+              "406 Not Acceptable",
+              precompressed,
+              vary_encoding=true,
+            )
+          } else {
+            send_static_error(
+              conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
+            )
+          }
           return
         }
         let location = append_trailing_slash(request.path)

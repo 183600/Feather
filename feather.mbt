@@ -1786,6 +1786,19 @@ pub fn Router::dispatch_with(
   ctx : Context,
   fallback : Handler?,
 ) -> Unit raise {
+  self.dispatch_with_synthesized(ctx, fallback, None)
+}
+
+///|
+/// Router dispatch with an optional handler for synthesized `OPTIONS` and
+/// method-not-allowed responses, so callers can run middleware that wraps the
+/// path before the automatic response is written.
+fn Router::dispatch_with_synthesized(
+  self : Router,
+  ctx : Context,
+  fallback : Handler?,
+  synthesized : ((Context, String) -> Unit raise)?,
+) -> Unit raise {
   let clean_path = clean_path_view(ctx.request.path)
   let meth = normalize_method(ctx.request.method)
   // A context can be dispatched more than once (for example by tests or a
@@ -1833,10 +1846,14 @@ pub fn Router::dispatch_with(
       }
     }
     DispatchMethods(allow) =>
-      if meth == "OPTIONS" {
-        respond_options_with_allow(ctx, allow)
-      } else {
-        method_not_allowed_with_allow(ctx, allow)
+      match synthesized {
+        Some(respond) => respond(ctx, allow)
+        None =>
+          if meth == "OPTIONS" {
+            respond_options_with_allow(ctx, allow)
+          } else {
+            method_not_allowed_with_allow(ctx, allow)
+          }
       }
     DispatchMissing =>
       if meth == "OPTIONS" && clean_path == "*" {
@@ -6612,7 +6629,10 @@ fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
     index = index + 1
   }
   if index >= length {
-    return true
+    // A bare delimiter at end of input is neither a part separator followed
+    // by headers nor a close-delimiter (`--boundary--`), so it cannot
+    // terminate a multipart body.
+    return false
   }
   let code = view.unsafe_get(index)
   if code == ('\r' : UInt16) || code == ('\n' : UInt16) {
@@ -7421,10 +7441,12 @@ fn parse_multipart_uncached(
   let parts : Array[MultipartPart] = Array(
     capacity=if estimate > 64 { 64 } else { estimate + 1 },
   )
+  let mut closed = false
   while pos <= view.length() {
     if pos + 1 < view.length() &&
       view.unsafe_get(pos) == ('-' : UInt16) &&
       view.unsafe_get(pos + 1) == ('-' : UInt16) {
+      closed = true
       break
     }
     pos = skip_line_break(view, pos)
@@ -7505,6 +7527,12 @@ fn parse_multipart_uncached(
       data_bytes,
     })
     pos = skip_line_break(view, data_end) + delimiter_length
+  }
+  // A truncated body that stops after part data (or after a bare delimiter)
+  // must not be reported as a successful, complete multipart payload. Every
+  // valid multipart/form-data body ends with `--boundary--`.
+  if !closed {
+    return None
   }
   Some(parts)
 }
@@ -7828,6 +7856,18 @@ fn write_year(builder : StringBuilder, year : Int64) -> Unit {
 
 ///|
 pub fn format_http_date(unix_seconds : Int64) -> String {
+  // HTTP-date spells the year with exactly four digits. Clamp values outside
+  // the proleptic Gregorian years 0000..9999 so this infallible formatter never
+  // emits a date that `parse_http_date` (or an HTTP recipient) must reject.
+  let min_seconds = days_from_civil(0L, 1, 1) * 86400L
+  let max_seconds = days_from_civil(9999L, 12, 31) * 86400L + 86399L
+  let unix_seconds = if unix_seconds < min_seconds {
+    min_seconds
+  } else if unix_seconds > max_seconds {
+    max_seconds
+  } else {
+    unix_seconds
+  }
   let mut days = unix_seconds / 86400L
   let mut time_of_day = unix_seconds - days * 86400L
   if time_of_day < 0L {
@@ -9202,6 +9242,7 @@ pub struct App {
   mut static_chain : Handler?
   mut async_chain : Handler?
   static_mounts : Array[StaticMount]
+  mount_middlewares : Array[(String, Array[Middleware])]
   mut no_route_handler : Handler?
   ws_router : Router
   ws_handlers : Map[String, WebSocketHandler]
@@ -9238,6 +9279,7 @@ fn App::fresh(timeout : Int32) -> App {
     static_chain: None,
     async_chain: None,
     static_mounts: [],
+    mount_middlewares: [],
     no_route_handler: None,
     ws_router: create_router(),
     ws_handlers: Map([]),
@@ -10094,6 +10136,28 @@ pub fn App::mount_with(
       path: join_paths(base, named.path),
     })
   }
+  // Automatic `OPTIONS` / `405` responses do not run a matched route handler,
+  // so remember the outer and child application middleware that must still
+  // wrap them, exactly as they would when the child is served directly.
+  let auto_middlewares : Array[Middleware] = Array(
+    capacity=outer.length() + child_middlewares.length(),
+  )
+  auto_middlewares.append(outer)
+  auto_middlewares.append(child_middlewares)
+  self.mount_middlewares.push((base, auto_middlewares))
+  // Nested mounts keep their own synthesized-response middleware. Rebase each
+  // child entry onto this mount and put the parent/child layers in front so a
+  // response resolved through the most specific nested mount still runs every
+  // middleware a direct request to the child would run.
+  for entry in child.mount_middlewares {
+    let (child_prefix, child_chain) = entry
+    let combined : Array[Middleware] = Array(
+      capacity=auto_middlewares.length() + child_chain.length(),
+    )
+    combined.append(auto_middlewares)
+    combined.append(child_chain)
+    self.mount_middlewares.push((join_paths(base, child_prefix), combined))
+  }
   for mount in child.static_mounts {
     self.static_mounts.push({
       url_prefix: if mount.url_prefix == "" {
@@ -10600,6 +10664,60 @@ fn App::allowed_methods_with_async(
 }
 
 ///|
+/// Mount middleware for the most specific mounted application whose prefix
+/// contains `path`, or `None` when no mounted application matches.
+fn App::auto_mount_chain(
+  self : App,
+  path : StringView,
+) -> Array[Middleware]? {
+  let mut best : Array[Middleware]? = None
+  let mut best_length = -1
+  for entry in self.mount_middlewares {
+    let (prefix, middlewares) = entry
+    let prefix_view = prefix.view()
+    let matched = if prefix.length() == 0 {
+      true
+    } else {
+      path == prefix_view ||
+      (
+        path.length() > prefix.length() &&
+        path[:prefix.length()] == prefix_view &&
+        path[prefix.length():].has_prefix("/")
+      )
+    }
+    if matched && prefix.length() >= best_length {
+      best = Some(middlewares)
+      best_length = prefix.length()
+    }
+  }
+  best
+}
+
+///|
+/// Answer a synthesized method response under the mounted application's
+/// middleware chain. Without this, CORS, authentication and security headers
+/// installed on the child (or on `mount_with`) would be bypassed for automatic
+/// `OPTIONS` and `405` responses.
+fn App::run_mounted_method_response(
+  self : App,
+  ctx : Context,
+  path : StringView,
+  allow : String,
+) -> Unit raise {
+  let respond : Handler = fn(ctx) raise {
+    if normalize_method(ctx.request.method) == "OPTIONS" {
+      respond_options_with_allow(ctx, allow)
+    } else {
+      method_not_allowed_with_allow(ctx, allow)
+    }
+  }
+  match self.auto_mount_chain(path) {
+    Some(middlewares) => apply_middleware(middlewares, respond)(ctx)
+    None => respond(ctx)
+  }
+}
+
+///|
 pub fn App::handle(self : App, ctx : Context) -> Unit raise {
   self.merge_state(ctx)
   let chain = match self.chain {
@@ -10625,10 +10743,17 @@ pub fn App::handle(self : App, ctx : Context) -> Unit raise {
             let allowed = self.allowed_methods_with_async(
               clean_path, async_methods,
             )
-            respond_options_with_allow(ctx, allowed.join(", "))
+            self.run_mounted_method_response(
+              ctx, clean_path, allowed.join(", "),
+            )
             return
           }
-          router.dispatch_with(ctx, self.no_route_handler)
+          let synthesized = fn(ctx, allow) raise {
+            self.run_mounted_method_response(ctx, clean_path, allow)
+          }
+          router.dispatch_with_synthesized(
+            ctx, self.no_route_handler, Some(synthesized),
+          )
         }
       }
       let chain = apply_middleware(self.middlewares, terminal)

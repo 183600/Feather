@@ -420,15 +420,20 @@ fn parse_decimal_int64(view : StringView) -> Int64? {
   if length == 0 || length > 19 {
     return None
   }
-  let mut value = 0L
+  let limit : UInt64 = 9223372036854775807UL
+  let mut value = 0UL
   for i = 0; i < length; i = i + 1 {
     let code = view.unsafe_get(i).to_int()
     if code < 48 || code > 57 {
       return None
     }
-    value = value * 10L + (code - 48).to_int64()
+    let digit = (code - 48).to_uint64()
+    if value > (limit - digit) / 10UL {
+      return None
+    }
+    value = value * 10UL + digit
   }
-  Some(value)
+  Some(value.reinterpret_as_int64())
 }
 
 ///|
