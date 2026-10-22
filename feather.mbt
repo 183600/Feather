@@ -2823,7 +2823,29 @@ fn safe_local_redirect_path(candidate : StringView) -> String? {
   if end == 0 {
     return None
   }
-  Some(candidate[:end].to_owned())
+  // Browsers and intermediaries may percent-decode a path before following
+  // it. A target such as `/%2f%2fhost` would then become a protocol-relative
+  // URL, and `/%5chost` a backslash spelling of it, so apply the same checks
+  // to the decoded path rather than only to the raw request target.
+  let path = candidate[:end]
+  let path_end = match path.find("?") {
+    Some(index) => index
+    None => path.length()
+  }
+  let decoded_path = decode_url_path(path[:path_end])
+  let decoded_view = decoded_path.view()
+  if decoded_view.has_prefix("//") || decoded_view.contains("\\") {
+    return None
+  }
+  let mut i = 0
+  while i < decoded_view.length() {
+    let code = decoded_view.unsafe_get(i).to_int()
+    if code < 0x20 || code == 0x7F {
+      return None
+    }
+    i = i + 1
+  }
+  Some(path.to_owned())
 }
 
 ///|

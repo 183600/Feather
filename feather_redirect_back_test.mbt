@@ -98,3 +98,31 @@ test "redirect back accepts a local referer without a host header" {
   assert_eq(ctx.response.status, 303)
   assert_eq(ctx.response.headers.get("Location"), Some("/items/1"))
 }
+
+///|
+test "redirect back rejects percent-encoded protocol-relative targets" {
+  // A same-host referer may contain percent escapes. Decoding them can turn a
+  // harmless-looking local path into a protocol-relative or backslash target,
+  // so those spellings must fall back just like their literal forms.
+  for referer in [
+    "/%2f%2fevil.com/dashboard",
+    "/%2F%2Fevil.com/dashboard",
+    "/%5cevil.com/dashboard",
+    "/dashboard/%5Cevil.com",
+    "/dashboard%00",
+  ] {
+    let ctx = redirect_back_context(Some(referer), Some("example.com"))
+    ctx.redirect_back(fallback="/safe")
+    assert_eq(ctx.response.headers.get("Location"), Some("/safe"), msg=referer)
+  }
+  // Ordinary percent escapes still round-trip unchanged.
+  let escaped = redirect_back_context(
+    Some("/caf%C3%A9/settings?tab=a%2Fb"),
+    Some("example.com"),
+  )
+  escaped.redirect_back()
+  assert_eq(
+    escaped.response.headers.get("Location"),
+    Some("/caf%C3%A9/settings?tab=a%2Fb"),
+  )
+}
