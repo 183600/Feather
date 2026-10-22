@@ -1503,6 +1503,37 @@ fn static_base_headers(
 }
 
 ///|
+/// Headers for a static directory redirect. A redirect has no representation,
+/// so a content type prepared for a file body must not leak into it.
+fn static_redirect_headers(
+  extra_headers : Map[String, String],
+  cookies : Array[@http.Cookie],
+  location : String,
+) -> @http.Headers {
+  let headers = static_base_headers(extra_headers, cookies, 1)
+  headers.remove(header_content_type)
+  headers.set(header_location, location)
+  headers
+}
+
+///|
+async fn send_static_redirect(
+  conn : @http.ServerConnection,
+  extra_headers : Map[String, String],
+  cookies : Array[@http.Cookie],
+  location : String,
+) -> Unit {
+  send_with_date(
+    conn,
+    301,
+    "Moved Permanently",
+    static_redirect_headers(extra_headers, cookies, location),
+    cookies~,
+  )
+  conn.end_response()
+}
+
+///|
 /// Add a response header only when the response does not already carry one,
 /// so middleware-supplied representation headers survive static file serving
 /// just as handler-supplied values survive `send_file_response`.
@@ -1591,6 +1622,7 @@ async fn serve_static_file(
   extra_headers : Map[String, String],
   cookies : Array[@http.Cookie],
   response_started~ : Ref[Bool],
+  redirect_root~ : Bool = false,
   auto_etag~ : Bool = true,
   compress_enabled~ : Bool = false,
   compress_min_size~ : Int32 = 1024,
@@ -1689,14 +1721,21 @@ async fn serve_static_file(
           )
           return
         }
-        let headers = static_base_headers(extra_headers, cookies, 1)
-        headers.remove(header_content_type)
-        headers.set(header_location, location)
-        send_with_date(conn, 301, "Moved Permanently", headers, cookies~)
-        conn.end_response()
+        send_static_redirect(conn, extra_headers, cookies, location)
         return
       }
     None => ()
+  }
+  if redirect_root {
+    // The mount root (`/assets`) is a directory request too: redirect it to
+    // the canonical `/assets/` spelling before serving its index. Doing this
+    // after opening the file keeps a missing index a 404 rather than a
+    // redirect to another 404.
+    let location = append_trailing_slash(request.path)
+    if location != request.path {
+      send_static_redirect(conn, extra_headers, cookies, location)
+      return
+    }
   }
   if precompressed && gzip_handle is None {
     match base {
@@ -2071,6 +2110,7 @@ async fn handle_static(
       Map([]),
       [],
       response_started~,
+      redirect_root=static_root_needs_slash(request.path, mount),
       compress_enabled=app.compress_enabled,
       compress_min_size=app.compress_min_size,
     )
@@ -2154,6 +2194,7 @@ async fn handle_static(
       ctx.response.headers,
       ctx.response.cookies,
       response_started~,
+      redirect_root=static_root_needs_slash(request.path, mount),
       auto_etag=response_file_etag_enabled(ctx),
       compress_enabled=compress,
       compress_min_size=min_size,
@@ -2239,6 +2280,7 @@ async fn handle_websocket(
   handler : WebSocketHandler,
   params : Map[String, String],
   route_chain : Handler,
+  route_path : String,
   head : Bool,
 ) -> Unit {
   let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
@@ -2259,6 +2301,8 @@ async fn handle_websocket(
   defer ctx.run_cleanups()
   attach_raw_body(ctx, raw_body)
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
+  ctx.state.set(ROUTE_PATTERN_STATE_KEY, route_path)
+  ctx.state.set(ROUTE_METHOD_STATE_KEY, "GET")
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
   }
@@ -2326,6 +2370,7 @@ async fn handle_sse(
   handler : SseHandler,
   params : Map[String, String],
   route_chain : Handler,
+  route_path : String,
   head : Bool,
 ) -> Unit {
   let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
@@ -2346,6 +2391,8 @@ async fn handle_sse(
   defer ctx.run_cleanups()
   attach_raw_body(ctx, raw_body)
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
+  ctx.state.set(ROUTE_PATTERN_STATE_KEY, route_path)
+  ctx.state.set(ROUTE_METHOD_STATE_KEY, "GET")
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
   }
@@ -2389,6 +2436,7 @@ async fn handle_stream(
   handler : StreamHandler,
   params : Map[String, String],
   route_chain : Handler,
+  route_path : String,
   head : Bool,
 ) -> Unit {
   let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
@@ -2409,6 +2457,8 @@ async fn handle_stream(
   defer ctx.run_cleanups()
   attach_raw_body(ctx, raw_body)
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
+  ctx.state.set(ROUTE_PATTERN_STATE_KEY, route_path)
+  ctx.state.set(ROUTE_METHOD_STATE_KEY, "GET")
   for name, value in params {
     ctx.state.set(PARAM_PREFIX + name, value)
   }
@@ -2497,25 +2547,27 @@ async fn handle_request(
   send_continue_if_expected(request, conn)
   if request.meth is @http.Get || head {
     match app.resolve_websocket_full(request.path) {
-      Some((handler, params, middlewares)) => {
+      Some((handler, params, middlewares, route_path)) => {
         handle_websocket(
-          app, request, body, conn, handler, params, middlewares, head,
+          app, request, body, conn, handler, params, middlewares, route_path, head,
         )
         return
       }
       None =>
         match app.resolve_sse_full(request.path) {
-          Some((handler, params, middlewares)) => {
+          Some((handler, params, middlewares, route_path)) => {
             handle_sse(
-              app, request, body, conn, handler, params, middlewares, head,
+              app, request, body, conn, handler, params, middlewares, route_path,
+              head,
             )
             return
           }
           None =>
             match app.resolve_stream_full(request.path) {
-              Some((handler, params, middlewares)) => {
+              Some((handler, params, middlewares, route_path)) => {
                 handle_stream(
-                  app, request, body, conn, handler, params, middlewares, head,
+                  app, request, body, conn, handler, params, middlewares, route_path,
+                  head,
                 )
                 return
               }

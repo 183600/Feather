@@ -28,6 +28,8 @@ long-term design notes are in [PLAN.md](PLAN.md).
 - **Context** – path/query/form/multipart access, typed query/param/form
   helpers (including 32- and 64-bit integers, booleans, and finite floats),
   JSON bodies,
+  matched-route identity (`route_pattern` / `route_method`) for logging and
+  metrics,
   text/HTML/JSON/bytes responses, files and downloads,
   cookies (including signed cookies), flash messages, content negotiation,
   conditional requests (ETag / `If-None-Match` / `If-Modified-Since`), range
@@ -243,7 +245,10 @@ let app = @feather.App::new()
 positional argument (`[]` for none); both accept the same optional `index` /
 `max_age` / `precompressed` / `cache_control` flags. Passing `index=""`
 disables directory indexes, leaving directory requests to the router (usually
-a 404) instead of redirecting them.
+a 404) instead of redirecting them. When an index is configured, a request for
+the mount root (`/assets`) or a subdirectory (`/assets/guide`) redirects to its
+canonical trailing-slash URL after the file exists, so relative links resolve
+correctly; query strings and fragments are preserved.
 
 Directory traversal outside the mounted root is rejected.
 

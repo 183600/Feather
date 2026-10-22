@@ -5,6 +5,16 @@ pub const DEFAULT_MAX_BODY_SIZE : Int32 = 1000
 pub const PARAM_PREFIX : String = "param:"
 
 ///|
+/// Request-state key holding the registered pattern of the route that matched.
+/// The prefix keeps these framework-internal keys out of ordinary application
+/// state.
+const ROUTE_PATTERN_STATE_KEY : String = "__feather_route_pattern"
+
+///|
+/// Request-state key holding the method of the route that matched.
+const ROUTE_METHOD_STATE_KEY : String = "__feather_route_method"
+
+///|
 pub(all) suberror HttpError {
   HttpError(Int32, String)
 }
@@ -1523,8 +1533,22 @@ pub fn Router::dispatch_with(
 ) -> Unit raise {
   let clean_path = clean_path_view(ctx.request.path)
   let meth = normalize_method(ctx.request.method)
+  // A context can be dispatched more than once (for example by tests or a
+  // custom router wrapper), so never let a previous match describe this one.
+  ignore(ctx.state.remove(ROUTE_PATTERN_STATE_KEY))
+  ignore(ctx.state.remove(ROUTE_METHOD_STATE_KEY))
   match self.match_dispatch(meth, clean_path) {
     DispatchFound(node, params, _) => {
+      // A HEAD request can be served by a GET route, in which case the
+      // registered method is GET even though the request method is HEAD.
+      let route_method = if meth == "HEAD" &&
+        self.find_node_raw("HEAD", clean_path) is None {
+        "GET"
+      } else {
+        meth
+      }
+      ctx.state.set(ROUTE_PATTERN_STATE_KEY, node.route_path)
+      ctx.state.set(ROUTE_METHOD_STATE_KEY, route_method)
       bind_route_params(node, params, ctx)
       match node.handler {
         Some(handler) => handler(ctx)
@@ -2482,6 +2506,33 @@ pub fn Context::get_method(self : Context) -> String {
 ///|
 pub fn Context::get_path(self : Context) -> String {
   self.request.path
+}
+
+///|
+/// The registered pattern of the route that matched the request, with `:param`
+/// and `*wildcard` segments kept in place (for example `/users/:id`). Returns
+/// `""` when no ordinary route matched, including fallback and static-file
+/// responses.
+///
+/// This is the stable route identity middlewares should use for logging and
+/// metrics; `Context::get_path`, by contrast, is the concrete request target.
+pub fn Context::route_pattern(self : Context) -> String {
+  match self.state.get(ROUTE_PATTERN_STATE_KEY) {
+    Some(value) => value
+    None => ""
+  }
+}
+
+///|
+/// The method under which the matched route was registered. Like
+/// `Context::route_pattern`, this is empty when no ordinary route matched.
+/// `HEAD` requests served by a `GET` route report `"GET"`, because that is the
+/// route's registered method.
+pub fn Context::route_method(self : Context) -> String {
+  match self.state.get(ROUTE_METHOD_STATE_KEY) {
+    Some(value) => value
+    None => ""
+  }
 }
 
 ///|
@@ -8873,7 +8924,7 @@ pub fn App::resolve_sse(
   path : String,
 ) -> (SseHandler, Map[String, String])? {
   match self.resolve_sse_full(path) {
-    Some((handler, params, _)) => Some((handler, params))
+    Some((handler, params, _, _)) => Some((handler, params))
     None => None
   }
 }
@@ -8882,7 +8933,7 @@ pub fn App::resolve_sse(
 fn App::resolve_sse_full(
   self : App,
   path : String,
-) -> (SseHandler, Map[String, String], Handler)? {
+) -> (SseHandler, Map[String, String], Handler, String)? {
   if self.sse_handlers.is_empty() {
     return None
   }
@@ -8901,6 +8952,7 @@ fn App::resolve_sse_full(
                 Some(chain) => chain
                 None => async_chain_terminal
               },
+              node.route_path,
             ),
           )
         None => None
@@ -8915,7 +8967,7 @@ pub fn App::resolve_websocket(
   path : String,
 ) -> (WebSocketHandler, Map[String, String])? {
   match self.resolve_websocket_full(path) {
-    Some((handler, params, _)) => Some((handler, params))
+    Some((handler, params, _, _)) => Some((handler, params))
     None => None
   }
 }
@@ -8924,7 +8976,7 @@ pub fn App::resolve_websocket(
 fn App::resolve_websocket_full(
   self : App,
   path : String,
-) -> (WebSocketHandler, Map[String, String], Handler)? {
+) -> (WebSocketHandler, Map[String, String], Handler, String)? {
   if self.ws_handlers.is_empty() {
     return None
   }
@@ -8943,6 +8995,7 @@ fn App::resolve_websocket_full(
                 Some(chain) => chain
                 None => async_chain_terminal
               },
+              node.route_path,
             ),
           )
         None => None
@@ -9009,7 +9062,7 @@ pub fn App::resolve_stream(
   path : String,
 ) -> (StreamHandler, Map[String, String])? {
   match self.resolve_stream_full(path) {
-    Some((handler, params, _)) => Some((handler, params))
+    Some((handler, params, _, _)) => Some((handler, params))
     None => None
   }
 }
@@ -9018,7 +9071,7 @@ pub fn App::resolve_stream(
 fn App::resolve_stream_full(
   self : App,
   path : String,
-) -> (StreamHandler, Map[String, String], Handler)? {
+) -> (StreamHandler, Map[String, String], Handler, String)? {
   if self.stream_handlers.is_empty() {
     return None
   }
@@ -9037,6 +9090,7 @@ fn App::resolve_stream_full(
                 Some(chain) => chain
                 None => async_chain_terminal
               },
+              node.route_path,
             ),
           )
         None => None
@@ -9655,6 +9709,16 @@ fn App::static_lookup(
       result
     }
   }
+}
+
+///|
+/// Whether `path` names the root of `mount` without the trailing slash that
+/// directory indexes need. The file is only redirected once it is known to
+/// exist, so a mount whose index is missing still reports 404.
+fn static_root_needs_slash(path : String, mount : StaticMount) -> Bool {
+  !mount.index.is_empty() &&
+  mount.url_prefix != "" &&
+  clean_path_view(path) == mount.url_prefix.view()
 }
 
 ///|

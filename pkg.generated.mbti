@@ -355,6 +355,8 @@ pub fn Context::remove_response_header(Self, String) -> Bool
 pub fn Context::remove_state(Self, String) -> Bool
 pub fn Context::request_id(Self) -> String
 pub fn Context::response_header(Self, String) -> String
+pub fn Context::route_method(Self) -> String
+pub fn Context::route_pattern(Self) -> String
 pub fn Context::run_cleanups(Self) -> Unit
 pub fn Context::session(Self) -> Session?
 pub fn Context::session_clear(Self) -> Bool
