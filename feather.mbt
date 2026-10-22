@@ -1929,6 +1929,35 @@ pub fn Context::set_header(
 }
 
 ///|
+/// Read a response header, matched case-insensitively. Returns `""` when the
+/// header is absent. Useful in middleware that inspects or rewrites headers
+/// after calling through to the handler.
+pub fn Context::response_header(self : Context, key : String) -> String {
+  match get_header_ignore_case(self.response.headers, key) {
+    Some(value) => value
+    None => ""
+  }
+}
+
+///|
+/// Whether the response already carries `key`, matched case-insensitively.
+/// Unlike `Context::response_header`, this distinguishes a header with an empty
+/// value from an absent header.
+pub fn Context::has_response_header(self : Context, key : String) -> Bool {
+  get_header_ignore_case(self.response.headers, key) is Some(_)
+}
+
+///|
+/// Remove every response header whose name matches `key` case-insensitively
+/// and report whether one was present.
+pub fn Context::remove_response_header(
+  self : Context,
+  key : String,
+) -> Bool {
+  remove_header_ignore_case(self.response.headers, key)
+}
+
+///|
 fn Context::set_cache_control_scope(
   self : Context,
   scope : String,
@@ -2187,6 +2216,14 @@ pub fn Context::header(self : Context, key : String) -> String {
     Some(value) => value
     None => ""
   }
+}
+
+///|
+/// Whether the request carries `key`, matched case-insensitively. Unlike
+/// `Context::header`, this distinguishes a header with an empty value from an
+/// absent header.
+pub fn Context::has_header(self : Context, key : String) -> Bool {
+  get_header_ignore_case(self.request.headers, key) is Some(_)
 }
 
 ///|

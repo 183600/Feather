@@ -15,6 +15,27 @@ test "Context cookies strip surrounding quotes" {
 }
 
 ///|
+test "Context request and response header helpers are case-insensitive" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: { "X-Trace": "", "X-Token": "abc" },
+    body: "",
+  })
+  assert_true(ctx.has_header("x-trace"))
+  assert_true(ctx.has_header("X-TOKEN"))
+  assert_false(ctx.has_header("missing"))
+  ctx.set_header("X-Result", "one")
+  assert_true(ctx.has_response_header("x-result"))
+  assert_eq(ctx.response_header("X-RESULT"), "one")
+  assert_eq(ctx.response_header("missing"), "")
+  assert_false(ctx.has_response_header("missing"))
+  assert_true(ctx.remove_response_header("x-RESULT"))
+  assert_false(ctx.remove_response_header("x-result"))
+  assert_eq(ctx.response_header("X-Result"), "")
+}
+
+///|
 test "Context form_values collects repeated fields" {
   let ctx = @feather.Context::new({
     method: "POST",
