@@ -1811,6 +1811,24 @@ pub fn Context::get(self : Context, key : String) -> String {
 }
 
 ///|
+/// Whether request state contains `key`, including keys seeded from application
+/// state. Unlike `Context::get`, this distinguishes a missing key from one
+/// stored with an empty string value.
+pub fn Context::has_state(self : Context, key : String) -> Bool {
+  self.state.contains(key)
+}
+
+///|
+/// Remove `key` from request state. Returns whether the key was present.
+/// Removing a key seeded from application state only affects this request.
+pub fn Context::remove_state(self : Context, key : String) -> Bool {
+  match self.state.remove_and_get(key) {
+    Some(_) => true
+    None => false
+  }
+}
+
+///|
 /// Parameter names mapped to their `param:`-prefixed state keys.
 let param_key_cache : Map[String, String] = Map([])
 
@@ -3505,6 +3523,24 @@ pub fn Context::set_json(self : Context, key : String, value : Json) -> Unit {
 ///|
 pub fn Context::get_json(self : Context, key : String) -> Json? {
   self.json_state.get(key)
+}
+
+///|
+/// Whether JSON state contains `key`, including keys seeded from application
+/// state. Unlike `Context::get_json`, this treats a stored JSON null as
+/// present.
+pub fn Context::has_json_state(self : Context, key : String) -> Bool {
+  self.json_state.contains(key)
+}
+
+///|
+/// Remove `key` from JSON state. Returns whether the key was present. Removing
+/// a key seeded from application state only affects this request.
+pub fn Context::remove_json_state(self : Context, key : String) -> Bool {
+  match self.json_state.remove_and_get(key) {
+    Some(_) => true
+    None => false
+  }
 }
 
 ///|
