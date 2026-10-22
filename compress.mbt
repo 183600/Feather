@@ -422,9 +422,8 @@ async fn compress_response(
     None => ()
   }
   add_vary_accept_encoding(response)
-  let accept_encoding = match accept_encoding {
-    Some(value) => value
-    None => return
+  if accept_encoding is None {
+    return
   }
   if !allows_gzip {
     // The client explicitly refused identity and no gzip coding is
