@@ -769,6 +769,73 @@ pub fn Router::add_route_with(
 }
 
 ///|
+/// Find the node carrying the registered pattern `path` in one method tree.
+/// Named-route bookkeeping uses this to clear a name from the node it used to
+/// identify when the same name is attached to a different route.
+fn find_route_node_by_path(node : RouteNode, path : String) -> RouteNode? {
+  if node.handler is Some(_) && node.route_path == path {
+    return Some(node)
+  }
+  match node.static_children {
+    Some(children) =>
+      for _segment, child in children {
+        match find_route_node_by_path(child, path) {
+          Some(found) => return Some(found)
+          None => ()
+        }
+      }
+    None => ()
+  }
+  match node.param_child {
+    Some(child) =>
+      match find_route_node_by_path(child, path) {
+        Some(found) => return Some(found)
+        None => ()
+      }
+    None => ()
+  }
+  match node.wildcard_child {
+    Some(child) =>
+      match find_route_node_by_path(child, path) {
+        Some(found) => return Some(found)
+        None => ()
+      }
+    None => ()
+  }
+  None
+}
+
+///|
+/// Detach `name` from the route it currently identifies. A route may carry at
+/// most one name; when another name still points at the same pattern, that
+/// name becomes the route's reported name.
+fn Router::detach_route_name(self : Router, name : String) -> Unit {
+  let previous = match self.named.remove_and_get(name) {
+    Some(previous) => previous
+    None => return
+  }
+  let root = match self.trees.get(previous.method) {
+    Some(root) => root
+    None => return
+  }
+  let node = match find_route_node_by_path(root, previous.path) {
+    Some(node) => node
+    None => return
+  }
+  if node.route_name != name {
+    return
+  }
+  let mut replacement = ""
+  for other, route in self.named {
+    if route.method == previous.method && route.path == previous.path {
+      replacement = other
+      break
+    }
+  }
+  node.route_name = replacement
+}
+
+///|
 pub fn Router::add_named_route(
   self : Router,
   name : String,
@@ -777,6 +844,10 @@ pub fn Router::add_named_route(
   handler : Handler,
 ) -> Unit {
   let clean_path = clean_route_path(path)
+  // Re-registering the same method/path replaces the route, so names attached
+  // to that route must not survive and generate URLs for a different handler.
+  self.forget_route_names(meth, clean_path)
+  self.detach_route_name(name)
   let node = self.add_route_node(meth, clean_path, handler)
   node.route_name = name
   self.named.set(name, { method: normalize_method(meth), path: clean_path, })
@@ -794,6 +865,8 @@ pub fn Router::add_named_route_with(
   handler : Handler,
 ) -> Unit {
   let clean_path = clean_route_path(path)
+  self.forget_route_names(meth, clean_path)
+  self.detach_route_name(name)
   let node = self.add_route_node(
     meth,
     clean_path,
@@ -7872,8 +7945,11 @@ fn parse_http_date_view(view : StringView) -> Int64? {
       return None
     }
     let weekday = parts[0]
+    // The IMF-fixdate and RFC 1123 grammars spell the day-name with exactly
+    // three letters; the full weekday names belong only to rfc850-date.
     if !weekday.has_suffix(",") ||
-      !is_http_weekday(weekday[:weekday.length() - 1]) {
+      weekday.length() != 4 ||
+      !is_http_weekday(weekday[:3]) {
       return None
     }
     // IMF-fixdate uses a fixed two-digit day. The tokenizing fallback is only
@@ -7907,7 +7983,9 @@ fn parse_http_date_view(view : StringView) -> Int64? {
     if count < 5 || token_count != 5 {
       return None
     }
-    if !is_http_weekday(parts[0]) {
+    // asctime-date also uses the three-letter day-name, not the full name
+    // accepted by the obsolete rfc850-date form.
+    if parts[0].length() != 3 || !is_http_weekday(parts[0]) {
       return None
     }
     month = match month_from_name(parts[1]) {
@@ -9731,6 +9809,10 @@ pub fn App::mount_with(
     node.route_name = route_name
   }
   for name, named in child.router.named {
+    // Mounting a child whose name collides with a parent route makes the
+    // child the name's target; clear the name from the parent node so
+    // `Context::route_name` and `url_for` stay in agreement.
+    self.router.detach_route_name(name)
     self.router.named.set(name, {
       method: named.method,
       path: join_paths(base, named.path),
@@ -10093,6 +10175,63 @@ pub fn App::request_timeout(self : App, millis : Int32) -> App {
 }
 
 ///|
+/// Methods an asynchronous endpoint on `path` can answer. WebSocket endpoints
+/// only accept `GET` (an upgrade cannot be described by `HEAD`), while SSE and
+/// streaming endpoints also support the bodyless `HEAD` description.
+fn App::async_allowed_methods(
+  self : App,
+  path : StringView,
+) -> Array[String] {
+  let text = path.to_owned()
+  let methods : Array[String] = []
+  if !self.ws_handlers.is_empty() && self.ws_router.is_routable("GET", text) {
+    methods.push("GET")
+  } else if
+    (!self.sse_handlers.is_empty() &&
+      self.sse_router.is_routable("GET", text)) ||
+    (!self.stream_handlers.is_empty() &&
+      self.stream_router.is_routable("GET", text)) {
+    methods.push("GET")
+    methods.push("HEAD")
+  }
+  methods
+}
+
+///|
+/// `Allow` methods for a path combining ordinary routes and asynchronous
+/// endpoints. An ordinary `GET` route still implies `HEAD`, while a WebSocket
+/// endpoint does not.
+fn App::allowed_methods_with_async(
+  self : App,
+  path : StringView,
+  async_methods : Array[String],
+) -> Array[String] {
+  let allowed = self.router.allowed_methods(path)
+  if allowed.contains("GET") && !allowed.contains("HEAD") {
+    allowed.push("HEAD")
+  }
+  for method in async_methods {
+    if !allowed.contains(method) {
+      allowed.push(method)
+    }
+  }
+  // A WebSocket endpoint shadows ordinary GET/HEAD handling at the same path
+  // and rejects HEAD, so an implicit or explicit HEAD must not be advertised.
+  if async_methods.contains("GET") && !async_methods.contains("HEAD") {
+    let without_head : Array[String] = []
+    for method in allowed {
+      if method != "HEAD" {
+        without_head.push(method)
+      }
+    }
+    allowed.clear()
+    allowed.append(without_head)
+  }
+  allowed.sort()
+  allowed
+}
+
+///|
 pub fn App::handle(self : App, ctx : Context) -> Unit raise {
   self.merge_state(ctx)
   let chain = match self.chain {
@@ -10105,6 +10244,22 @@ pub fn App::handle(self : App, ctx : Context) -> Unit raise {
         if meth == "OPTIONS" && clean_path == "*" {
           respond_app_server_options(ctx, self)
         } else {
+          // Asynchronous endpoints live in their own routers, so the ordinary
+          // dispatcher would report an existing path as missing for OPTIONS.
+          // Answer that request from the combined method set, while an
+          // explicit ordinary OPTIONS route still takes precedence below.
+          // Other methods keep falling through to the ordinary router, which
+          // is also where their fallback and 404 handling lives.
+          let async_methods = self.async_allowed_methods(clean_path)
+          if meth == "OPTIONS" &&
+            !async_methods.is_empty() &&
+            self.router.find_node_raw(meth, clean_path) is None {
+            let allowed = self.allowed_methods_with_async(
+              clean_path, async_methods,
+            )
+            respond_options_with_allow(ctx, allowed.join(", "))
+            return
+          }
           router.dispatch_with(ctx, self.no_route_handler)
         }
       }

@@ -1858,12 +1858,20 @@ async fn send_static_redirect(
   extra_headers : Map[String, String],
   cookies : Array[@http.Cookie],
   location : String,
+  vary_encoding~ : Bool = false,
 ) -> Unit {
+  let headers = static_redirect_headers(extra_headers, cookies, location)
+  if vary_encoding {
+    // A directory index that exists only as a precompressed sibling makes the
+    // redirect itself depend on `Accept-Encoding`, matching the 404/200/304
+    // variants caches may store for the same target.
+    add_vary_header(headers, "Accept-Encoding")
+  }
   send_with_date(
     conn,
     301,
     "Moved Permanently",
-    static_redirect_headers(extra_headers, cookies, location),
+    headers,
     cookies~,
   )
   conn.end_response()
@@ -2107,7 +2115,9 @@ async fn serve_static_file(
           )
           return
         }
-        send_static_redirect(conn, extra_headers, cookies, location)
+        send_static_redirect(
+          conn, extra_headers, cookies, location, vary_encoding=precompressed,
+        )
         return
       }
     None => ()
@@ -2119,7 +2129,9 @@ async fn serve_static_file(
     // redirect to another 404.
     let location = append_trailing_slash(request.path)
     if location != request.path {
-      send_static_redirect(conn, extra_headers, cookies, location)
+      send_static_redirect(
+        conn, extra_headers, cookies, location, vary_encoding=precompressed,
+      )
       return
     }
   }
