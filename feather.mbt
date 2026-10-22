@@ -7794,8 +7794,9 @@ pub fn App::websocket(
 ///
 /// The middlewares run after `App::use` middleware and only for the matching
 /// path. Middleware that does not call through answers the request instead of
-/// starting the upgrade; middleware that calls through may add headers or
-/// cookies to the handshake response.
+/// starting the upgrade, and that response carries its headers and cookies.
+/// The `101` handshake itself is written by `moonbitlang/async`, so headers or
+/// cookies set by middleware that does call through cannot be added to it.
 pub fn App::websocket_with(
   self : App,
   path : String,
