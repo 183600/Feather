@@ -1581,6 +1581,12 @@ pub fn Router::dispatch_with(
   ignore(ctx.state.remove(ROUTE_PATTERN_STATE_KEY))
   ignore(ctx.state.remove(ROUTE_METHOD_STATE_KEY))
   ignore(ctx.state.remove(ROUTE_NAME_STATE_KEY))
+  // The asterisk-form names the server, not a path. Answer it here so a
+  // catch-all or parameter route cannot shadow the server-wide reply.
+  if meth == "OPTIONS" && clean_path == "*" {
+    respond_server_options(ctx, self)
+    return
+  }
   match self.match_dispatch(meth, clean_path) {
     DispatchFound(node, params, _) => {
       // A HEAD request can be served by a GET route, in which case the

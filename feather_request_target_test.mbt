@@ -194,3 +194,35 @@ async test "server serves a static file for an absolute-form request target" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+test "OPTIONS asterisk-form is not shadowed by wildcard or parameter routes" {
+  let app = @feather.App::new().get("/*path", fn(ctx) {
+    ctx.text(200, "wildcard")
+  })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "*",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.body, "")
+  let allow = response.headers.get("Allow").unwrap_or("")
+  assert_true(allow.contains("GET"), msg=allow)
+  assert_true(allow.contains("HEAD"), msg=allow)
+  assert_true(allow.contains("OPTIONS"), msg=allow)
+  let param = @feather.App::new().get("/:x", fn(ctx) {
+    ctx.text(200, "param")
+  })
+  let param_response = param.respond({
+    method: "OPTIONS",
+    path: "*",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(param_response.status, 204)
+  assert_true(
+    param_response.headers.get("Allow").unwrap_or("").contains("GET"),
+  )
+}
