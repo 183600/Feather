@@ -271,6 +271,7 @@ pub fn Context::cookie(Self, String) -> String?
 pub fn Context::cookies(Self) -> Map[String, String]
 pub fn Context::csrf_token(Self, key? : String) -> String
 pub fn Context::defer_cleanup(Self, () -> Unit raise) -> Unit
+pub fn Context::etag(Self) -> Unit
 pub fn Context::fail(Self, Int32, String) -> Unit raise HttpError
 pub fn Context::fail_problem(Self, Int32, String, title? : String, type_name? : String, instance? : String) -> Unit raise HttpProblem
 pub fn Context::fail_with(Self, Int32, String, Json) -> Unit raise HttpErrorPayload
@@ -323,6 +324,7 @@ pub fn Context::new(Request) -> Self
 pub fn Context::no_cache(Self) -> Unit
 pub fn Context::no_compress(Self) -> Unit
 pub fn Context::no_content(Self) -> Unit
+pub fn Context::no_etag(Self) -> Unit
 pub fn Context::no_store(Self) -> Unit
 pub fn Context::not_modified(Self, etag? : String, last_modified? : String) -> Unit
 pub fn Context::param(Self, String) -> String

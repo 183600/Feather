@@ -12,6 +12,45 @@ pub fn App::etag(self : App) -> App {
 }
 
 ///|
+/// Request state key recording a per-response automatic ETag decision.
+const RESPONSE_ETAG_KEY : String = "__feather_response_etag"
+
+///|
+/// Enable automatic `ETag` generation for this response, even when
+/// application-wide generation is off.
+///
+/// The tag is still computed at the end of the pipeline from the final body,
+/// and the usual opt-outs apply: a handler-supplied `ETag`, a no-body status
+/// and `Cache-Control: no-store` keep the response untouched. A route-level
+/// middleware can call this to make just one route cacheable without enabling
+/// `App::etag` for the whole application.
+pub fn Context::etag(self : Context) -> Unit {
+  self.state.set(RESPONSE_ETAG_KEY, "on")
+}
+
+///|
+/// Suppress automatic `ETag` generation for this response, even when
+/// application-wide generation is enabled.
+///
+/// An `ETag` explicitly set by the handler or by earlier middleware is kept;
+/// only the generation step is skipped. This is the per-response counterpart
+/// of `App::etag`.
+pub fn Context::no_etag(self : Context) -> Unit {
+  self.state.set(RESPONSE_ETAG_KEY, "off")
+}
+
+///|
+/// Whether the automatic `ETag` stage should run for this response, honoring
+/// the per-response override before the application-wide setting.
+fn response_etag_enabled(app : App, ctx : Context) -> Bool {
+  match ctx.state.get(RESPONSE_ETAG_KEY) {
+    Some("off") => false
+    Some("on") => true
+    _ => app.etag_enabled
+  }
+}
+
+///|
 /// Append the FNV-1a hash of `data` to `builder` as 16 lowercase hex digits.
 fn write_fnv1a_hex(builder : StringBuilder, data : Bytes) -> Unit {
   let mut hash = 14695981039346656037UL
@@ -274,11 +313,12 @@ fn has_precondition_headers(input : PreconditionInput) -> Bool {
 /// are decided against it.
 fn finish_response(
   app : App,
+  ctx : Context,
   response : Response,
   remaining : PreconditionInput,
   allows_not_modified : Bool,
 ) -> Unit {
-  if app.etag_enabled {
+  if response_etag_enabled(app, ctx) {
     apply_etag(response)
   }
   apply_preconditions_input(remaining, allows_not_modified, response)

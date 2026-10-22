@@ -223,7 +223,8 @@ seconds.
 Handlers can override this per response with `ctx.compress(min_size=0)` to opt
 in even when application-wide compression is off, or `ctx.no_compress()` to opt
 out. `app.etag()` enables automatic ETag generation for responses that do not
-set one.
+set one; `ctx.etag()` / `ctx.no_etag()` make the same decision for a single
+response, so route middleware can cache just an API subset.
 
 ## Static files
 

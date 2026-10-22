@@ -1091,7 +1091,7 @@ async fn finalize_dynamic_response(
       if compress {
         compress_response(accept_encoding_of(request), ctx.response, min_size)
       }
-      if app.etag_enabled {
+      if response_etag_enabled(app, ctx) {
         apply_etag(ctx.response)
       }
       apply_preconditions_input(remaining, allows_not_modified, ctx.response)
@@ -1883,7 +1883,7 @@ async fn handle_static(
               min_size,
             )
           }
-          if app.etag_enabled {
+          if response_etag_enabled(app, ctx) {
             apply_etag(ctx.response)
           }
           apply_preconditions_input(

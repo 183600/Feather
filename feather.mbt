@@ -9633,7 +9633,7 @@ pub fn App::respond(self : App, request : Request) -> Response {
   if ctx.file_response() is None {
     // Without request headers there can be no precondition.
     if ctx.request.headers.is_empty() {
-      if self.etag_enabled {
+      if response_etag_enabled(self, ctx) {
         apply_etag(ctx.response)
       }
     } else {
@@ -9644,7 +9644,9 @@ pub fn App::respond(self : App, request : Request) -> Response {
         ctx.response,
       )
       if !failed {
-        finish_response(self, ctx.response, remaining, allows_not_modified)
+        finish_response(
+          self, ctx, ctx.response, remaining, allows_not_modified,
+        )
       }
     }
   }
@@ -9684,7 +9686,7 @@ pub async fn App::respond_async(
       if compress {
         compress_response(None, ctx.response, min_size)
       }
-      if self.etag_enabled {
+      if response_etag_enabled(self, ctx) {
         apply_etag(ctx.response)
       }
     } else {
@@ -9703,7 +9705,9 @@ pub async fn App::respond_async(
             min_size,
           )
         }
-        finish_response(self, ctx.response, remaining, allows_not_modified)
+        finish_response(
+          self, ctx, ctx.response, remaining, allows_not_modified,
+        )
       }
     }
   }
