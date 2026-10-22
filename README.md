@@ -37,7 +37,8 @@ long-term design notes are in [PLAN.md](PLAN.md).
   text/HTML/JSON/bytes responses, files and downloads,
   cookies (including signed cookies), flash messages, content negotiation,
   conditional requests (ETag / `If-None-Match` / `If-Modified-Since`), range
-  requests, gzip response compression, cache-control helpers, and safe
+  requests for files and buffered handler responses (`Range` / `If-Range`,
+  `206` / `416`), gzip response compression, cache-control helpers, and safe
   `redirect_back` handling.
 - **Async endpoints** – server-sent events (`sse`), streaming responses
   (`stream`), and WebSocket handlers (`websocket`).
@@ -310,6 +311,15 @@ only track a modification time can answer `If-Modified-Since` with `304`:
 `ctx.fresh("", last_modified=stamp)`. As required by RFC 9110, a present
 `If-None-Match` takes precedence over the date condition, and date validation
 only applies to `GET` and `HEAD`.
+
+A successful `GET` whose body is already buffered (text, JSON, bytes, or a
+response produced by middleware) also honors a single `Range` header, just like
+file responses: a satisfiable range becomes `206 Partial Content` with
+`Content-Range` and the sliced bytes, an unsatisfiable one becomes `416 Range
+Not Satisfiable`, and `If-Range` is checked against the response's `ETag` or
+`Last-Modified`. Malformed and multi-range requests are answered with the full
+representation, which RFC 9110 permits. `HEAD` and non-`GET` requests ignore
+`Range`.
 
 `cache_public` and `cache_private` accept `immutable=true`; `no_store` and
 `no_cache` cover the common non-storable and revalidate-first cases, while

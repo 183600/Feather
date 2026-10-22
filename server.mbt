@@ -1524,6 +1524,23 @@ async fn finalize_dynamic_response(
 }
 
 ///|
+/// Apply a buffered-response `Range` request using the HTTP runtime's request
+/// headers, mirroring `App::respond` for the server path.
+fn apply_buffered_range_http(
+  request : @http.Request,
+  response : Response,
+  head : Bool,
+) -> Unit {
+  apply_buffered_range_core(
+    request_method_to_string(request.meth).view(),
+    request.headers.get(header_range),
+    request.headers.get(header_if_range),
+    response,
+    head,
+  )
+}
+
+///|
 /// Send the response a short-circuiting middleware produced for an
 /// asynchronous endpoint, supporting both ordinary bodies and file responses.
 async fn send_context_response(
@@ -1550,7 +1567,10 @@ async fn send_context_response(
         compress_min_size~,
       )
     }
-    None => send_response(conn, ctx.response, head, connect~)
+    None => {
+      apply_buffered_range_http(request, ctx.response, head)
+      send_response(conn, ctx.response, head, connect~)
+    }
   }
 }
 
@@ -2890,6 +2910,7 @@ async fn handle_static(
             ctx.response,
           )
         }
+        apply_buffered_range_http(request, ctx.response, head)
         send_response(conn, ctx.response, head)
       }
     }
@@ -3312,13 +3333,15 @@ async fn handle_request(
           compress_enabled=compress,
           compress_min_size~,
         )
-      None =>
+      None => {
+        apply_buffered_range_http(request, response, head)
         send_response(
           conn,
           response,
           head,
           connect=request.meth is @http.Connect,
         )
+      }
     }
   }
   if app.timeout > 0 {
@@ -3392,13 +3415,15 @@ async fn handle_request(
           compress_enabled=compress,
           compress_min_size~,
         )
-      None =>
+      None => {
+        apply_buffered_range_http(request, response, head)
         send_response(
           conn,
           response,
           head,
           connect=request.meth is @http.Connect,
         )
+      }
     }
   }
 }

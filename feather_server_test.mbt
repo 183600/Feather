@@ -342,3 +342,42 @@ async test "connect success responses are bodyless and unframed" {
     assert_false(lower.contains("transfer-encoding"), msg=head)
   })
 }
+
+///|
+async test "server serves a byte range from a buffered response" {
+  let app = @feather.App::new().get("/data", fn(ctx) {
+    ctx.text(200, "0123456789")
+  })
+  with_server(app, client => {
+    let response = client.get(
+      "/data",
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("Range"), "bytes=2-5"),
+      ]),
+    )
+    assert_eq(response.code, 206)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Range")),
+      Some("bytes 2-5/10"),
+    )
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("Content-Length")),
+      Some("4"),
+    )
+    assert_eq(client.read_all().text(), "2345")
+    let unsatisfiable = client.get(
+      "/data",
+      extra_headers=Map([
+        (@http.CaseInsensitiveString("Range"), "bytes=99-"),
+      ]),
+    )
+    assert_eq(unsatisfiable.code, 416)
+    assert_eq(
+      unsatisfiable.headers.get(
+        @http.CaseInsensitiveString("Content-Range"),
+      ),
+      Some("bytes */10"),
+    )
+    assert_eq(client.read_all().text(), "416 Range Not Satisfiable")
+  })
+}
