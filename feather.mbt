@@ -2467,6 +2467,15 @@ pub fn Context::params(self : Context) -> Map[String, String] {
 }
 
 ///|
+/// Whether the matched route captured a parameter named `name`, including a
+/// wildcard capture. Unlike `Context::param`, this distinguishes an absent
+/// parameter from one whose captured text is empty (a wildcard can match the
+/// empty remainder).
+pub fn Context::has_param(self : Context, name : String) -> Bool {
+  name != "" && self.state.contains(PARAM_PREFIX + name)
+}
+
+///|
 pub fn Context::status(self : Context, code : Int32) -> Unit {
   self.response.status = code
 }
@@ -3437,6 +3446,22 @@ fn parse_cookie_map(header : StringView) -> Map[String, String] {
     pos = end + 1
   }
   cookies
+}
+
+///|
+/// Deep-copy a map of multi-value parameters, so callers cannot mutate the
+/// arrays held by the parse cache.
+fn copy_values_map(
+  source : Map[String, Array[String]],
+) -> Map[String, Array[String]] {
+  let copy : Map[String, Array[String]] = Map(
+    [],
+    capacity=source.length(),
+  )
+  for key, values in source {
+    copy.set(key, values.copy())
+  }
+  copy
 }
 
 ///|
@@ -6139,6 +6164,46 @@ pub fn Context::queries(self : Context) -> Map[String, String] {
 }
 
 ///|
+/// All query parameters, keyed by name, with every repeated value preserved in
+/// appearance order. Unlike `Context::queries`, which keeps only the first
+/// value of a repeated parameter, this lets a caller enumerate the complete
+/// query without knowing its keys in advance.
+///
+/// Both the map and its arrays are fresh copies, so mutating the result cannot
+/// disturb a later request that carries the same query.
+pub fn Context::query_all(
+  self : Context,
+) -> Map[String, Array[String]] {
+  let path = self.request.path
+  match path_query_index(path) {
+    Some(index) => copy_values_map(query_multi_lookup(path, index))
+    None => Map([])
+  }
+}
+
+///|
+/// Whether the query string carries `name`, matching the same decoded and raw
+/// spellings as `Context::query`.
+///
+/// Unlike `Context::query`, this distinguishes an absent parameter from one
+/// that is present with an empty value (`?flag` or `?flag=`).
+pub fn Context::has_query(self : Context, name : String) -> Bool {
+  if name == "" {
+    return false
+  }
+  let path = self.request.path
+  match path_query_index(path) {
+    Some(index) =>
+      if name_needs_raw(name.view()) {
+        query_param_opt(query_source_view(path, index), name) is Some(_)
+      } else {
+        query_map_lookup(path, index).contains(name)
+      }
+    None => false
+  }
+}
+
+///|
 fn collect_values(source : StringView, name : String) -> Array[String] {
   let values : Array[String] = []
   let name_view = name.view()
@@ -6222,6 +6287,40 @@ pub fn Context::form_map(self : Context) -> Map[String, String] {
     return Map([])
   }
   form_map_lookup(self.request.body).copy()
+}
+
+///|
+/// All url-encoded form fields, keyed by name, with every repeated value
+/// preserved in appearance order. Returns an empty map when the body is not
+/// `application/x-www-form-urlencoded`.
+///
+/// Both the map and its arrays are fresh copies, so mutating the result cannot
+/// disturb a later request that carries the same body.
+pub fn Context::form_all(
+  self : Context,
+) -> Map[String, Array[String]] {
+  if !self.is_form() {
+    return Map([])
+  }
+  copy_values_map(form_values_lookup(self.request.body))
+}
+
+///|
+/// Whether the url-encoded form body carries `name`, matching the same decoded
+/// and raw spellings as `Context::form`. Returns `false` for another content
+/// type, just like the other form accessors.
+///
+/// Unlike `Context::form`, this distinguishes an absent field from one that is
+/// present with an empty value (`flag` or `flag=`).
+pub fn Context::has_form(self : Context, name : String) -> Bool {
+  if name == "" || !self.is_form() {
+    return false
+  }
+  if name_needs_raw(name.view()) {
+    query_param_opt(self.request.body.view(), name) is Some(_)
+  } else {
+    form_map_lookup(self.request.body).contains(name)
+  }
 }
 
 ///|

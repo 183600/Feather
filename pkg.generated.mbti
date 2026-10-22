@@ -285,6 +285,7 @@ pub fn Context::flash_peek(Self, category? : String) -> Array[String]
 pub fn Context::flash_take(Self, category? : String) -> Array[String]
 pub fn Context::flash_take_all(Self) -> Map[String, Array[String]]
 pub fn Context::form(Self, String) -> String
+pub fn Context::form_all(Self) -> Map[String, Array[String]]
 pub fn Context::form_bool(Self, String) -> Bool?
 pub fn Context::form_default(Self, String, String) -> String
 pub fn Context::form_float(Self, String) -> Double?
@@ -300,8 +301,11 @@ pub fn Context::get(Self, String) -> String
 pub fn Context::get_json(Self, String) -> Json?
 pub fn Context::get_method(Self) -> String
 pub fn Context::get_path(Self) -> String
+pub fn Context::has_form(Self, String) -> Bool
 pub fn Context::has_header(Self, String) -> Bool
 pub fn Context::has_json_state(Self, String) -> Bool
+pub fn Context::has_param(Self, String) -> Bool
+pub fn Context::has_query(Self, String) -> Bool
 pub fn Context::has_response_header(Self, String) -> Bool
 pub fn Context::has_state(Self, String) -> Bool
 pub fn Context::header(Self, String) -> String
@@ -346,6 +350,7 @@ pub fn Context::problem(Self, Int32, String, title? : String, type_name? : Strin
 pub fn Context::protocol(Self) -> String
 pub fn Context::queries(Self) -> Map[String, String]
 pub fn Context::query(Self, String) -> String
+pub fn Context::query_all(Self) -> Map[String, Array[String]]
 pub fn Context::query_bool(Self, String) -> Bool?
 pub fn Context::query_default(Self, String, String) -> String
 pub fn Context::query_float(Self, String) -> Double?

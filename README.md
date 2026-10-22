@@ -25,10 +25,11 @@ long-term design notes are in [PLAN.md](PLAN.md).
   rate limiting, basic and bearer auth, CSRF, secure headers, HTTPS redirect,
   method override, sessions, and a problem-details error handler whose
   negotiated bodies vary on `Accept`.
-- **Context** – path/query/form/multipart access, raw `pathname` /
-  `query_string` request-target accessors, typed query/param/form
-  helpers (including 32- and 64-bit integers, booleans, and finite floats),
-  JSON bodies,
+- **Context** – path/query/form/multipart access, multi-value `query_all` /
+  `form_all` maps and `has_query` / `has_form` / `has_param` presence checks,
+  raw `pathname` / `query_string` request-target accessors, typed
+  query/param/form helpers (including 32- and 64-bit integers, booleans, and
+  finite floats), JSON bodies,
   text bodies decoded with the request's declared charset (UTF-8, Latin-1,
   ASCII, and UTF-16 LE/BE),
   matched-route identity (`route_pattern` / `route_method` / `route_name`) for
@@ -110,6 +111,28 @@ WebSocket, SSE, and streaming lives in
 ```bash
 ./moon run examples/hello --target native
 ```
+
+## Requests and context
+
+Query, form and route values are available through both single-value and
+multi-value helpers. `query_values` / `form_values` collect every occurrence of
+one name, while `query_all` / `form_all` return the whole collection at once:
+
+```moonbit
+ignore(app.get("/search", fn(ctx) {
+  // /search?tag=a&tag=b&tag=c
+  let tags = ctx.query_all().get("tag").unwrap_or([])
+  ctx.text(200, tags.join(", "))
+}))
+```
+
+`has_query`, `has_form` and `has_param` tell an absent value apart from one
+that is present but empty, which matters for flags such as `?preview` or a
+wildcard route that captures the empty remainder. `has_param` includes wildcard
+captures, and all three keep the same raw/percent-decoded matching as their
+lookup counterparts. The multi-value maps and arrays are fresh copies, so a
+handler can mutate them without disturbing a later request that carries the
+same query or body.
 
 ## Routing
 
