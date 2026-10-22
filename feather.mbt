@@ -7552,6 +7552,11 @@ fn parse_http_date_view(view : StringView) -> Int64? {
       Some(index) => first_dash + 1 + index
       None => return None
     }
+    // HTTP-date spells the day with exactly two digits in both IMF-fixdate
+    // and rfc850-date; a short token is a malformed date, not a validator.
+    if first_dash != 2 {
+      return None
+    }
     day = match parse_decimal(date[:first_dash]) {
       Some(day) => day
       None => return None
@@ -7589,6 +7594,11 @@ fn parse_http_date_view(view : StringView) -> Int64? {
       !is_http_weekday(weekday[:weekday.length() - 1]) {
       return None
     }
+    // IMF-fixdate uses a fixed two-digit day. The tokenizing fallback is only
+    // for tolerated whitespace variations, not for malformed field widths.
+    if parts[1].length() != 2 {
+      return None
+    }
     day = match parse_decimal(parts[1]) {
       Some(day) => day
       None => return None
@@ -7621,6 +7631,11 @@ fn parse_http_date_view(view : StringView) -> Int64? {
     month = match month_from_name(parts[1]) {
       Some(month) => month
       None => return None
+    }
+    // asctime pads a one-digit day with an extra space, so its token has one
+    // or two digits; longer tokens are not part of the grammar.
+    if parts[2].length() < 1 || parts[2].length() > 2 {
+      return None
     }
     day = match parse_decimal(parts[2]) {
       Some(day) => day
