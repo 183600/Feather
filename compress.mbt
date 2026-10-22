@@ -189,7 +189,12 @@ fn contains_ignore_ascii_case(
 fn add_vary_accept_encoding(response : Response) -> Unit {
   match get_header_ignore_case(response.headers, "Vary") {
     Some(existing) =>
-      if !header_list_has_token(existing.view(), "accept-encoding".view()) {
+      if trim_ascii_space(existing.view()).is_empty() {
+        set_header_ignore_case(response.headers, "Vary", "Accept-Encoding")
+      } else if !header_list_has_token(
+        existing.view(),
+        "accept-encoding".view(),
+      ) {
         set_header_ignore_case(
           response.headers,
           "Vary",

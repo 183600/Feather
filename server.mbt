@@ -478,7 +478,10 @@ fn if_range_allows(
         true
       } else {
         match parse_http_date_view(token) {
-          Some(since) => mtime_secs > 0L && mtime_secs == since
+          // The epoch is a real `Last-Modified` value (it is also what an
+          // unknown filesystem mtime advertises), so compare it exactly rather
+          // than using zero as an "unknown" sentinel here.
+          Some(since) => mtime_secs == since
           None => false
         }
       }
@@ -1196,7 +1199,9 @@ async fn open_precompressed_gzip(file_path : String) -> @fs.File? {
 fn add_vary_header(headers : @http.Headers, value : String) -> Unit {
   match headers.get(header_vary) {
     Some(existing) =>
-      if !header_list_has_token(existing.view(), value.view()) {
+      if trim_ascii_space(existing.view()).is_empty() {
+        headers.set(header_vary, value)
+      } else if !header_list_has_token(existing.view(), value.view()) {
         headers.set(header_vary, existing + ", " + value)
       }
     None => headers.set(header_vary, value)

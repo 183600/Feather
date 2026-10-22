@@ -2496,7 +2496,12 @@ fn normalize_forwarded_for(value : StringView) -> String? {
   // A single colon separates an IPv4 address from its port; several colons
   // mean a bare IPv6 address, which has no port to strip.
   if colons == 1 && last_colon > 0 {
-    return Some(value[:last_colon].to_owned())
+    let host = value[:last_colon]
+    // `unknown` is a node name, not an address, even when it carries a port.
+    if host.equal_ignore_ascii_case("unknown".view()) {
+      return None
+    }
+    return Some(host.to_owned())
   }
   Some(value.to_owned())
 }
@@ -4178,6 +4183,7 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
   let length = source.length()
   let mut ascii_only = true
   let mut needs_decoding = false
+  let mut needs_surrogate_repair = false
   let mut i = 0
   // Scan once to choose between the ASCII and UTF-8 decoding paths.
   while i < length {
@@ -4187,10 +4193,26 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
     } else if value == 37 || (value == 43 && plus_as_space) {
       needs_decoding = true
     }
+    if value >= 0xD800 && value <= 0xDBFF {
+      if i + 1 < length &&
+        source.unsafe_get(i + 1).to_int() >= 0xDC00 &&
+        source.unsafe_get(i + 1).to_int() <= 0xDFFF {
+        i = i + 1
+      } else {
+        needs_surrogate_repair = true
+      }
+    } else if value >= 0xDC00 && value <= 0xDFFF {
+      needs_surrogate_repair = true
+    }
     i = i + 1
   }
   if !needs_decoding {
-    return source.to_owned()
+    // Without escapes the common case is a pure copy. A lone surrogate is not
+    // valid text, so repair it the same way the percent-decoding path does.
+    if !needs_surrogate_repair {
+      return source.to_owned()
+    }
+    return @utf8.decode_lossy(encode_utf8_lossy(source))
   }
   if !ascii_only {
     return decode_url_bytes(encode_utf8_lossy(source), plus_as_space)
@@ -9693,7 +9715,9 @@ pub fn Context::vary(self : Context, value : String) -> Unit {
   }
   match get_header_ignore_case(self.response.headers, "Vary") {
     Some(existing) =>
-      if !header_list_has_token(existing.view(), value.view()) {
+      if trim_ascii_space(existing.view()).is_empty() {
+        set_header_ignore_case(self.response.headers, "Vary", value)
+      } else if !header_list_has_token(existing.view(), value.view()) {
         set_header_ignore_case(
           self.response.headers,
           "Vary",
