@@ -170,3 +170,62 @@ test "feather facade exposes scoped middleware" {
   assert_eq(feather.handle(scope_test_request("/health")).body, "out")
   assert_eq(calls.val, 1)
 }
+
+///|
+test "scoped middleware is relative to a mounted child" {
+  let calls = Ref(0)
+  let child = @feather.App::new()
+    .use_prefix("/api", scope_test_mark("yes", calls))
+    .get("/api/items", scope_test_handler)
+    .get("/other", scope_test_handler)
+  let parent = @feather.App::new().mount("/v1", child)
+  let mounted = parent.respond(scope_test_request("/v1/api/items"))
+  assert_eq(mounted.status, 200)
+  assert_eq(mounted.body, "in")
+  let outside = parent.respond(scope_test_request("/v1/other"))
+  assert_eq(outside.body, "out")
+  assert_eq(calls.val, 1)
+}
+
+///|
+test "nested mounts compose their scoped prefixes" {
+  let calls = Ref(0)
+  let leaf = @feather.App::new()
+    .use_prefix("/api", scope_test_mark("yes", calls))
+    .get("/api/items", scope_test_handler)
+    .get("/health", scope_test_handler)
+  let middle = @feather.App::new().mount("/v2", leaf)
+  let root = @feather.App::new().mount("/v1", middle)
+  assert_eq(root.respond(scope_test_request("/v1/v2/api/items")).body, "in")
+  assert_eq(root.respond(scope_test_request("/v1/v2/health")).body, "out")
+  assert_eq(calls.val, 1)
+}
+
+///|
+test "parent and child scopes both keep their own base" {
+  let events : Ref[Array[String]] = Ref([])
+  let child = @feather.App::new()
+    .use(scope_test_event("child-use", events))
+    .use_prefix("/api", scope_test_event("child-prefix", events))
+    .get("/api/items", fn(ctx) {
+      events.val.push("handler")
+      ctx.text(200, "ok")
+    })
+    .get("/other", fn(ctx) {
+      events.val.push("handler")
+      ctx.text(200, "ok")
+    })
+  let parent = @feather.App::new()
+    .use(scope_test_event("parent-use", events))
+    .use_prefix("/v1", scope_test_event("parent-prefix", events))
+    .mount("/v1", child)
+  ignore(parent.respond(scope_test_request("/v1/api/items")))
+  assert_eq(
+    events.val.join(","),
+    "parent-use,parent-prefix,child-use,child-prefix,handler",
+  )
+  events.val.clear()
+  ignore(parent.respond(scope_test_request("/v1/other")))
+  assert_eq(events.val.join(","), "parent-use,parent-prefix,child-use,handler")
+}
+

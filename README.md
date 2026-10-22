@@ -216,9 +216,11 @@ segment and everything below it, so authentication, CORS or cache policy can
 apply to part of an application without creating a `RouteGroup`. Matching is
 segment-aware (`/api` covers `/api` and `/api/users`, not `/apiary`), ignores
 the query string, and keeps the installation position relative to `App::use`.
-An empty prefix or `"/"` applies application-wide. `App::use_when(predicate,
-middleware)` is the general form when the decision depends on request state or
-another header rather than the path.
+An empty prefix or `"/"` applies application-wide. When a child application is
+mounted, its scoped prefixes stay relative to the child, so mounting the same
+child at a different parent prefix does not require rewriting its middleware.
+`App::use_when(predicate, middleware)` is the general form when the decision
+depends on request state or another header rather than the path.
 
 Sessions and CSRF are available as middleware plus `Context` helpers
 (`session_get`, `session_set`, `session_has`, `session_keys`, `session_remove`,

@@ -9164,6 +9164,33 @@ fn path_is_within_prefix(path : StringView, prefix : StringView) -> Bool {
 }
 
 ///|
+/// Request state key holding the path prefix under which the current
+/// application is mounted. It is set while a mounted child's middleware runs,
+/// so `App::use_prefix` on that child can match paths relative to the child
+/// rather than to the parent.
+const MOUNT_BASE_KEY : String = "__feather_mount_base"
+
+///|
+/// The request path relative to the current application's mount point.
+///
+/// Unmounted applications see the whole path. A mounted child sees its own
+/// subtree, which keeps a child's `use_prefix` scope stable regardless of
+/// where the parent mounted it. An exact match for the mount point yields an
+/// empty path (not `/`), which no non-root prefix matches.
+fn scoped_request_path(ctx : Context) -> StringView {
+  let path = clean_path_view(ctx.request.path)
+  match ctx.state.get(MOUNT_BASE_KEY) {
+    Some(base) =>
+      if base != "" && path_is_within_prefix(path, base.view()) {
+        path[base.length():]
+      } else {
+        path
+      }
+    None => path
+  }
+}
+
+///|
 fn join_paths(prefix : String, path : String) -> String {
   let base = normalize_prefix(prefix)
   if path == "" || path == "/" {
@@ -9833,7 +9860,7 @@ pub fn App::use_prefix(
   self.use_when(
     fn(ctx) {
       path_is_within_prefix(
-        clean_path_view(ctx.request.path),
+        scoped_request_path(ctx),
         normalized.view(),
       )
     },
@@ -10464,14 +10491,60 @@ fn mounted_state_middleware(child : App) -> Middleware {
 }
 
 ///|
+/// Record the path prefix under which a child application is mounted while its
+/// middleware runs. Nested mounts combine their bases, so a child mounted at
+/// `/v2` inside an application mounted at `/v1` sees `/v1/v2` and strips all of
+/// it before a scoped middleware compares paths. The previous base is restored
+/// on both normal return and error, so sibling routes never inherit a stale
+/// mount point.
+fn mount_base_middleware(local_base : String) -> Middleware {
+  let base = normalize_prefix(local_base)
+  fn(next) {
+    fn(ctx) raise {
+      if base == "" {
+        next(ctx)
+      } else {
+        let previous = ctx.state.get(MOUNT_BASE_KEY)
+        let combined = match previous {
+          Some(parent) =>
+            if parent == "" {
+              base
+            } else {
+              join_paths(parent, base)
+            }
+          None => base
+        }
+        ctx.state.set(MOUNT_BASE_KEY, combined)
+        defer {
+          match previous {
+            Some(value) => ctx.state.set(MOUNT_BASE_KEY, value)
+            None => ignore(ctx.state.remove(MOUNT_BASE_KEY))
+          }
+        }
+        next(ctx)
+      }
+    }
+  }
+}
+
+///|
 /// The middleware chain a mounted child contributes: first its app state, then
-/// the child's own application middleware. This mirrors serving the child
-/// directly, while the mount middleware stays outside both.
-fn mounted_child_middlewares(child : App) -> Array[Middleware] {
+/// its mount point, then the child's own application middleware. This mirrors
+/// serving the child directly, while the mount middleware stays outside both.
+/// The mount point lets `App::use_prefix` inside the child keep matching
+/// child-relative paths after the parent prefixes them.
+fn mounted_child_middlewares(
+  child : App,
+  base : String,
+) -> Array[Middleware] {
   let combined : Array[Middleware] = Array(
-    capacity=child.middlewares.length() + 1,
+    capacity=child.middlewares.length() + 2,
   )
   combined.push(mounted_state_middleware(child))
+  let mount_base = normalize_prefix(base)
+  if mount_base != "" {
+    combined.push(mount_base_middleware(mount_base))
+  }
   combined.append(child.middlewares)
   combined
 }
@@ -10556,7 +10629,7 @@ pub fn App::mount_with(
 ) -> App {
   let outer = middlewares.copy()
   let base = normalize_prefix(prefix)
-  let child_middlewares = mounted_child_middlewares(child)
+  let child_middlewares = mounted_child_middlewares(child, base)
   let routes : Array[(String, String, Handler, String)] = []
   for method, root in child.router.trees {
     collect_route_nodes(root, method, routes)
