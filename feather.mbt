@@ -8614,12 +8614,14 @@ pub fn Context::fresh(
   last_modified? : String,
 ) -> Bool {
   let none_match = self.header("If-None-Match")
-  if none_match != "" {
-    // `If-None-Match` takes precedence over `If-Modified-Since` (RFC 9110
-    // §13.1.3), so a present but non-matching tag must not fall back to the
-    // date condition. Without a representation ETag only the wildcard can
-    // match: `*` names any existing representation, so it stays true even
-    // when the caller does not have a validator to pass.
+  // Presence matters, not just a non-empty value: an empty or malformed
+  // `If-None-Match` field still takes precedence over `If-Modified-Since`
+  // (RFC 9110 §13.1.3), so it must not fall through to the date condition.
+  if self.has_header("If-None-Match") {
+    // A present but non-matching tag must not fall back to the date
+    // condition. Without a representation ETag only the wildcard can match:
+    // `*` names any existing representation, so it stays true even when the
+    // caller does not have a validator to pass.
     if etag == "" {
       return etag_header_matches(none_match.view(), "")
     }

@@ -37,3 +37,16 @@ test "fresh wildcard wins over an if-modified-since date without an etag" {
   )
   assert_true(ctx.fresh("", last_modified=last_modified))
 }
+
+///|
+test "fresh keeps an empty if-none-match ahead of the date condition" {
+  let last_modified = @feather.format_http_date(1_600_000_000L)
+  let ctx = fresh_wildcard_context(
+    Map([
+      ("If-None-Match", ""),
+      ("If-Modified-Since", last_modified),
+    ]),
+  )
+  assert_false(ctx.fresh("", last_modified=last_modified))
+  assert_false(ctx.fresh("\"current\"", last_modified=last_modified))
+}
