@@ -232,6 +232,20 @@ test "session middleware honors cookie options" {
 }
 
 ///|
+test "session cookie max age rounds up to the server ttl" {
+  let store = @feather.SessionStore::new(ttl=1_999L)
+  let app = @feather.App::new()
+    .use(@feather.middleware_session(store))
+    .get("/login", fn(ctx) {
+      ignore(ctx.session_set("user", "alice"))
+      ctx.text(200, "ok")
+    })
+  let response = app.respond(session_request("/login"))
+  assert_eq(response.cookies.length(), 1)
+  assert_eq(response.cookies[0].max_age, Some(2L))
+}
+
+///|
 test "Context session remove deletes keys" {
   let store = @feather.SessionStore::new()
   let app = @feather.App::new()

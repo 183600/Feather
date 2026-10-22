@@ -637,6 +637,15 @@ pub fn middleware_session(
   secure~ : Bool = false,
   partitioned~ : Bool = false,
 ) -> Middleware {
+  let ttl = store.ttl()
+  let whole_seconds = ttl / 1000L
+  // Round up: a browser cookie must not expire before the server-side session,
+  // so a 1999 ms TTL advertises Max-Age=2 rather than truncating to 1.
+  let cookie_seconds = if ttl % 1000L == 0L {
+    whole_seconds
+  } else {
+    whole_seconds + 1L
+  }
   let config : SessionCookieConfig = {
     name: cookie,
     path,
@@ -645,11 +654,7 @@ pub fn middleware_session(
     http_only,
     secure,
     partitioned,
-    max_age: if store.ttl() >= 1000L {
-      Some(store.ttl() / 1000L)
-    } else {
-      None
-    },
+    max_age: if ttl >= 1000L { Some(cookie_seconds) } else { None },
   }
   let lazy_ttl_text = store.ttl().to_string()
   fn(next) {
