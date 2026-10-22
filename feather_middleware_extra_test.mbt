@@ -318,6 +318,61 @@ test "named routes keep normalized methods" {
 }
 
 ///|
+test "body limit middleware rejects oversized bodies by byte length" {
+  let app = @feather.App::new()
+    .use(@feather.middleware_body_limit(4))
+    .post("/echo", fn(ctx) { ctx.text(200, ctx.request.body) })
+  let allowed = app.respond({
+    method: "POST",
+    path: "/echo",
+    headers: Map([]),
+    body: "1234",
+  })
+  assert_eq(allowed.status, 200)
+  assert_eq(allowed.body, "1234")
+  let large = app.respond({
+    method: "POST",
+    path: "/echo",
+    headers: Map([]),
+    body: "12345",
+  })
+  assert_eq(large.status, 413)
+  assert_eq(large.body, "413 Payload Too Large")
+  assert_eq(
+    large.headers.get("Content-Type"),
+    Some("text/plain; charset=utf-8"),
+  )
+  let unicode = app.respond({
+    method: "POST",
+    path: "/echo",
+    headers: Map([]),
+    body: "中文",
+  })
+  assert_eq(unicode.status, 413)
+  let empty = @feather.App::new()
+    .use(@feather.middleware_body_limit(0))
+    .post("/", fn(ctx) { ctx.text(200, "ok") })
+  assert_eq(
+    empty.respond({
+      method: "POST",
+      path: "/",
+      headers: Map([]),
+      body: "",
+    }).status,
+    200,
+  )
+  assert_eq(
+    empty.respond({
+      method: "POST",
+      path: "/",
+      headers: Map([]),
+      body: "x",
+    }).status,
+    413,
+  )
+}
+
+///|
 test "cors does not duplicate an existing vary origin" {
   let app = @feather.App::new()
     .use(@feather.middleware_cors(allow_origin="https://app.test"))

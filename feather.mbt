@@ -9136,6 +9136,30 @@ pub async fn App::respond_async(
 }
 
 ///|
+/// Middleware that rejects request bodies larger than `max_bytes` with
+/// `413 Payload Too Large` before the handler runs.
+///
+/// The server already refuses bodies above `App::max_body_size` while they are
+/// read; this middleware adds a per-route or per-group limit that can be
+/// smaller, and also applies on the offline `App::respond` path, which does
+/// not enforce the application-wide limit. Sizes are measured in bytes, so a
+/// limit counts the encoded length of text bodies. Negative limits are clamped
+/// to zero, rejecting every non-empty body.
+pub fn middleware_body_limit(max_bytes : Int32) -> Middleware {
+  let limit = if max_bytes < 0 { 0 } else { max_bytes }
+  fn(next) {
+    fn(ctx) raise {
+      if ctx.body_bytes().length() > limit {
+        clear_replaced_body_headers(ctx.response.headers)
+        ctx.text(413, "413 Payload Too Large")
+      } else {
+        next(ctx)
+      }
+    }
+  }
+}
+
+///|
 /// Middleware that turns errors escaping the handler chain into responses:
 /// `HttpError` / `HttpErrorPayload` become their status and JSON body,
 /// `HttpProblem` becomes its RFC 7807 problem-details body, while any other
