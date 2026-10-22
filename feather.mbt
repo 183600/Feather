@@ -10054,31 +10054,55 @@ fn cache_control_has_directive(
 }
 
 ///|
-/// Append `value` to the response's `Vary` header unless it is already listed.
+/// Append the field names in `value` to the response's `Vary` header unless
+/// they are already listed.
+///
+/// `value` may name more than one field, separated by commas. Each field is
+/// matched case-insensitively against the existing list, so passing
+/// `"Origin, Accept-Encoding"` in pieces does not create duplicate entries.
 pub fn Context::vary(self : Context, value : String) -> Unit {
-  // `Vary` is a list of field names; an empty value is not a valid field name
-  // and must not create an empty header field.
-  if trim_ascii_space(value.view()).is_empty() {
+  // `Vary` is a list of field names, so split the caller's value into complete
+  // entries. Empty entries (for example a trailing comma) are ignored.
+  let names : Array[String] = []
+  for part in value.view().split(",") {
+    let name = trim_ascii_space(part)
+    if !name.is_empty() {
+      names.push(name.to_owned())
+    }
+  }
+  if names.is_empty() {
     return
   }
   // RFC 9110 §12.5.5 defines `*` as the entire field value, so a wildcard
   // replaces whatever was already listed instead of being appended to it.
-  if header_list_has_token(value.view(), "*".view()) {
-    set_header_ignore_case(self.response.headers, "Vary", "*")
+  for name in names {
+    if name.view().equal_ignore_ascii_case("*".view()) {
+      set_header_ignore_case(self.response.headers, "Vary", "*")
+      return
+    }
+  }
+  let existing = match get_header_ignore_case(self.response.headers, "Vary") {
+    Some(existing) => existing
+    None => ""
+  }
+  let additions : Array[String] = []
+  for name in names {
+    if !header_list_has_token(existing.view(), name.view()) &&
+      !header_list_has_token(additions.join(", ").view(), name.view()) {
+      additions.push(name)
+    }
+  }
+  if additions.length() == 0 {
     return
   }
-  match get_header_ignore_case(self.response.headers, "Vary") {
-    Some(existing) =>
-      if trim_ascii_space(existing.view()).is_empty() {
-        set_header_ignore_case(self.response.headers, "Vary", value)
-      } else if !header_list_has_token(existing.view(), value.view()) {
-        set_header_ignore_case(
-          self.response.headers,
-          "Vary",
-          existing + ", " + value,
-        )
-      }
-    None => self.response.headers.set("Vary", value)
+  if trim_ascii_space(existing.view()).is_empty() {
+    set_header_ignore_case(self.response.headers, "Vary", additions.join(", "))
+  } else {
+    set_header_ignore_case(
+      self.response.headers,
+      "Vary",
+      existing + ", " + additions.join(", "),
+    )
   }
 }
 

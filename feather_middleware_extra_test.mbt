@@ -235,6 +235,24 @@ test "context vary appends entries once" {
 }
 
 ///|
+test "context vary splits comma separated field lists and dedupes them" {
+  let ctx = @feather.create_context()
+  ctx.vary("Origin, Accept-Encoding")
+  assert_eq(ctx.response.headers.get("Vary"), Some("Origin, Accept-Encoding"))
+  ctx.vary("Accept-Encoding, Origin, Cookie")
+  assert_eq(
+    ctx.response.headers.get("Vary"),
+    Some("Origin, Accept-Encoding, Cookie"),
+  )
+  let duplicates = @feather.create_context()
+  duplicates.vary("Origin, origin, ORIGIN")
+  assert_eq(duplicates.response.headers.get("Vary"), Some("Origin"))
+  let wildcard = @feather.create_context()
+  wildcard.vary("Origin, *")
+  assert_eq(wildcard.response.headers.get("Vary"), Some("*"))
+}
+
+///|
 test "context vary matches whole entries, not substrings" {
   let ctx = @feather.create_context()
   ctx.vary("Accept-Encoding")
