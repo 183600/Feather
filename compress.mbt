@@ -325,14 +325,35 @@ async fn gzip_compress(data : Bytes) -> Bytes {
 }
 
 ///|
+/// Replace the response with `406 Not Acceptable`, dropping validators and
+/// representation metadata that described the body which will not be sent.
+fn set_not_acceptable(response : Response) -> Unit {
+  response.status = 406
+  response.body = "406 Not Acceptable"
+  response.data = None
+  set_header_ignore_case(
+    response.headers,
+    "Content-Type",
+    "text/plain; charset=utf-8",
+  )
+  ignore(remove_header_ignore_case(response.headers, "Content-Length"))
+  ignore(remove_header_ignore_case(response.headers, "Content-Encoding"))
+  ignore(remove_header_ignore_case(response.headers, "Content-Range"))
+  ignore(remove_header_ignore_case(response.headers, "ETag"))
+  ignore(remove_header_ignore_case(response.headers, "Last-Modified"))
+}
+
+///|
 /// Compress the response body when the client accepts gzip.
 ///
 /// `accept_encoding` is the `Accept-Encoding` header of the request, or
 /// `None` when the request carries none. The body is left alone when the
 /// response is not compressible, when the client does not accept gzip, or
 /// when the compressed body would not be smaller than the original one. If the
-/// client explicitly rejects identity and no other coding is acceptable, the
-/// response becomes `406 Not Acceptable`.
+/// client explicitly rejects identity the response is encoded even below
+/// `min_size` (or when gzip would not shrink it), because the identity
+/// representation is not acceptable. If no acceptable coding can be produced
+/// the response becomes `406 Not Acceptable`.
 async fn compress_response(
   accept_encoding : String?,
   response : Response,
@@ -345,13 +366,31 @@ async fn compress_response(
     response.status == 206 {
     return
   }
-  // Without a compressible `Content-Type` there is nothing else to decide.
+  let allows_gzip = match accept_encoding {
+    Some(value) => accept_encoding_allows_gzip_cached(value)
+    None => false
+  }
+  let refuses_identity = match accept_encoding {
+    Some(value) => accept_encoding_refuses_identity(value)
+    None => false
+  }
+  // Without a compressible `Content-Type` the server can only send identity.
   let content_type = match
     get_header_ignore_case(response.headers, "Content-Type") {
     Some(value) => value.view()
-    None => return
+    None => {
+      if refuses_identity {
+        add_vary_accept_encoding(response)
+        set_not_acceptable(response)
+      }
+      return
+    }
   }
   if !content_type_is_compressible(content_type) {
+    if refuses_identity {
+      add_vary_accept_encoding(response)
+      set_not_acceptable(response)
+    }
     return
   }
   if get_header_ignore_case(response.headers, "Content-Encoding") is Some(_) {
@@ -363,6 +402,10 @@ async fn compress_response(
   match get_header_ignore_case(response.headers, "Cache-Control") {
     Some(control) =>
       if cache_control_has_directive(control.view(), "no-transform".view()) {
+        if refuses_identity {
+          add_vary_accept_encoding(response)
+          set_not_acceptable(response)
+        }
         return
       }
     None => ()
@@ -372,23 +415,11 @@ async fn compress_response(
     Some(value) => value
     None => return
   }
-  if !accept_encoding_allows_gzip_cached(accept_encoding) {
-    // The client explicitly refused identity and the response has a
-    // compressible media type, so there is no acceptable content coding.
-    if accept_encoding_refuses_identity(accept_encoding) {
-      response.status = 406
-      response.body = "406 Not Acceptable"
-      response.data = None
-      set_header_ignore_case(
-        response.headers,
-        "Content-Type",
-        "text/plain; charset=utf-8",
-      )
-      ignore(remove_header_ignore_case(response.headers, "Content-Length"))
-      ignore(remove_header_ignore_case(response.headers, "Content-Encoding"))
-      ignore(remove_header_ignore_case(response.headers, "Content-Range"))
-      ignore(remove_header_ignore_case(response.headers, "ETag"))
-      ignore(remove_header_ignore_case(response.headers, "Last-Modified"))
+  if !allows_gzip {
+    // The client explicitly refused identity and no gzip coding is
+    // acceptable, so there is no acceptable representation.
+    if refuses_identity {
+      set_not_acceptable(response)
     }
     return
   }
@@ -401,11 +432,11 @@ async fn compress_response(
         encode_utf8_lossy(response.body.view())
       }
   }
-  if body_bytes.length() < min_size {
+  if body_bytes.length() < min_size && !refuses_identity {
     return
   }
   let compressed = gzip_compress(body_bytes)
-  if compressed.length() >= body_bytes.length() {
+  if compressed.length() >= body_bytes.length() && !refuses_identity {
     return
   }
   response.body = ""
