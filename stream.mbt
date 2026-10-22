@@ -100,10 +100,15 @@ pub async fn Stream::write(self : Stream, data : String) -> Unit {
 /// Write a byte chunk to the response body, sending the header first. Field
 /// arguments behave exactly as in `Stream::write`.
 pub async fn Stream::write_bytes(self : Stream, data : Bytes) -> Unit {
-  if self.closed || data.length() == 0 {
+  if self.closed {
     return
   }
+  // Even an empty first write starts the response, so the documented
+  // "first write sends the header" contract also locks the status and headers.
   self.start()
+  if data.length() == 0 || !status_allows_body(self.status) {
+    return
+  }
   self.conn.write(data)
   self.conn.flush()
 }
@@ -117,6 +122,9 @@ pub async fn Stream::write_reader(self : Stream, reader : &@io.Reader) -> Unit {
     return
   }
   self.start()
+  if !status_allows_body(self.status) {
+    return
+  }
   self.conn.write_reader(reader)
   self.conn.flush()
 }

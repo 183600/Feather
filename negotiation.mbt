@@ -134,26 +134,62 @@ fn accept_quality_from(
   if entries.length() == 0 {
     return 1000
   }
-  let mut best_q = -1
-  let mut best_specificity = -1
-  for entry in entries {
-    let range_type = entry.range_type
-    let range_subtype = entry.range_subtype
-    let quality = entry.quality
-    if want_type == "*" || want_subtype == "*" {
-      let type_ok = range_type == "*" ||
-        want_type == "*" ||
-        range_type.equal_ignore_ascii_case(want_type)
-      let subtype_ok = range_subtype == "*" ||
-        want_subtype == "*" ||
-        range_subtype.equal_ignore_ascii_case(want_subtype)
-      if type_ok &&
-        subtype_ok &&
-        (quality > best_q || (quality == best_q && best_specificity < 0)) {
-        best_specificity = 0
-        best_q = quality
+  // A wildcard offer describes a set of concrete media types. Its quality is
+  // the highest quality any concrete type in that set would receive, with the
+  // normal most-specific-range precedence deciding each candidate. Sampling
+  // every type/subtype mentioned by the header plus one unlisted value covers
+  // every distinct matching region, so an explicit `text/*;q=0` correctly
+  // overrides a broader `*/*;q=1` for the `text/*` offer.
+  if want_type == "*" || want_subtype == "*" {
+    let sample_type : StringView = "__feather_unlisted_type__".view()
+    let sample_subtype : StringView = "__feather_unlisted_subtype__".view()
+    let types : Array[StringView] = []
+    let subtypes : Array[StringView] = []
+    if want_type == "*" {
+      for entry in entries {
+        if entry.range_type != "*" {
+          types.push(entry.range_type)
+        }
       }
+      types.push(sample_type)
     } else {
+      types.push(want_type)
+    }
+    if want_subtype == "*" {
+      for entry in entries {
+        if entry.range_subtype != "*" {
+          subtypes.push(entry.range_subtype)
+        }
+      }
+      subtypes.push(sample_subtype)
+    } else {
+      subtypes.push(want_subtype)
+    }
+    let mut wildcard_best = -1
+    for candidate_type in types {
+      for candidate_subtype in subtypes {
+        let quality = accept_quality_from(
+          entries,
+          candidate_type,
+          candidate_subtype,
+        )
+        if quality > wildcard_best {
+          wildcard_best = quality
+        }
+      }
+    }
+    if wildcard_best < 0 {
+      0
+    } else {
+      wildcard_best
+    }
+  } else {
+    let mut best_q = -1
+    let mut best_specificity = -1
+    for entry in entries {
+      let range_type = entry.range_type
+      let range_subtype = entry.range_subtype
+      let quality = entry.quality
       let specificity = if range_type == "*" && range_subtype == "*" {
         0
       } else if range_subtype == "*" {
@@ -177,11 +213,11 @@ fn accept_quality_from(
         best_q = quality
       }
     }
-  }
-  if best_specificity < 0 {
-    0
-  } else {
-    best_q
+    if best_specificity < 0 {
+      0
+    } else {
+      best_q
+    }
   }
 }
 

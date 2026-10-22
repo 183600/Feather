@@ -2008,10 +2008,28 @@ async fn handle_request(
         // through to the router instead of being statically served (or
         // redirected), matching the behaviour of trailing-slash requests.
         if !(mount.index.is_empty() && static_target_is_directory(file_path)) {
-          handle_static(
-            app, request, body, conn, file_path, cache_control, precompressed, mount,
-            head,
-          )
+          // Static requests read the body and serve files just like dynamic
+          // ones, so they must obey the same per-request timeout.
+          if app.timeout > 0 {
+            @async.with_timeout(app.timeout, () => {
+              handle_static(
+                app, request, body, conn, file_path, cache_control, precompressed, mount,
+                head,
+              )
+            }) catch {
+              @async.TimeoutError =>
+                send_error_and_close(conn, 504, "504 Gateway Timeout", head)
+              _ =>
+                send_error_and_close(
+                  conn, 500, "500 Internal Server Error", head,
+                )
+            }
+          } else {
+            handle_static(
+              app, request, body, conn, file_path, cache_control, precompressed, mount,
+              head,
+            )
+          }
           return
         }
       }

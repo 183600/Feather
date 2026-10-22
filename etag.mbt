@@ -183,7 +183,7 @@ fn apply_preconditions_input(
     return
   }
   let mut etag = ""
-  let mut mtime_secs = 0L
+  let mut mtime_secs : Int64? = None
   if !response.headers.is_empty() {
     let validators = response_validators(response.headers)
     match validators.cache_control {
@@ -201,12 +201,8 @@ fn apply_preconditions_input(
     }
     if has_if_modified_since || has_if_unmodified_since {
       mtime_secs = match validators.last_modified {
-        Some(value) =>
-          match parse_http_date(value) {
-            Some(seconds) => seconds
-            None => 0L
-          }
-        None => 0L
+        Some(value) => parse_http_date(value)
+        None => None
       }
     }
   }
@@ -340,13 +336,9 @@ fn precheck_preconditions(
     Some(value) => value
     None => ""
   }
-  let mtime_secs = match response_mtime {
-    Some(value) =>
-      match parse_http_date(value) {
-        Some(seconds) => seconds
-        None => 0L
-      }
-    None => 0L
+  let mtime_secs : Int64? = match response_mtime {
+    Some(value) => parse_http_date(value)
+    None => None
   }
   // Without a handler ETag the `If-Match` outcome is not final: generation may
   // produce a matching tag. Defer the whole precondition set until after

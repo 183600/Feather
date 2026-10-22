@@ -408,7 +408,7 @@ fn secret_utf8(secret : String) -> Bytes {
       }
     None => ()
   }
-  let bytes = @utf8.encode(secret)
+  let bytes = encode_utf8_lossy(secret.view())
   last_secret_text.val = Some(secret)
   last_secret_bytes.val = Some(bytes)
   bytes
@@ -446,7 +446,7 @@ fn signed_cookie_signing_input(
   builder.write_stringview(encoded_value)
   builder.write_char('.')
   builder.write_string(expiry)
-  @utf8.encode(builder.to_string())
+  encode_utf8_lossy(builder.to_string().view())
 }
 
 ///|
@@ -485,7 +485,7 @@ pub fn signed_cookie_token(
       }
     None => ()
   }
-  let encoded_value = base64url_encode(@utf8.encode(value))
+  let encoded_value = base64url_encode(encode_utf8_lossy(value.view()))
   let mac = hmac_sha256(
     secret_utf8(secret),
     signed_cookie_signing_input(name, encoded_value.view(), deadline),

@@ -588,7 +588,7 @@ fn collect_route_paths(
   method : String,
   out : Array[(String, String)],
 ) -> Unit {
-  if node.handler is Some(_) && !node.route_path.is_empty() {
+  if node.handler is Some(_) {
     out.push((method, node.route_path))
   }
   match node.static_children {
@@ -2233,6 +2233,9 @@ pub fn Context::redirect(
   self.file = None
   self.response.status = status
   clear_replaced_body_headers(self.response.headers)
+  // A redirect has no body, so a representation type prepared for an earlier
+  // response must not leak into it.
+  ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
   set_header_ignore_case(
     self.response.headers,
     "Location",
@@ -3143,7 +3146,60 @@ pub fn Context::cookie(self : Context, name : String) -> String? {
 }
 
 ///|
+/// Drop unpaired UTF-16 surrogates, keeping valid surrogate pairs intact. Such
+/// lone code units cannot be encoded as UTF-8 and would otherwise abort when a
+/// header or cookie is written.
+fn drop_lone_surrogates(value : String) -> String {
+  let view = value.view()
+  let length = view.length()
+  let mut i = 0
+  let mut needs_clean = false
+  while i < length {
+    let unit = view.unsafe_get(i)
+    if unit.is_leading_surrogate() {
+      if i + 1 < length && view.unsafe_get(i + 1).is_trailing_surrogate() {
+        i = i + 2
+        continue
+      }
+      needs_clean = true
+      break
+    } else if unit.is_trailing_surrogate() {
+      needs_clean = true
+      break
+    }
+    i = i + 1
+  }
+  if !needs_clean {
+    return value
+  }
+  let builder = StringBuilder(size_hint=length)
+  let mut index = 0
+  while index < length {
+    let unit = view.unsafe_get(index)
+    if unit.is_leading_surrogate() {
+      if index + 1 < length &&
+        view.unsafe_get(index + 1).is_trailing_surrogate() {
+        builder.write_char(unit.to_int().unsafe_to_char())
+        builder.write_char(
+          view.unsafe_get(index + 1).to_int().unsafe_to_char(),
+        )
+        index = index + 2
+      } else {
+        index = index + 1
+      }
+    } else if unit.is_trailing_surrogate() {
+      index = index + 1
+    } else {
+      builder.write_char(unit.to_int().unsafe_to_char())
+      index = index + 1
+    }
+  }
+  builder.to_string()
+}
+
+///|
 fn strip_control_characters(value : String) -> String {
+  let value = drop_lone_surrogates(value)
   let view = value.view()
   let length = view.length()
   let mut i = 0
@@ -3193,6 +3249,7 @@ fn is_cookie_character_unsafe(unit : UInt16, drop_space : Bool) -> Bool {
 ///|
 /// Drop characters that are invalid or dangerous in a cookie name/value.
 fn sanitize_cookie_token(value : String, drop_space : Bool) -> String {
+  let value = drop_lone_surrogates(value)
   let view = value.view()
   let length = view.length()
   let mut i = 0
@@ -3223,6 +3280,7 @@ fn sanitize_cookie_token(value : String, drop_space : Bool) -> String {
 /// Drop characters that would break a cookie attribute value, such as the
 /// `;` that separates the attributes in a `Set-Cookie` header.
 fn sanitize_cookie_attribute(value : String) -> String {
+  let value = drop_lone_surrogates(value)
   let view = value.view()
   let length = view.length()
   let mut i = 0
@@ -6679,16 +6737,27 @@ let http_months : Array[String] = [
 ]
 
 ///|
-/// Whether `name` starts with one of the three-letter HTTP weekday names,
-/// which is all the grammar requires for abbreviated and full names.
+/// Full weekday names accepted by the obsolete `rfc850-date` grammar.
+let http_weekdays_full : Array[String] = [
+  "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+]
+
+///|
+/// Whether `name` is one of the three-letter weekday abbreviations or one of
+/// the full names used by `rfc850-date`, matched case-insensitively.
 fn is_http_weekday(name : StringView) -> Bool {
-  if name.length() < 3 {
-    return false
-  }
-  let prefix = name[:3]
-  for weekday in http_weekdays {
-    if prefix.equal_ignore_ascii_case(weekday.view()) {
-      return true
+  let length = name.length()
+  if length == 3 {
+    for weekday in http_weekdays {
+      if name.equal_ignore_ascii_case(weekday.view()) {
+        return true
+      }
+    }
+  } else {
+    for weekday in http_weekdays_full {
+      if name.equal_ignore_ascii_case(weekday.view()) {
+        return true
+      }
     }
   }
   false
@@ -7167,14 +7236,16 @@ fn if_match_header_matches(value : StringView, etag : String) -> Bool {
 /// Whether the `If-Unmodified-Since` condition holds for a representation last
 /// modified at `mtime_secs`. An invalid date or an unknown modification date
 /// is ignored, as is the condition for a modification exactly at the given
-/// second, matching the one-second granularity of HTTP dates.
-fn if_unmodified_since_ok(value : StringView, mtime_secs : Int64) -> Bool {
-  if mtime_secs <= 0L {
-    return true
-  }
-  match parse_http_date_view(trim_ascii_space(value)) {
-    Some(since) => mtime_secs <= since
+/// second, matching the one-second granularity of HTTP dates. The epoch is a
+/// real validator, so `None` (not `0`) marks an unknown modification date.
+fn if_unmodified_since_ok(value : StringView, mtime_secs : Int64?) -> Bool {
+  match mtime_secs {
     None => true
+    Some(mtime_secs) =>
+      match parse_http_date_view(trim_ascii_space(value)) {
+        Some(since) => mtime_secs <= since
+        None => true
+      }
   }
 }
 
@@ -7285,7 +7356,7 @@ fn precondition_input_from_map(
 fn evaluate_preconditions_input(
   input : PreconditionInput,
   etag : String,
-  mtime_secs : Int64,
+  mtime_secs : Int64?,
   allows_not_modified : Bool,
 ) -> PreconditionOutcome {
   match input.if_match {
@@ -7315,10 +7386,14 @@ fn evaluate_preconditions_input(
       if allows_not_modified {
         match input.if_modified_since {
           Some(value) =>
-            match parse_http_date_view(trim_ascii_space(value.view())) {
-              Some(since) =>
-                if mtime_secs > 0L && mtime_secs <= since {
-                  return PreconditionNotModified
+            match mtime_secs {
+              Some(mtime_secs) =>
+                match parse_http_date_view(trim_ascii_space(value.view())) {
+                  Some(since) =>
+                    if mtime_secs <= since {
+                      return PreconditionNotModified
+                    }
+                  None => ()
                 }
               None => ()
             }
@@ -7339,7 +7414,7 @@ fn evaluate_preconditions(
   evaluate_preconditions_input(
     precondition_input_from_http(request),
     etag,
-    mtime_secs,
+    Some(mtime_secs),
     allows_not_modified,
   )
 }
@@ -9400,19 +9475,24 @@ pub fn middleware_request_id(header~ : String = "X-Request-Id") -> Middleware {
       // An incoming id is client-controlled, so control characters must not
       // reach the response header or the request state even on the offline
       // facade, which does not pass through the server's header sanitizer.
-      let incoming = strip_control_characters(ctx.header(header))
+      let incoming = trim_ascii_space(
+        strip_control_characters(ctx.header(header)).view(),
+      )
       let id = if incoming != "" {
-        incoming
+        incoming.to_owned()
       } else {
         match get_header_ignore_case(ctx.response.headers, header) {
-          Some(value) =>
-            match strip_control_characters(value) {
-              clean if clean != "" => clean
-              _ => {
-                counter.val = counter.val + 1
-                "feather-" + counter.val.to_string()
-              }
+          Some(value) => {
+            let clean = trim_ascii_space(
+              strip_control_characters(value).view(),
+            )
+            if clean != "" {
+              clean.to_owned()
+            } else {
+              counter.val = counter.val + 1
+              "feather-" + counter.val.to_string()
             }
+          }
           None => {
             counter.val = counter.val + 1
             "feather-" + counter.val.to_string()

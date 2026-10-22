@@ -170,7 +170,7 @@ pub async fn Sse::send(
   }
   write_sse_data(builder, data)
   builder.write_char('\n')
-  self.conn.write_string(builder.to_string())
+  self.conn.write(encode_utf8_lossy(builder.to_string().view()))
   self.conn.flush()
 }
 
@@ -206,7 +206,7 @@ pub async fn Sse::comment(self : Sse, text : String) -> Unit {
     }
     builder.write_char('\n')
   }
-  self.conn.write_string(builder.to_string())
+  self.conn.write(encode_utf8_lossy(builder.to_string().view()))
   self.conn.flush()
 }
 
