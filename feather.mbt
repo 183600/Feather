@@ -9577,15 +9577,20 @@ pub fn middleware_https_redirect(
         next(ctx)
         return
       }
-      let authority = match fixed_host {
+      let raw_authority = match fixed_host {
         Some(value) => value
         None => trim_ascii_space(ctx.header("Host").view()).to_owned()
       }
-      if authority == "" {
+      // A control character in the authority would forge extra header lines in
+      // the `Location` field. Such a host is not usable, so pass the request
+      // through exactly like a missing host.
+      let authority = strip_control_characters(raw_authority)
+      if authority != raw_authority || authority == "" {
         next(ctx)
         return
       }
-      ctx.redirect(status, "https://" + authority + ctx.request.path)
+      let path = strip_control_characters(ctx.request.path)
+      ctx.redirect(status, "https://" + authority + path)
     }
   }
 }
@@ -9650,7 +9655,12 @@ fn cors_middleware(
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
-      let origin = trim_ascii_space(ctx.header("Origin").view()).to_owned()
+      let raw_origin = trim_ascii_space(ctx.header("Origin").view()).to_owned()
+      // Origins are ASCII tokens without control characters. Reject a malformed
+      // value instead of echoing it into a response header, where CR/LF could
+      // forge additional fields.
+      let origin = strip_control_characters(raw_origin)
+      let origin = if origin == raw_origin { origin } else { "" }
       let is_options = ctx.get_method().view().equal_ignore_ascii_case(
         "OPTIONS".view(),
       )
@@ -9735,7 +9745,12 @@ fn cors_middleware(
               ctx.request.headers,
               "Access-Control-Request-Headers",
             ) {
-              Some(requested) => if requested == "" { allow_headers } else { requested }
+              Some(requested) =>
+                if requested == "" {
+                  allow_headers
+                } else {
+                  strip_control_characters(requested)
+                }
               None => allow_headers
             }
           } else {
