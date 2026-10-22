@@ -26,7 +26,8 @@ long-term design notes are in [PLAN.md](PLAN.md).
   method override, sessions, and a problem-details error handler whose
   negotiated bodies vary on `Accept`.
 - **Context** – path/query/form/multipart access, typed query/param/form
-  helpers (including integers, booleans, and finite floats), JSON bodies,
+  helpers (including 32- and 64-bit integers, booleans, and finite floats),
+  JSON bodies,
   text/HTML/JSON/bytes responses, files and downloads,
   cookies (including signed cookies), flash messages, content negotiation,
   conditional requests (ETag / `If-None-Match` / `If-Modified-Since`), range

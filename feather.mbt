@@ -3791,6 +3791,57 @@ fn parse_int_value(value : StringView) -> Int32? {
 }
 
 ///|
+/// Parse a signed decimal integer into a 64-bit value.
+///
+/// Unlike `parse_int_value`, the magnitude is accumulated in `UInt64` so the
+/// full `Int64` range, including `-9223372036854775808`, can be represented
+/// without overflowing before the sign is applied. Leading `+`/`-` signs are
+/// accepted; any other non-digit character, an empty body or a value outside
+/// the signed 64-bit range yields `None`.
+fn parse_int64_value(value : StringView) -> Int64? {
+  let length = value.length()
+  if length == 0 {
+    return None
+  }
+  let mut index = 0
+  let mut negative = false
+  let first = value.unsafe_get(0)
+  if first == ('-' : UInt16) {
+    negative = true
+    index = 1
+  } else if first == ('+' : UInt16) {
+    index = 1
+  }
+  if index >= length {
+    return None
+  }
+  let limit : UInt64 = if negative {
+    9223372036854775808UL
+  } else {
+    9223372036854775807UL
+  }
+  let mut magnitude = 0UL
+  while index < length {
+    let digit = value.unsafe_get(index).to_int() - 48
+    if digit < 0 || digit > 9 {
+      return None
+    }
+    let digit64 = digit.to_uint64()
+    if magnitude > (limit - digit64) / 10UL {
+      return None
+    }
+    magnitude = magnitude * 10UL + digit64
+    index = index + 1
+  }
+  let signed = if negative {
+    (0UL - magnitude).to_int64()
+  } else {
+    magnitude.to_int64()
+  }
+  Some(signed)
+}
+
+///|
 fn parse_bool_value(value : StringView) -> Bool? {
   if value == "true" || value == "1" {
     Some(true)
@@ -3807,6 +3858,13 @@ pub fn Context::param_int(self : Context, name : String) -> Int32? {
 }
 
 ///|
+/// The route parameter `name` parsed as a signed 64-bit integer. Returns
+/// `None` when the parameter is absent or does not fit in `Int64`.
+pub fn Context::param_int64(self : Context, name : String) -> Int64? {
+  parse_int64_value(self.param(name).view())
+}
+
+///|
 pub fn Context::param_bool(self : Context, name : String) -> Bool? {
   parse_bool_value(self.param(name).view())
 }
@@ -3814,6 +3872,13 @@ pub fn Context::param_bool(self : Context, name : String) -> Bool? {
 ///|
 pub fn Context::query_int(self : Context, name : String) -> Int32? {
   parse_int_value(self.query(name).view())
+}
+
+///|
+/// The query parameter `name` parsed as a signed 64-bit integer. Returns
+/// `None` when the parameter is absent or does not fit in `Int64`.
+pub fn Context::query_int64(self : Context, name : String) -> Int64? {
+  parse_int64_value(self.query(name).view())
 }
 
 ///|
@@ -3854,6 +3919,14 @@ pub fn Context::query_float(self : Context, name : String) -> Double? {
 /// not a valid 32-bit integer.
 pub fn Context::form_int(self : Context, name : String) -> Int32? {
   parse_int_value(self.form(name).view())
+}
+
+///|
+/// The url-encoded form field `name` parsed as a signed 64-bit integer.
+/// Returns `None` when the request body is not a form, the field is absent, or
+/// the value does not fit in `Int64`.
+pub fn Context::form_int64(self : Context, name : String) -> Int64? {
+  parse_int64_value(self.form(name).view())
 }
 
 ///|
