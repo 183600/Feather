@@ -6527,9 +6527,9 @@ pub fn Context::queries(self : Context) -> Map[String, String] {
 
 ///|
 /// All query parameters, keyed by name, with every repeated value preserved in
-/// appearance order. Unlike `Context::queries`, which keeps only the first
-/// value of a repeated parameter, this lets a caller enumerate the complete
-/// query without knowing its keys in advance.
+/// appearance order. Unlike `Context::queries`, which keeps only the last value
+/// of a repeated parameter, this lets a caller enumerate the complete query
+/// without knowing its keys in advance.
 ///
 /// Both the map and its arrays are fresh copies, so mutating the result cannot
 /// disturb a later request that carries the same query.
