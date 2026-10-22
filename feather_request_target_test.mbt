@@ -172,7 +172,7 @@ async test "server routes an absolute-form request target" {
     let head = @async.with_timeout(2000, () => read_http_head(conn)) catch {
       _ => ""
     }
-    assert_true(head.has_prefix("HTTP/1.1 200"), msg=head)
+    assert_true(head.has_prefix("HTTP/1.1 200"), msg="[" + head + "]")
   })
 }
 
@@ -190,7 +190,7 @@ async test "server serves a static file for an absolute-form request target" {
     let head = @async.with_timeout(2000, () => read_http_head(conn)) catch {
       _ => ""
     }
-    assert_true(head.has_prefix("HTTP/1.1 200"), msg=head)
+    assert_true(head.has_prefix("HTTP/1.1 200"), msg="[" + head + "]")
   })
   @fs.rmdir(dir, recursive=true)
 }
@@ -225,4 +225,29 @@ test "OPTIONS asterisk-form is not shadowed by wildcard or parameter routes" {
   assert_true(
     param_response.headers.get("Allow").unwrap_or("").contains("GET"),
   )
+}
+
+///|
+async test "absolute-form target authority replaces the Host header" {
+  let app = @feather.App::new().get("/who", fn(ctx) {
+    ctx.set_header("X-Host", ctx.host())
+    ctx.set_header("X-Url", ctx.full_url())
+    ctx.text(200, "ok")
+  })
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "GET http://target.example:8080/who HTTP/1.1\r\nHost: ignored.example\r\nConnection: close\r\n\r\n",
+      ),
+    )
+    let head = @async.with_timeout(2000, () => read_http_head(conn)) catch {
+      _ => ""
+    }
+    assert_true(head.has_prefix("HTTP/1.1 200"), msg="[" + head + "]")
+    assert_true(head.contains("X-Host: target.example"), msg=head)
+    assert_true(
+      head.contains("X-Url: http://target.example:8080/who"),
+      msg=head,
+    )
+  })
 }

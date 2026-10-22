@@ -320,14 +320,82 @@ async fn decode_gzip_body(data : Bytes, limit : Int32) -> Bytes {
 }
 
 ///|
+/// Authority of an absolute-form request target, or `None` for origin-form,
+/// authority-form and malformed targets.
+fn absolute_target_authority(path : String) -> String? {
+  let view = path.view()
+  let length = view.length()
+  if length == 0 || view.unsafe_get(0) == ('/' : UInt16) {
+    return None
+  }
+  let separator = match view.find("://") {
+    Some(index) => index
+    None => return None
+  }
+  let first = view.unsafe_get(0).to_int()
+  if !((first >= 65 && first <= 90) || (first >= 97 && first <= 122)) {
+    return None
+  }
+  let mut i = 1
+  while i < separator {
+    if !is_uri_scheme_character(view.unsafe_get(i).to_int()) {
+      return None
+    }
+    i = i + 1
+  }
+  let authority_start = separator + 3
+  let mut end = authority_start
+  while end < length {
+    let code = view.unsafe_get(end)
+    if code == ('/' : UInt16) ||
+      code == ('?' : UInt16) ||
+      code == ('#' : UInt16) {
+      break
+    }
+    end = end + 1
+  }
+  if end == authority_start {
+    return None
+  }
+  let authority = view[authority_start:end]
+  // Userinfo is not part of an HTTP Host value; the host follows the last `@`.
+  let host = match authority.find("@") {
+    Some(_) => {
+      let mut last = 0
+      for index in 0..<authority.length() {
+        if authority.unsafe_get(index) == ('@' : UInt16) {
+          last = index + 1
+        }
+      }
+      authority[last:]
+    }
+    None => authority
+  }
+  if host.is_empty() {
+    None
+  } else {
+    Some(host.to_owned())
+  }
+}
+
+///|
 /// Normalize an absolute-form request target before routing or static lookup.
-/// Origin-form and authority-form targets are copied unchanged.
+/// Origin-form and authority-form targets are copied unchanged. For an
+/// absolute-form target the authority replaces `Host`, as required when an
+/// origin server receives a request through a proxy-style target.
 fn normalize_http_request(request : @http.Request) -> @http.Request {
   let path = normalize_request_target(request.path)
-  if path == request.path {
-    request
-  } else {
-    { meth: request.meth, path, headers: request.headers }
+  let authority = absolute_target_authority(request.path)
+  match authority {
+    Some(authority) => {
+      request.headers.set(@http.CaseInsensitiveString("Host"), authority)
+      { meth: request.meth, path, headers: request.headers }
+    }
+    None => if path == request.path {
+      request
+    } else {
+      { meth: request.meth, path, headers: request.headers }
+    }
   }
 }
 
