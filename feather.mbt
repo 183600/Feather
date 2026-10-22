@@ -4175,13 +4175,12 @@ fn copy_multipart_part(part : MultipartPart) -> MultipartPart {
 }
 
 ///|
-/// Copy a parsed multipart result so callers get their own top-level array.
-/// The parts and their header maps are shared with the parse cache and must be
-/// treated as read-only.
+/// Copy a parsed multipart result, including each part's header map, so callers
+/// can mutate the result without disturbing the parse cache.
 fn copy_multipart_parts(parts : Array[MultipartPart]) -> Array[MultipartPart] {
   let copy : Array[MultipartPart] = Array(capacity=parts.length())
   for part in parts {
-    copy.push(part)
+    copy.push(copy_multipart_part(part))
   }
   copy
 }
