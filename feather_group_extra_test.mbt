@@ -129,6 +129,43 @@ test "group mount applies group middleware to mounted routes" {
 }
 
 ///|
+test "group mount_with nests group middleware outside mount middleware" {
+  let child = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) {
+        ctx.set("order", ctx.get("order") + "C")
+        next(ctx)
+      }
+    })
+    .get("/ping", fn(ctx) { ctx.text(200, ctx.get("order")) })
+  let app = @feather.App::new()
+  let api = app.group("/api").use(fn(next) {
+    fn(ctx) {
+      ctx.set("order", ctx.get("order") + "G")
+      next(ctx)
+    }
+  })
+  ignore(
+    api.mount_with("/v1", child, [
+      fn(next) {
+        fn(ctx) {
+          ctx.set("order", ctx.get("order") + "M")
+          next(ctx)
+        }
+      },
+    ]),
+  )
+  let response = app.respond({
+    method: "GET",
+    path: "/api/v1/ping",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "GMC")
+}
+
+///|
 async test "mount_with middleware wraps mounted routes and static files" {
   let dir = @fs.tmpdir(prefix="feather-mount-with")
   @fs.write_file(dir + "/hello.txt", "outer file")

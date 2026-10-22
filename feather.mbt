@@ -8384,10 +8384,30 @@ pub fn RouteGroup::mount(
   prefix : String,
   child : App,
 ) -> RouteGroup {
+  self.mount_with(prefix, child, [])
+}
+
+///|
+/// Mount another application below this group's prefix with additional
+/// middleware that wraps everything contributed by the child.
+///
+/// The group middleware stays outermost, then the extra `middlewares`, then
+/// the child application's own middleware, matching `RouteGroup::route_with`
+/// and `App::mount_with`.
+pub fn RouteGroup::mount_with(
+  self : RouteGroup,
+  prefix : String,
+  child : App,
+  middlewares : Array[Middleware],
+) -> RouteGroup {
   match self.app {
     Some(app) =>
       ignore(
-        app.mount_with(join_paths(self.prefix, prefix), child, self.middlewares),
+        app.mount_with(
+          join_paths(self.prefix, prefix),
+          child,
+          self.route_middlewares(middlewares),
+        ),
       )
     None => ()
   }
