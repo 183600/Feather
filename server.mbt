@@ -2074,11 +2074,18 @@ async fn serve_static_file(
   auto_etag~ : Bool = true,
   compress_enabled~ : Bool = false,
   compress_min_size~ : Int32 = 1024,
+  status_out? : Ref[Int32],
 ) -> Unit {
   // From here on every path writes a response header. Record that before the
   // first await so a timeout racing with file lookup or streaming closes the
   // connection instead of attempting a second (invalid) response.
   response_started.val = true
+  let record_status = fn(code : Int32) -> Unit {
+    match status_out {
+      Some(out) => out.val = code
+      None => ()
+    }
+  }
   let accept_encoding = request.headers.get(header_accept_encoding)
   let refuses_identity = match accept_encoding {
     Some(value) => accept_encoding_refuses_identity(value)
@@ -2118,6 +2125,7 @@ async fn serve_static_file(
             false
           }
           if sibling_exists {
+            record_status(406)
             send_static_error(
               conn,
               extra_headers,
@@ -2129,11 +2137,13 @@ async fn serve_static_file(
               vary_encoding=true,
             )
           } else {
+            record_status(404)
             send_static_error(
               conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
             )
           }
         } else {
+          record_status(404)
           send_static_error(
             conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
           )
@@ -2164,6 +2174,7 @@ async fn serve_static_file(
               join_fs_path(file_path, index) + ".gz",
             )
           if precompressed_index_exists && refuses_identity {
+            record_status(406)
             send_static_error(
               conn,
               extra_headers,
@@ -2175,6 +2186,7 @@ async fn serve_static_file(
               vary_encoding=true,
             )
           } else {
+            record_status(404)
             send_static_error(
               conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
             )
@@ -2187,6 +2199,7 @@ async fn serve_static_file(
         // `index.html`). Redirecting there would loop forever, so report the
         // missing file instead.
         if location == request.path {
+          record_status(404)
           send_static_error(
             conn,
             extra_headers,
@@ -2198,6 +2211,7 @@ async fn serve_static_file(
           )
           return
         }
+        record_status(301)
         send_static_redirect(
           conn, extra_headers, cookies, location, vary_encoding=precompressed,
         )
@@ -2212,6 +2226,7 @@ async fn serve_static_file(
     // redirect to another 404.
     let location = append_trailing_slash(request.path)
     if location != request.path {
+      record_status(301)
       send_static_redirect(
         conn, extra_headers, cookies, location, vary_encoding=precompressed,
       )
@@ -2248,6 +2263,7 @@ async fn serve_static_file(
       match base {
         Some(base_file) => base_file
         None => {
+          record_status(404)
           send_static_error(
             conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
           )
@@ -2258,6 +2274,7 @@ async fn serve_static_file(
   defer file.close()
   let size = file.size() catch {
     _ => {
+      record_status(500)
       send_static_error(
         conn, extra_headers, cookies, head, 500, "500 Internal Server Error", precompressed,
       )
@@ -2339,6 +2356,7 @@ async fn serve_static_file(
   if !serving_selected_gzip && refuses_identity {
     // There is no acceptable representation: no precompressed sibling, no
     // on-the-fly encoding, and the client explicitly rejected identity.
+    record_status(406)
     send_static_error(
       conn,
       extra_headers,
@@ -2415,6 +2433,7 @@ async fn serve_static_file(
       allows_not_modified,
     ) {
     PreconditionFailed => {
+      record_status(412)
       send_static_error(
         conn,
         extra_headers,
@@ -2428,6 +2447,7 @@ async fn serve_static_file(
       return
     }
     PreconditionNotModified => {
+      record_status(304)
       let headers = static_base_headers(extra_headers, cookies, 2)
       // A 304 carries no body, so the framing and content type a middleware
       // seeded for a body response must not leak into it.
@@ -2473,6 +2493,7 @@ async fn serve_static_file(
   let accept_ranges_key = header_accept_ranges
   match range {
     ByteRangeInvalid => {
+      record_status(416)
       let headers = static_base_headers(extra_headers, cookies, 2)
       headers.remove(content_type_key)
       headers.remove(header_content_disposition)
@@ -2486,6 +2507,7 @@ async fn serve_static_file(
       conn.end_response()
     }
     ByteRangeSpec(start, end) => {
+      record_status(206)
       let length = end - start + 1L
       let headers = static_base_headers(extra_headers, cookies, 6)
       set_header_if_absent(headers, content_type_key, content_type_value)
@@ -2520,6 +2542,7 @@ async fn serve_static_file(
       conn.end_response()
     }
     ByteRangeFull => {
+      record_status(200)
       let headers = static_base_headers(extra_headers, cookies, 5)
       set_header_if_absent(headers, content_type_key, content_type_value)
       headers.set(content_length_key, representation_size.to_string())
@@ -2724,6 +2747,7 @@ async fn handle_static(
   }
   if !failed && ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) {
     let (compress, min_size) = compression_settings(app, ctx)
+    let static_status = Ref(200)
     serve_static_file(
       conn,
       file_path,
@@ -2740,7 +2764,12 @@ async fn handle_static(
       auto_etag=response_file_etag_enabled(ctx),
       compress_enabled=compress,
       compress_min_size=min_size,
+      status_out=static_status,
     )
+    // The file was written directly to the connection. Record the status on
+    // the context so loggers and request cleanups see the response that was
+    // actually sent rather than the default 200 from before file lookup.
+    ctx.response.status = static_status.val
   } else {
     // The middleware chain produced a complete response (or an error), and the
     // branch below writes it under the request timeout. Mark the response as

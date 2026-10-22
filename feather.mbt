@@ -11154,7 +11154,16 @@ pub fn middleware_logger(
           raise err
         }
       }
-      logger_record(log, ctx, started, with_duration)
+      // Static files are written after the middleware chain returns, so their
+      // real status (200/206/304/404/...) is not known yet. Defer the record
+      // until request cleanup, after `handle_static` has filled it in.
+      if ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) {
+        ctx.defer_cleanup(fn() {
+          logger_record(log, ctx, started, with_duration)
+        })
+      } else {
+        logger_record(log, ctx, started, with_duration)
+      }
     }
   }
 }
