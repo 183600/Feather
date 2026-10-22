@@ -1703,6 +1703,16 @@ async fn static_target_is_directory(path : String) -> Bool {
 }
 
 ///|
+/// Report whether `path` currently names a regular file. A failed open or a
+/// directory is not a file, which lets directory redirects wait until the
+/// configured index actually exists.
+async fn static_target_is_regular_file(path : String) -> Bool {
+  let file = @fs.open(path, mode=@fs.ReadOnly) catch { _ => return false }
+  defer file.close()
+  file.kind() is @fs.Regular
+}
+
+///|
 /// Serve a static file, seeding every response with the headers and cookies a
 /// request context accumulated (middleware and handler output), so static
 /// responses carry the same security, CORS and session headers as dynamic
@@ -1718,6 +1728,7 @@ async fn serve_static_file(
   extra_headers : Map[String, String],
   cookies : Array[@http.Cookie],
   response_started~ : Ref[Bool],
+  index~ : String = "",
   redirect_root~ : Bool = false,
   auto_etag~ : Bool = true,
   compress_enabled~ : Bool = false,
@@ -1794,7 +1805,12 @@ async fn serve_static_file(
     Some(handle) =>
       if handle.kind() is @fs.Directory {
         handle.close()
-        if !redirect_directories {
+        // Only redirect to the canonical directory URL once the configured
+        // index exists, so a missing index reports 404 directly instead of
+        // redirecting to another 404.
+        if !redirect_directories ||
+          index == "" ||
+          !static_target_is_regular_file(join_fs_path(file_path, index)) {
           send_static_error(
             conn, extra_headers, cookies, head, 404, "404 Not Found", precompressed,
           )
@@ -2207,6 +2223,7 @@ async fn handle_static(
       [],
       response_started~,
       redirect_root=static_root_needs_slash(request.path, mount),
+      index=mount.index,
       compress_enabled=app.compress_enabled,
       compress_min_size=app.compress_min_size,
     )
@@ -2291,6 +2308,7 @@ async fn handle_static(
       ctx.response.cookies,
       response_started~,
       redirect_root=static_root_needs_slash(request.path, mount),
+      index=mount.index,
       auto_etag=response_file_etag_enabled(ctx),
       compress_enabled=compress,
       compress_min_size=min_size,
