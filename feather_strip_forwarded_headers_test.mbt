@@ -68,3 +68,35 @@ test "strip forwarded headers ignores header name casing and keeps others" {
   )
   assert_eq(response.body, "||keep-me")
 }
+
+///|
+test "strip forwarded headers removes every X-Forwarded-* spelling" {
+  let app = @feather.App::new()
+    .use(@feather.middleware_strip_forwarded_headers())
+    .get("/", fn(ctx) {
+      ctx.text(
+        200,
+        ctx.header("X-Forwarded-Server") +
+        "|" +
+        ctx.header("x-forwarded-ssl") +
+        "|" +
+        ctx.header("X-Forwarded-By") +
+        "|" +
+        ctx.header("X-Forwarded-For") +
+        "|" +
+        ctx.header("X-Trace"),
+      )
+    })
+  let response = app.respond(
+    forwarded_strip_request(
+      Map([
+        ("X-Forwarded-Server", "evil"),
+        ("x-forwarded-ssl", "on"),
+        ("X-Forwarded-By", "evil"),
+        ("X-Forwarded-For", "203.0.113.7"),
+        ("X-Trace", "keep-me"),
+      ]),
+    ),
+  )
+  assert_eq(response.body, "||||keep-me")
+}

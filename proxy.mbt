@@ -172,17 +172,20 @@ fn trusted_client_address(
 /// header. It is a no-op for every header except the forwarding set, and a
 /// proxy-fronted deployment should simply not install it.
 pub fn middleware_strip_forwarded_headers() -> Middleware {
-  let names : Array[String] = [
-    "Forwarded",
-    "X-Forwarded-For",
-    "X-Forwarded-Host",
-    "X-Forwarded-Proto",
-    "X-Forwarded-Port",
-    "X-Forwarded-Prefix",
-    "X-Real-IP",
-  ]
   fn(next) {
     fn(ctx) raise {
+      // The forwarding set is open-ended (`X-Forwarded-Server`,
+      // `X-Forwarded-Ssl`, vendor additions, ...), so match the prefix rather
+      // than a fixed list. Collect names first because removing entries while
+      // iterating the request-header map would invalidate its iterator.
+      let names : Array[String] = []
+      for name, _ in ctx.request.headers {
+        if name.view().equal_ignore_ascii_case("forwarded".view()) ||
+          name.view().equal_ignore_ascii_case("x-real-ip".view()) ||
+          starts_with_ignore_ascii_case(name.view(), "x-forwarded-".view()) {
+          names.push(name)
+        }
+      }
       for name in names {
         ignore(remove_header_ignore_case(ctx.request.headers, name))
       }
