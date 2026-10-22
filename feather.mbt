@@ -3371,20 +3371,22 @@ pub fn Context::add_cookie(
   secure~ : Bool = false,
   partitioned~ : Bool = false,
 ) -> Unit {
-  self.response.cookies.push(
-    build_cookie(
-      name,
-      value,
-      path?,
-      max_age?,
-      expires?,
-      domain?,
-      same_site?,
-      http_only,
-      secure,
-      partitioned,
-    ),
+  let cookie = build_cookie(
+    name,
+    value,
+    path?,
+    max_age?,
+    expires?,
+    domain?,
+    same_site?,
+    http_only,
+    secure,
+    partitioned,
   )
+  if cookie.name == "" {
+    return
+  }
+  self.response.cookies.push(cookie)
 }
 
 ///|
@@ -3462,6 +3464,9 @@ pub fn Context::set_cookie(
     secure,
     partitioned,
   )
+  if cookie.name == "" {
+    return
+  }
   set_header_ignore_case(
     self.response.headers,
     "Set-Cookie",

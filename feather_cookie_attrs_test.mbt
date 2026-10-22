@@ -103,3 +103,12 @@ test "set_cookie replaces a case-variant raw header" {
   assert_eq(count, 1)
   assert_eq(ctx.response.headers.get("Set-Cookie"), Some("sid=1; Path=/"))
 }
+
+///|
+test "cookies without a usable name are ignored" {
+  let ctx = cookie_attr_ctx()
+  ctx.set_cookie("\r\n", "value")
+  ctx.add_cookie("\t", "value")
+  assert_eq(ctx.response.headers.get("Set-Cookie"), None)
+  assert_eq(ctx.response.cookies.length(), 0)
+}
