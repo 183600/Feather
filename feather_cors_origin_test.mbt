@@ -100,6 +100,45 @@ test "cors predicate answers preflight only for allowed origins" {
 }
 
 ///|
+test "cors credentialed preflight omits every CORS header when rejected" {
+  let app = @feather.App::new()
+    .use(
+      @feather.middleware_cors_with(
+        allow_origin=fn(origin) { origin == "https://good.example" },
+        allow_credentials=true,
+      ),
+    )
+    .get("/me", fn(ctx) { ctx.text(200, "handler") })
+  let allowed = cors_request(
+    "OPTIONS",
+    Map([
+      ("Origin", "https://good.example"),
+      ("Access-Control-Request-Method", "POST"),
+    ]),
+  )
+  app.handle(allowed)
+  assert_eq(allowed.response.status, 204)
+  assert_eq(
+    allowed.response.headers.get("Access-Control-Allow-Credentials"),
+    Some("true"),
+  )
+  let rejected = cors_request(
+    "OPTIONS",
+    Map([
+      ("Origin", "https://evil.example"),
+      ("Access-Control-Request-Method", "POST"),
+    ]),
+  )
+  app.handle(rejected)
+  assert_eq(rejected.response.status, 204)
+  assert_eq(rejected.response.headers.get("Access-Control-Allow-Origin"), None)
+  assert_eq(
+    rejected.response.headers.get("Access-Control-Allow-Credentials"),
+    None,
+  )
+}
+
+///|
 test "cors allowlist matches origins exactly" {
   let app = @feather.App::new()
     .use(

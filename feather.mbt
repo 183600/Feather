@@ -10281,6 +10281,17 @@ fn cors_middleware(
           ignore(
             remove_header_ignore_case(ctx.response.headers, "Content-Range"),
           )
+          // A rejected origin must not receive any CORS grant. The credentials
+          // header is set before the origin decision, so remove it here when
+          // this preflight has no accepted origin.
+          if allowed_origin == "" {
+            ignore(
+              remove_header_ignore_case(
+                ctx.response.headers,
+                "Access-Control-Allow-Credentials",
+              ),
+            )
+          }
           // The preflight answer depends on the two request headers, so shared
           // caches must key on them as well (Fetch: Vary considerations).
           ctx.vary("Access-Control-Request-Method")
