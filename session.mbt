@@ -562,43 +562,48 @@ pub fn Context::session_remove(self : Context, key : String) -> Bool {
         false
       } else {
         // Flash additions live in a request-local pending snapshot until
-        // persist. Removing the stored key must also discard the pending
-        // messages for that category, otherwise `flush_flash` would write the
-        // snapshot back and resurrect the key.
+        // persist. Removing the stored key (or only queued messages for a
+        // category that was not stored yet) must discard the pending snapshot
+        // too, otherwise `flush_flash` would write it back and resurrect the
+        // key.
         let flash_stored = if key.has_prefix(FLASH_PREFIX) {
           session.flash_stored_bytes(key)
         } else {
           0
         }
-        match session.data.remove_and_get(key) {
-          Some(_) => {
-            if key.has_prefix(FLASH_PREFIX) {
-              let category = key[FLASH_PREFIX.length():].to_owned()
-              match session.flash_pending {
-                Some(pending) =>
-                  match pending.remove_and_get(category) {
-                    Some(messages) => {
-                      let added = flash_message_bytes(messages) - flash_stored
-                      let remaining = session.flash_pending_bytes - added
-                      session.flash_pending_bytes = if remaining < 0 {
-                        0
-                      } else {
-                        remaining
-                      }
-                    }
-                    None => ()
+        let mut removed = match session.data.remove_and_get(key) {
+          Some(_) => true
+          None => false
+        }
+        if key.has_prefix(FLASH_PREFIX) {
+          let category = key[FLASH_PREFIX.length():].to_owned()
+          match session.flash_pending {
+            Some(pending) =>
+              match pending.remove_and_get(category) {
+                Some(messages) => {
+                  let added = flash_message_bytes(messages) - flash_stored
+                  let remaining = session.flash_pending_bytes - added
+                  session.flash_pending_bytes = if remaining < 0 {
+                    0
+                  } else {
+                    remaining
                   }
+                  removed = true
+                }
                 None => ()
               }
-            }
-            match session.json_cache {
-              Some(cache) => ignore(cache.remove(key))
-              None => ()
-            }
-            session.modified = true
-            true
+            None => ()
           }
-          None => false
+        }
+        if removed {
+          match session.json_cache {
+            Some(cache) => ignore(cache.remove(key))
+            None => ()
+          }
+          session.modified = true
+          true
+        } else {
+          false
         }
       }
     None => false

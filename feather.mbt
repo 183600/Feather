@@ -10895,6 +10895,16 @@ pub fn App::respond(self : App, request : Request) -> Response {
         )
       }
     }
+    // A 304 has no body to encode, but when compression is enabled the
+    // selected representation still depends on `Accept-Encoding`; the async
+    // facade and the server add this in `compress_response`. Mirror it here so
+    // a cached revalidation from either facade carries the same key.
+    if ctx.response.status == 304 {
+      let (compress, _) = compression_settings(self, ctx)
+      if compress {
+        add_vary_accept_encoding(ctx.response)
+      }
+    }
   }
   strip_forbidden_body(ctx.response)
   if ctx.request.method.view().equal_ignore_ascii_case("HEAD".view()) &&

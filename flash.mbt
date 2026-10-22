@@ -219,6 +219,12 @@ pub fn Context::flash_take(
   self : Context,
   category~ : String = FLASH_DEFAULT_CATEGORY,
 ) -> Array[String] {
+  // A destroyed session will not be persisted, so draining it would both lose
+  // the messages and mark an already-discarded session as modified.
+  match self.session {
+    Some(session) => if session.destroyed { return [] }
+    None => ()
+  }
   match self.session_materialized() {
     Some(session) => {
       let key = FLASH_PREFIX + category
@@ -265,6 +271,12 @@ pub fn Context::flash_take(
 /// map is empty when there is no session or nothing was queued.
 pub fn Context::flash_take_all(self : Context) -> Map[String, Array[String]] {
   let result : Map[String, Array[String]] = Map([], capacity=4)
+  // Draining a destroyed session cannot be persisted, so treat it like one
+  // with nothing left to take.
+  match self.session {
+    Some(session) => if session.destroyed { return result }
+    None => ()
+  }
   match self.session_materialized() {
     Some(session) => {
       let categories : Array[String] = []
