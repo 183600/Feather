@@ -45,6 +45,37 @@ fn csrf_constant_time_equal(a : StringView, b : StringView) -> Bool {
 }
 
 ///|
+/// Drop the synchronizer token stored under `key`, marking the session as
+/// changed when a token was present.
+fn Session::csrf_clear(self : Session, key : String) -> Bool {
+  match self.data.remove_and_get(key) {
+    Some(_) => {
+      self.modified = true
+      true
+    }
+    None => false
+  }
+}
+
+///|
+/// Discard the CSRF token bound to this request's session so the next
+/// `Context::csrf_token` call mints a fresh one.
+///
+/// `Context::session_regenerate` performs this rotation automatically for the
+/// default token key. Call this helper directly when using a custom `key` (or
+/// when a privilege change happens without rotating the session id). Returns
+/// whether a token was actually removed.
+pub fn Context::csrf_rotate(
+  self : Context,
+  key~ : String = CSRF_TOKEN_KEY,
+) -> Bool {
+  match self.session() {
+    Some(session) => session.csrf_clear(key)
+    None => false
+  }
+}
+
+///|
 /// The CSRF token bound to this request's session, generating and saving one
 /// when the session has none yet. Returns `""` when no session is attached,
 /// for example when `middleware_session` is not installed.

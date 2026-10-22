@@ -563,11 +563,16 @@ pub fn Context::session_destroy(self : Context) -> Bool {
 /// random id, removes the old id from the store and sends the new cookie.
 /// Requests without an existing session already start from a fresh random id,
 /// so no rotation is needed. Call this after a privilege change such as a
-/// successful login to prevent session fixation. Returns `false` when the
-/// request has no session.
+/// successful login to prevent session fixation.
+///
+/// Rotating the id also discards the default CSRF token (`_csrf`) so a token
+/// learned before the privilege change cannot be replayed afterwards. When
+/// using a custom token key, clear it explicitly with `Context::csrf_rotate`.
+/// Returns `false` when the request has no session.
 pub fn Context::session_regenerate(self : Context) -> Bool {
   match self.session_materialized() {
     Some(session) => {
+      ignore(session.csrf_clear(CSRF_TOKEN_KEY))
       session.regenerate = true
       true
     }

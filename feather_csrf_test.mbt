@@ -255,6 +255,66 @@ test "csrf token is destroyed with the session" {
 }
 
 ///|
+test "session regeneration rotates the default csrf token" {
+  let store = @feather.SessionStore::new()
+  let app = @feather.App::new()
+    .use(@feather.middleware_session(store))
+    .get("/rotate", fn(ctx) {
+      let before = ctx.csrf_token()
+      assert_true(ctx.session_regenerate())
+      let after = ctx.csrf_token()
+      assert_true(before != after)
+      ctx.text(200, after)
+    })
+  let session = store.create()
+  session.data.set("_csrf", "old-token")
+  store.save(session)
+  let old_id = session.id
+  let response = app.respond({
+    method: "GET",
+    path: "/rotate",
+    headers: Map([("Cookie", "feather_session=" + old_id)]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_true(response.body != "old-token")
+  assert_eq(response.cookies.length(), 1)
+  let new_id = response.cookies[0].value
+  assert_true(new_id != old_id)
+  assert_true(store.get(old_id) is None)
+  assert_eq(store.get(new_id).unwrap().data.get("_csrf"), Some(response.body))
+}
+
+///|
+test "csrf_rotate clears a custom token key" {
+  let store = @feather.SessionStore::new()
+  let app = @feather.App::new()
+    .use(@feather.middleware_session(store))
+    .get("/rotate", fn(ctx) {
+      let before = ctx.csrf_token(key="xsrf")
+      assert_true(ctx.csrf_rotate(key="xsrf"))
+      let after = ctx.csrf_token(key="xsrf")
+      assert_true(before != after)
+      ctx.text(200, after)
+    })
+  let session = store.create()
+  session.data.set("xsrf", "old-custom-token")
+  session.data.set("_csrf", "keep-default")
+  store.save(session)
+  let response = app.respond({
+    method: "GET",
+    path: "/rotate",
+    headers: Map([("Cookie", "feather_session=" + session.id)]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_true(response.body != "old-custom-token")
+  let saved = store.get(response.cookies[0].value).unwrap()
+  assert_eq(saved.data.get("xsrf"), Some(response.body))
+  assert_eq(saved.data.get("_csrf"), Some("keep-default"))
+}
+
+///|
 async test "server csrf flow with header token" {
   let store = @feather.SessionStore::new()
   let app = @feather.App::new()

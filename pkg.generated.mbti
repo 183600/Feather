@@ -269,6 +269,7 @@ pub fn Context::compress(Self, min_size? : Int32) -> Unit
 pub fn Context::content_type(Self) -> String
 pub fn Context::cookie(Self, String) -> String?
 pub fn Context::cookies(Self) -> Map[String, String]
+pub fn Context::csrf_rotate(Self, key? : String) -> Bool
 pub fn Context::csrf_token(Self, key? : String) -> String
 pub fn Context::defer_cleanup(Self, () -> Unit raise) -> Unit
 pub fn Context::etag(Self) -> Unit
