@@ -167,6 +167,12 @@ Authentication middleware is available for basic credentials
 (`middleware_basic_auth` / `middleware_basic_auth_with`) and bearer tokens
 (`middleware_bearer_auth` / `middleware_bearer_auth_with`).
 
+`middleware_request_id` reuses a validated incoming id or mints a
+`feather-<n>` value, stores it for `Context::request_id`, and echoes it in the
+response. Pass `generate` for UUID/ULID or tracing ids and `max_length` to bound
+untrusted input; an empty or over-long generated id falls back to the built-in
+counter.
+
 `middleware_allowed_hosts(["example.com", "*.example.com"])` rejects requests
 whose `Host` header is not accepted with `400` before the handler runs. Ports
 and a trailing root dot are ignored, `*.example.com` accepts subdomains (but

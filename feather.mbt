@@ -10972,6 +10972,22 @@ pub fn middleware_logger(
 }
 
 ///|
+/// Normalize a request id: trim surrounding whitespace, remove control
+/// characters, and reject a value longer than `max_length` (`0` means no
+/// limit). Rejecting rather than truncating avoids splitting a surrogate pair
+/// or silently changing an id that upstream services may correlate.
+fn normalize_request_id(value : String, max_length : Int32) -> String {
+  let clean = trim_ascii_space(
+    strip_control_characters(value).view(),
+  ).to_owned()
+  if max_length > 0 && clean.length() > max_length {
+    ""
+  } else {
+    clean
+  }
+}
+
+///|
 /// Middleware that assigns a request id, reusing an incoming `header` value when
 /// present and otherwise generating a process-local `feather-<n>` value.
 ///
@@ -10979,35 +10995,46 @@ pub fn middleware_logger(
 /// echoed in the response under the same header name. Control characters are
 /// stripped from a client-supplied id, so it cannot inject another header or
 /// smuggle bytes into logs.
-pub fn middleware_request_id(header~ : String = "X-Request-Id") -> Middleware {
+///
+/// Pass `generate` to mint ids in another format (a UUID, ULID or a value from
+/// a tracing library). The generated value is sanitized like an incoming one;
+/// an empty or over-long result falls back to the built-in `feather-<n>`
+/// counter. `max_length` caps accepted and generated ids, which bounds the
+/// state and response header an untrusted client can force; `0` disables the
+/// cap.
+pub fn middleware_request_id(
+  header~ : String = "X-Request-Id",
+  generate? : () -> String,
+  max_length~ : Int32 = 0,
+) -> Middleware {
   let counter = Ref(0)
+  let limit = if max_length < 0 { 0 } else { max_length }
   fn(next) {
     fn(ctx) raise {
       // An incoming id is client-controlled, so control characters must not
       // reach the response header or the request state even on the offline
       // facade, which does not pass through the server's header sanitizer.
-      let incoming = trim_ascii_space(
-        strip_control_characters(ctx.header(header)).view(),
-      )
+      let incoming = normalize_request_id(ctx.header(header), limit)
       let id = if incoming != "" {
-        incoming.to_owned()
+        incoming
       } else {
-        match get_header_ignore_case(ctx.response.headers, header) {
-          Some(value) => {
-            let clean = trim_ascii_space(
-              strip_control_characters(value).view(),
-            )
-            if clean != "" {
-              clean.to_owned()
-            } else {
-              counter.val = counter.val + 1
-              "feather-" + counter.val.to_string()
-            }
+        let candidate = match get_header_ignore_case(ctx.response.headers, header) {
+          Some(value) => normalize_request_id(value, limit)
+          None => ""
+        }
+        let candidate = if candidate != "" {
+          candidate
+        } else {
+          match generate {
+            Some(generate) => normalize_request_id(generate(), limit)
+            None => ""
           }
-          None => {
-            counter.val = counter.val + 1
-            "feather-" + counter.val.to_string()
-          }
+        }
+        if candidate != "" {
+          candidate
+        } else {
+          counter.val = counter.val + 1
+          "feather-" + counter.val.to_string()
         }
       }
       set_header_ignore_case(ctx.response.headers, header, id)
