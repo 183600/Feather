@@ -166,17 +166,12 @@ fn apply_etag(response : Response) -> Unit {
   if validators.etag is Some(_) || validators.content_range || no_store {
     return
   }
+  // Hash the bytes that will be sent without moving a text body out of
+  // `Response.body`: offline callers read that field directly, and the server
+  // encodes it exactly like `encode_utf8_lossy` does here.
   let data = match response.data {
     Some(data) => data
-    None =>
-      if response.body.is_empty() {
-        return
-      } else {
-        let encoded = encode_utf8_lossy(response.body.view())
-        response.body = ""
-        response.data = Some(encoded)
-        encoded
-      }
+    None => encode_utf8_lossy(response.body.view())
   }
   if data.length() == 0 {
     return
