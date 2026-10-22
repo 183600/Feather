@@ -152,3 +152,35 @@ async test "queued file ranges apply to the compressed representation" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+async test "HEAD describes the compressed queued file representation" {
+  let dir = @fs.tmpdir(prefix="feather-file-compress-head")
+  let payload = "head over compressed file bytes ".repeat(64)
+  @fs.write_file(dir + "/report.txt", payload)
+  let app = @feather.App::new()
+    .compress(min_size=0)
+    .get("/download", fn(ctx) { ctx.file(200, dir + "/report.txt") })
+  with_server(app, client => {
+    let full = client.get(
+      "/download",
+      extra_headers=Map([(accept_encoding_key, "gzip")]),
+    )
+    assert_eq(full.code, 200)
+    let compressed_length = client.read_all().binary().length()
+    client.request(
+      @http.RequestMethod::Head,
+      "/download",
+      extra_headers=Map([(accept_encoding_key, "gzip")]),
+    )
+    let head = client.end_request()
+    assert_eq(head.code, 200)
+    assert_eq(head.headers.get(content_encoding_key), Some("gzip"))
+    assert_eq(
+      head.headers.get(@http.CaseInsensitiveString("Content-Length")),
+      Some(compressed_length.to_string()),
+    )
+    assert_eq(client.read_all().binary().length(), 0)
+  })
+  @fs.rmdir(dir, recursive=true)
+}
