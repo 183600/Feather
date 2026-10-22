@@ -36,14 +36,14 @@ test "cors predicate echoes allowed origins and rejects others" {
   let rejected = cors_request("GET", Map([("Origin", "https://evil.example")]))
   app.handle(rejected)
   assert_eq(rejected.response.headers.get("Access-Control-Allow-Origin"), None)
-  assert_eq(rejected.response.headers.get("Access-Control-Allow-Credentials"), Some("true"))
-  assert_eq(rejected.response.headers.get("Vary"), None)
+  assert_eq(rejected.response.headers.get("Access-Control-Allow-Credentials"), None)
+  assert_eq(rejected.response.headers.get("Vary"), Some("Origin"))
   assert_eq(rejected.response.body, "ok")
 
   let anonymous = cors_request("GET", Map([]))
   app.handle(anonymous)
   assert_eq(anonymous.response.headers.get("Access-Control-Allow-Origin"), None)
-  assert_eq(anonymous.response.headers.get("Vary"), None)
+  assert_eq(anonymous.response.headers.get("Vary"), Some("Origin"))
 }
 
 ///|

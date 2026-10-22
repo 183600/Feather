@@ -12794,7 +12794,10 @@ fn cors_middleware(
           if origin != "" && check(origin) {
             (origin, true)
           } else {
-            ("", false)
+            // Rejecting an origin is just as dependent on the request's
+            // `Origin` as accepting one: the same URL can return a grant for
+            // an allowed origin and none for this request.
+            ("", true)
           }
       }
       if allowed_origin != "" {
@@ -12809,7 +12812,9 @@ fn cors_middleware(
         // keep origins apart.
         ctx.vary("Origin")
       }
-      if allow_credentials && (origin != "" || !wildcard_credentials) {
+      if allow_credentials &&
+        allowed_origin != "" &&
+        (origin != "" || !wildcard_credentials) {
         // `Access-Control-Allow-Origin: *` and credentials are an invalid
         // pair. A no-Origin request is not a CORS request, so omit the
         // credentials grant there while still keeping the wildcard for
