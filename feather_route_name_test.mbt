@@ -164,3 +164,49 @@ test "a named parameter route is not confused with a static colon sibling" {
   }
 }
 
+
+///|
+test "re-registering a named path without a name removes the URL name too" {
+  let app = @feather.App::new().route_named(
+    "old",
+    "GET",
+    "/thing",
+    fn(ctx) { ctx.text(200, "old") },
+  )
+  ignore(app.get("/thing", fn(ctx) {
+    ctx.text(200, "[" + ctx.route_name() + "]")
+  }))
+  let response = app.respond({
+    method: "GET",
+    path: "/thing",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.body, "[]")
+  assert_eq(app.url_for("old"), None)
+  assert_true(app.router.route_name("old") is None)
+}
+
+///|
+test "mounting over a named path forgets the replaced name" {
+  let app = @feather.App::new().route_named(
+    "old",
+    "GET",
+    "/api/thing",
+    fn(ctx) { ctx.text(200, "old") },
+  )
+  let child = @feather.App::new().get("/thing", fn(ctx) {
+    ctx.text(200, "child")
+  })
+  ignore(app.mount("/api", child))
+  assert_eq(app.url_for("old"), None)
+  assert_eq(
+    app.respond({
+      method: "GET",
+      path: "/api/thing",
+      headers: Map([]),
+      body: "",
+    }).body,
+    "child",
+  )
+}

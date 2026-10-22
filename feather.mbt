@@ -720,6 +720,28 @@ fn Router::add_route_node(
 }
 
 ///|
+/// Forget names attached to the exact method/path being re-registered without
+/// one, so `url_for` cannot keep generating a URL for a name whose route no
+/// longer reports it through `Context::route_name`.
+fn Router::forget_route_names(
+  self : Router,
+  meth : String,
+  path : String,
+) -> Unit {
+  let method = normalize_method(meth)
+  let clean_path = clean_route_path(path)
+  let stale : Array[String] = []
+  for name, named in self.named {
+    if named.method == method && named.path == clean_path {
+      stale.push(name)
+    }
+  }
+  for name in stale {
+    ignore(self.named.remove(name))
+  }
+}
+
+///|
 /// Register a route.
 pub fn Router::add_route(
   self : Router,
@@ -727,6 +749,7 @@ pub fn Router::add_route(
   path : String,
   handler : Handler,
 ) -> Unit {
+  self.forget_route_names(meth, path)
   ignore(self.add_route_node(meth, path, handler))
 }
 
@@ -9658,7 +9681,9 @@ pub fn App::mount_with(
   for route in routes {
     let (method, path, handler, route_name) = route
     let wrapped = mounted_route_chain(outer, child_middlewares, handler)
-    let node = self.router.add_route_node(method, join_paths(base, path), wrapped)
+    let mounted_path = join_paths(base, path)
+    self.router.forget_route_names(method, mounted_path)
+    let node = self.router.add_route_node(method, mounted_path, wrapped)
     node.route_name = route_name
   }
   for name, named in child.router.named {
