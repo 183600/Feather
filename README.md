@@ -194,7 +194,10 @@ CORS can be limited to a fixed set of origins with
 and they still answer preflight requests from rejected origins with `204`
 without CORS headers. When credentials are enabled the preflight's
 `Access-Control-Request-Headers` is echoed instead of the literal `*`, which
-browsers reject in credentialed requests.
+browsers reject in credentialed requests. Pass `allow_private_network=true` to
+answer a browser's Private Network Access preflight with
+`Access-Control-Allow-Private-Network: true`; the grant is only sent for an
+accepted origin and when the request asks for it.
 
 Authentication middleware is available for basic credentials
 (`middleware_basic_auth` / `middleware_basic_auth_with`) and bearer tokens

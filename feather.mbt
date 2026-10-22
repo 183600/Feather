@@ -13078,6 +13078,7 @@ fn cors_middleware(
   expose_headers : String,
   allow_credentials : Bool,
   max_age : Int32,
+  allow_private_network : Bool,
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
@@ -13199,6 +13200,11 @@ fn cors_middleware(
           // caches must key on them as well (Fetch: Vary considerations).
           ctx.vary("Access-Control-Request-Method")
           ctx.vary("Access-Control-Request-Headers")
+          if allow_private_network {
+            // The grant is conditional on the browser's request header, so a
+            // shared cache must not reuse this preflight for another request.
+            ctx.vary("Access-Control-Request-Private-Network")
+          }
         } else {
           next(ctx)
         }
@@ -13239,6 +13245,18 @@ fn cors_middleware(
               max_age.to_string(),
             )
           }
+          if allow_private_network &&
+            trim_ascii_space(
+              ctx.header("Access-Control-Request-Private-Network").view(),
+            ).equal_ignore_ascii_case("true".view()) {
+            // Chrome's Private Network Access preflight asks the public origin
+            // to opt in explicitly. Only an accepted origin gets the grant.
+            set_header_ignore_case(
+              ctx.response.headers,
+              "Access-Control-Allow-Private-Network",
+              "true",
+            )
+          }
         }
       } else {
         if expose_headers != "" && allowed_origin != "" {
@@ -13261,7 +13279,9 @@ fn cors_middleware(
 /// advertise; when credentials are enabled the request's `Origin` is echoed
 /// instead, because browsers reject a wildcard with credentials. Use
 /// `middleware_cors_with` for a dynamic predicate or
-/// `middleware_cors_allowlist` for a fixed set of accepted origins.
+/// `middleware_cors_allowlist` for a fixed set of accepted origins. Pass
+/// `allow_private_network=true` to grant a browser's Private Network Access
+/// preflight when it asks for it.
 pub fn middleware_cors(
   allow_origin~ : String = "*",
   allow_methods~ : String = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
@@ -13269,6 +13289,7 @@ pub fn middleware_cors(
   expose_headers~ : String = "",
   allow_credentials~ : Bool = false,
   max_age~ : Int32 = 0,
+  allow_private_network~ : Bool = false,
 ) -> Middleware {
   cors_middleware(
     CorsOriginFixed(allow_origin),
@@ -13277,6 +13298,7 @@ pub fn middleware_cors(
     expose_headers,
     allow_credentials,
     max_age,
+    allow_private_network,
   )
 }
 
@@ -13296,6 +13318,7 @@ pub fn middleware_cors_with(
   expose_headers~ : String = "",
   allow_credentials~ : Bool = false,
   max_age~ : Int32 = 0,
+  allow_private_network~ : Bool = false,
 ) -> Middleware {
   cors_middleware(
     CorsOriginPredicate(allow_origin),
@@ -13304,6 +13327,7 @@ pub fn middleware_cors_with(
     expose_headers,
     allow_credentials,
     max_age,
+    allow_private_network,
   )
 }
 
@@ -13320,6 +13344,7 @@ pub fn middleware_cors_allowlist(
   expose_headers~ : String = "",
   allow_credentials~ : Bool = false,
   max_age~ : Int32 = 0,
+  allow_private_network~ : Bool = false,
 ) -> Middleware {
   let accepted = origins.copy()
   middleware_cors_with(
@@ -13337,6 +13362,7 @@ pub fn middleware_cors_allowlist(
     expose_headers~,
     allow_credentials~,
     max_age~,
+    allow_private_network~,
   )
 }
 
