@@ -177,6 +177,22 @@ test "the peer address is reported when no proxy recorded an address" {
 }
 
 ///|
+test "legacy forwarded addressless nodes fall back to the peer" {
+  let app = ip_app(1)
+  for value in ["unknown", "unknown:4711", "_hidden", "_hidden:4711"] {
+    assert_eq(ip_of(app, Map([("X-Forwarded-For", value)])), "10.0.0.9")
+  }
+  // Direct header reads keep the original spelling for diagnostics.
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([("X-Forwarded-For", "unknown")]),
+    body: "",
+  })
+  assert_eq(ctx.forwarded_ip(), "unknown")
+}
+
+///|
 test "trust proxy keeps the forwarded headers readable directly" {
   let app = @feather.App::new()
     .trust_proxy(1)

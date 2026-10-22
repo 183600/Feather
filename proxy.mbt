@@ -85,7 +85,14 @@ fn forwarded_chain(ctx : Context) -> Array[String] {
   let mut i = parts.length() - 1
   while i >= 0 {
     let value = trim_ascii_space(parts[i])
-    chain.push(normalize_legacy_forwarded_address(value))
+    // Keep addressless nodes as empty placeholders, exactly like the RFC 7239
+    // path: `unknown`, `unknown:port` and obfuscated `_...` identifiers must
+    // not become the selected client address.
+    let address = match normalize_forwarded_for(value) {
+      Some(address) => address
+      None => ""
+    }
+    chain.push(address)
     i = i - 1
   }
   chain
