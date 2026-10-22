@@ -135,7 +135,9 @@ let app = @feather.App::new()
   .use(@feather.middleware_secure_headers())
 ```
 
-Sessions and CSRF are available as middleware plus `Context` helpers:
+Sessions and CSRF are available as middleware plus `Context` helpers
+(`session_get`, `session_set`, `session_has`, `session_keys`, `session_remove`,
+`session_clear`, `session_destroy`, and JSON/flash variants):
 
 ```moonbit
 let store = @feather.SessionStore::new()

@@ -320,10 +320,13 @@ pub fn Context::redirect(Self, Int32, String) -> Unit
 pub fn Context::request_id(Self) -> String
 pub fn Context::run_cleanups(Self) -> Unit
 pub fn Context::session(Self) -> Session?
+pub fn Context::session_clear(Self) -> Bool
 pub fn Context::session_destroy(Self) -> Bool
 pub fn Context::session_get(Self, String) -> String
 pub fn Context::session_get_json(Self, String) -> Json?
+pub fn Context::session_has(Self, String) -> Bool
 pub fn Context::session_id(Self) -> String?
+pub fn Context::session_keys(Self) -> Array[String]
 pub fn Context::session_regenerate(Self) -> Bool
 pub fn Context::session_remove(Self, String) -> Bool
 pub fn Context::session_set(Self, String, String) -> Bool

@@ -329,6 +329,32 @@ pub fn Context::session_get(self : Context, key : String) -> String {
 }
 
 ///|
+/// Whether the session contains `key`. Returns `false` when there is no
+/// session or the key is absent, so it distinguishes a missing key from one
+/// stored with an empty string value.
+pub fn Context::session_has(self : Context, key : String) -> Bool {
+  match self.session_materialized() {
+    Some(session) => session.data.contains(key)
+    None => false
+  }
+}
+
+///|
+/// Every key currently stored in the session, in an unspecified order.
+/// Returns an empty array when there is no session.
+pub fn Context::session_keys(self : Context) -> Array[String] {
+  let keys : Array[String] = []
+  match self.session_materialized() {
+    Some(session) =>
+      for key in session.data.keys() {
+        keys.push(key)
+      }
+    None => ()
+  }
+  keys
+}
+
+///|
 /// Write a value into the session, marking it for saving after the handler
 /// returns. Returns `false` when the request has no session, for example when
 /// `middleware_session` is not installed.
@@ -441,6 +467,28 @@ pub fn Context::session_remove(self : Context, key : String) -> Bool {
         }
         None => false
       }
+    None => false
+  }
+}
+
+///|
+/// Remove every value from the session, including stored and queued flash
+/// messages, while keeping the session itself alive. The empty session is
+/// saved after the handler returns. Returns `false` when the request has no
+/// session.
+pub fn Context::session_clear(self : Context) -> Bool {
+  match self.session_materialized() {
+    Some(session) => {
+      session.data.clear()
+      session.flash_pending = None
+      session.flash_pending_bytes = 0
+      match session.json_cache {
+        Some(cache) => cache.clear()
+        None => ()
+      }
+      session.modified = true
+      true
+    }
     None => false
   }
 }
