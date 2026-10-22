@@ -9357,16 +9357,33 @@ pub fn middleware_logger(
 }
 
 ///|
+/// Middleware that assigns a request id, reusing an incoming `header` value when
+/// present and otherwise generating a process-local `feather-<n>` value.
+///
+/// The id is stored in request state (read it with `Context::request_id`) and
+/// echoed in the response under the same header name. Control characters are
+/// stripped from a client-supplied id, so it cannot inject another header or
+/// smuggle bytes into logs.
 pub fn middleware_request_id(header~ : String = "X-Request-Id") -> Middleware {
   let counter = Ref(0)
   fn(next) {
     fn(ctx) raise {
-      let existing = ctx.header(header)
-      let id = if existing != "" {
-        existing
+      // An incoming id is client-controlled, so control characters must not
+      // reach the response header or the request state even on the offline
+      // facade, which does not pass through the server's header sanitizer.
+      let incoming = strip_control_characters(ctx.header(header))
+      let id = if incoming != "" {
+        incoming
       } else {
         match get_header_ignore_case(ctx.response.headers, header) {
-          Some(value) => value
+          Some(value) =>
+            match strip_control_characters(value) {
+              clean if clean != "" => clean
+              _ => {
+                counter.val = counter.val + 1
+                "feather-" + counter.val.to_string()
+              }
+            }
           None => {
             counter.val = counter.val + 1
             "feather-" + counter.val.to_string()

@@ -812,3 +812,36 @@ test "secure headers replace case-variant response headers" {
   assert_eq(ctx.response.headers.get("X-Frame-Options"), Some("DENY"))
   assert_eq(ctx.response.headers.get("Referrer-Policy"), Some("no-referrer"))
 }
+
+///|
+test "middleware_request_id strips control characters from incoming ids" {
+  let app = @feather.App::new()
+    .use(@feather.middleware_request_id())
+    .get("/id", fn(ctx) { ctx.text(200, ctx.request_id()) })
+  let response = app.respond({
+    method: "GET",
+    path: "/id",
+    headers: { "X-Request-Id": "trace\r\nX-Evil: 1\tend" },
+    body: "",
+  })
+  assert_eq(
+    response.headers.get("X-Request-Id"),
+    Some("traceX-Evil: 1end"),
+  )
+  assert_eq(response.body, "traceX-Evil: 1end")
+}
+
+///|
+test "middleware_request_id generates an id when the incoming one is only controls" {
+  let app = @feather.App::new()
+    .use(@feather.middleware_request_id())
+    .get("/id", fn(ctx) { ctx.text(200, ctx.request_id()) })
+  let response = app.respond({
+    method: "GET",
+    path: "/id",
+    headers: { "X-Request-Id": "\r\n\t" },
+    body: "",
+  })
+  assert_eq(response.headers.get("X-Request-Id"), Some("feather-1"))
+  assert_eq(response.body, "feather-1")
+}
