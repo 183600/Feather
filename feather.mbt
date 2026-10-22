@@ -1745,6 +1745,31 @@ fn App::server_methods(self : App) -> Array[String] {
 }
 
 ///|
+/// Whether a WebSocket route makes `path` unreachable as a `HEAD` request.
+///
+/// A route with the same pattern is fully shadowed. For a pattern without a
+/// wildcard, the router can also check whether the literal pattern string is
+/// matched by a WebSocket route: a static GET path is then shadowed by that
+/// single URL, and a parameter GET route is covered by the equivalent
+/// parameter or wildcard WebSocket route. A GET wildcard is only considered
+/// shadowed by the same wildcard pattern, because a narrower WebSocket route
+/// leaves other paths reachable.
+fn App::websocket_shadows_get_path(
+  self : App,
+  path : StringView,
+) -> Bool {
+  let identity = route_pattern_identity(path)
+  for pair in self.ws_router.routes() {
+    let (_method, websocket_path) = pair
+    if route_pattern_identity(websocket_path.view()) == identity {
+      return true
+    }
+  }
+  !path.contains("*") &&
+  self.ws_router.is_routable("GET", path.to_owned())
+}
+
+///|
 /// Whether the application can answer `HEAD` somewhere. Ordinary `GET` routes,
 /// static mounts and SSE/streaming endpoints can; a WebSocket endpoint cannot,
 /// because its only successful GET response is the upgrade handshake.
@@ -1755,19 +1780,29 @@ fn App::server_methods(self : App) -> Array[String] {
 /// WebSocket route shadows at the same pattern is not reachable for `HEAD`
 /// either, so it does not contribute to the server-wide capability.
 fn App::server_allows_head(self : App) -> Bool {
-  if !self.static_mounts.is_empty() ||
-    !self.sse_handlers.is_empty() ||
-    !self.stream_handlers.is_empty() {
+  if !self.static_mounts.is_empty() {
     return true
   }
-  let websocket_paths : Array[String] = []
-  for pair in self.ws_router.routes() {
-    let (_method, path) = pair
-    websocket_paths.push(path)
+  if !self.sse_handlers.is_empty() {
+    for pair in self.sse_router.routes() {
+      let (_method, path) = pair
+      if !self.websocket_shadows_get_path(path.view()) {
+        return true
+      }
+    }
+  }
+  if !self.stream_handlers.is_empty() {
+    for pair in self.stream_router.routes() {
+      let (_method, path) = pair
+      if !self.websocket_shadows_get_path(path.view()) {
+        return true
+      }
+    }
   }
   for pair in self.router.routes() {
     let (method, path) = pair
-    if method == "GET" && !websocket_paths.contains(path) {
+    if (method == "GET" || method == "HEAD") &&
+      !self.websocket_shadows_get_path(path.view()) {
       return true
     }
   }
@@ -1791,8 +1826,15 @@ fn respond_app_server_options(ctx : Context, app : App) -> Unit {
       respond_options(ctx, methods)
     } else {
       // `respond_options` inserts `HEAD` for every listed `GET`; a WebSocket
-      // endpoint accepts GET but rejects HEAD, so render the list literally.
-      respond_options_with_allow(ctx, methods.join(", "))
+      // endpoint accepts GET but rejects HEAD. Render the list literally and
+      // drop an explicit HEAD route when a WebSocket also shadows it.
+      let without_head : Array[String] = []
+      for method in methods {
+        if method != "HEAD" {
+          without_head.push(method)
+        }
+      }
+      respond_options_with_allow(ctx, without_head.join(", "))
     }
   }
 }
@@ -9456,7 +9498,7 @@ pub fn Router::group(self : Router, prefix : String) -> RouteGroup {
 pub fn RouteGroup::group(self : RouteGroup, prefix : String) -> RouteGroup {
   {
     router: self.router,
-    prefix: join_paths(self.prefix, prefix),
+    prefix: normalize_prefix(join_paths(self.prefix, prefix)),
     middlewares: self.middlewares.copy(),
     app: self.app,
   }
@@ -11089,29 +11131,110 @@ pub fn App::endpoints(self : App) -> Array[Endpoint] {
 }
 
 ///|
-fn App::best_static_mount(self : App, path_view : StringView) -> StaticMount? {
+/// Result of matching a static mount prefix against a request path.
+///
+/// `consumed` is the path position just after the matched prefix and
+/// `relative_start` is where the path relative to the mount root begins. They
+/// differ for a mount whose prefix ends in a wildcard, where the captured
+/// remainder is itself part of the child-relative path.
+priv struct MountPrefixMatch {
+  consumed : Int32
+  relative_start : Int32
+  params : Map[String, String]
+}
+
+///|
+/// Match a static mount prefix, which uses the same segment syntax as a route
+/// pattern (`:param` and a trailing `*wildcard`), against `path`.
+///
+/// Empty segments from repeated or leading slashes are ignored and static
+/// segments are compared in their decoded spelling, so an encoded mount prefix
+/// and an encoded request path resolve to the same mount. A wildcard prefix
+/// captures the rest of the path; wildcards in the middle of a prefix cannot be
+/// represented by the route registration model and are not matched.
+fn match_mount_prefix(
+  path : StringView,
+  prefix : StringView,
+) -> MountPrefixMatch? {
+  let prefix_segments = split_segments(prefix)
+  let length = path.length()
+  let mut pos = 0
+  let params : Map[String, String] = Map([], capacity=2)
+  for index, segment in prefix_segments {
+    if segment.has_prefix("*") {
+      if index + 1 != prefix_segments.length() {
+        return None
+      }
+      let start = skip_slashes(path, pos)
+      let name = segment[1:].to_owned()
+      if name != "" {
+        params.set(name, join_wildcard(path, pos))
+      }
+      return Some({
+        consumed: length,
+        relative_start: start,
+        params,
+      })
+    }
+    pos = skip_slashes(path, pos)
+    if pos >= length {
+      return None
+    }
+    let end = segment_end(path, pos)
+    let text = path[pos:end]
+    if segment.has_prefix(":") {
+      let name = segment[1:].to_owned()
+      if name != "" {
+        params.set(name, text.to_owned())
+      }
+    } else if normalize_static_route_segment(text) !=
+      normalize_static_route_segment(segment) {
+      return None
+    }
+    pos = end
+  }
+  Some({
+    consumed: pos,
+    relative_start: skip_slashes(path, pos),
+    params,
+  })
+}
+
+///|
+fn App::best_static_mount(
+  self : App,
+  path_view : StringView,
+) -> (StaticMount, MountPrefixMatch)? {
   if self.static_mounts.length() == 0 {
     return None
   }
-  let path_length = path_view.length()
-  let mut best : StaticMount? = None
+  let mut best : (StaticMount, MountPrefixMatch)? = None
+  let mut best_consumed = -1
+  let mut best_params = 2147483647
   let mut best_length = -1
   for mount in self.static_mounts {
-    let prefix_view = mount.url_prefix.view()
-    let prefix_length = mount.url_prefix.length()
-    let matched = if prefix_length == 0 {
-      true
-    } else {
-      path_view == prefix_view ||
-      (
-        path_length > prefix_length &&
-        path_view[:prefix_length] == prefix_view &&
-        path_view[prefix_length:].has_prefix("/")
-      )
-    }
-    if matched && prefix_length > best_length {
-      best = Some(mount)
-      best_length = prefix_length
+    match match_mount_prefix(path_view, mount.url_prefix.view()) {
+      Some(matched) => {
+        let params = matched.params.length()
+        let better = matched.consumed > best_consumed ||
+          (
+            matched.consumed == best_consumed &&
+            (
+              params < best_params ||
+              (
+                params == best_params &&
+                mount.url_prefix.length() > best_length
+              )
+            )
+          )
+        if better {
+          best = Some((mount, matched))
+          best_consumed = matched.consumed
+          best_params = params
+          best_length = mount.url_prefix.length()
+        }
+      }
+      None => ()
     }
   }
   best
@@ -11244,7 +11367,8 @@ fn App::static_lookup(
       // Resolve the mount before looking up the file.
       let mount = self.best_static_mount(clean)
       let result = match mount {
-        Some(mount) => static_lookup_uncached(clean, mount)
+        Some((mount, matched)) =>
+          static_lookup_uncached(clean, mount, matched.relative_start)
         None => None
       }
       // Paths that match no mount at all are dynamic routes, so they are not
@@ -11266,9 +11390,14 @@ fn App::static_lookup(
 /// directory indexes need. The file is only redirected once it is known to
 /// exist, so a mount whose index is missing still reports 404.
 fn static_root_needs_slash(path : String, mount : StaticMount) -> Bool {
-  !mount.index.is_empty() &&
-  mount.url_prefix != "" &&
-  clean_path_view(path) == mount.url_prefix.view()
+  let clean = clean_path_view(path)
+  if mount.index.is_empty() || mount.url_prefix == "" {
+    return false
+  }
+  match match_mount_prefix(clean, mount.url_prefix.view()) {
+    Some(matched) => matched.relative_start == clean.length()
+    None => false
+  }
 }
 
 ///|
@@ -11277,16 +11406,9 @@ fn static_root_needs_slash(path : String, mount : StaticMount) -> Bool {
 fn static_lookup_uncached(
   path_view : StringView,
   mount : StaticMount,
+  relative_start : Int32,
 ) -> (String, String, Bool, StaticMount)? {
-  let prefix_view = mount.url_prefix.view()
-  let prefix_length = mount.url_prefix.length()
-  let relative : StringView = if prefix_length == 0 {
-    path_view
-  } else if path_view == prefix_view {
-    ""
-  } else {
-    path_view[prefix_length + 1:]
-  }
+  let relative : StringView = path_view[relative_start:]
   let decoded = decode_url_path(relative)
   let decoded_ends_with_slash = decoded.has_suffix("/") ||
     decoded == "." ||
@@ -11305,6 +11427,24 @@ fn static_lookup_uncached(
     join_fs_path(mount.root, clean)
   }
   Some((file_path, mount.cache_control, mount.precompressed, mount))
+}
+
+///|
+/// Bind the parameters captured by a dynamic static mount prefix, so
+/// `Context::param` works in the mount middleware and in the file-serving
+/// pipeline exactly as it does for a dynamic route.
+fn bind_static_mount_params(
+  ctx : Context,
+  path : String,
+  mount : StaticMount,
+) -> Unit {
+  match match_mount_prefix(clean_path_view(path), mount.url_prefix.view()) {
+    Some(matched) =>
+      for name, value in matched.params {
+        ctx.state.set(param_state_key(name), value)
+      }
+    None => ()
+  }
 }
 
 ///|
@@ -11414,30 +11554,41 @@ fn App::allowed_methods_with_async(
 }
 
 ///|
-/// Mount middleware for the most specific mounted application whose prefix
-/// contains `path`, or `None` when no mounted application matches.
+/// Mount middleware and captured prefix parameters for the most specific
+/// mounted application whose prefix contains `path`, or `None` when no mounted
+/// application matches.
 fn App::auto_mount_chain(
   self : App,
   path : StringView,
-) -> Array[Middleware]? {
-  let mut best : Array[Middleware]? = None
+) -> (Array[Middleware], Map[String, String])? {
+  let mut best : (Array[Middleware], Map[String, String])? = None
+  let mut best_consumed = -1
+  let mut best_params = 2147483647
   let mut best_length = -1
   for entry in self.mount_middlewares {
     let (prefix, middlewares) = entry
-    let prefix_view = prefix.view()
-    let matched = if prefix.length() == 0 {
-      true
-    } else {
-      path == prefix_view ||
-      (
-        path.length() > prefix.length() &&
-        path[:prefix.length()] == prefix_view &&
-        path[prefix.length():].has_prefix("/")
-      )
-    }
-    if matched && prefix.length() >= best_length {
-      best = Some(middlewares)
-      best_length = prefix.length()
+    match match_mount_prefix(path, prefix.view()) {
+      Some(matched) => {
+        let params = matched.params.length()
+        let better = matched.consumed > best_consumed ||
+          (
+            matched.consumed == best_consumed &&
+            (
+              params < best_params ||
+              (
+                params == best_params &&
+                prefix.length() >= best_length
+              )
+            )
+          )
+        if better {
+          best = Some((middlewares, matched.params))
+          best_consumed = matched.consumed
+          best_params = params
+          best_length = prefix.length()
+        }
+      }
+      None => ()
     }
   }
   best
@@ -11462,7 +11613,12 @@ fn App::run_mounted_method_response(
     }
   }
   match self.auto_mount_chain(path) {
-    Some(middlewares) => apply_middleware(middlewares, respond)(ctx)
+    Some((middlewares, params)) => {
+      for name, value in params {
+        ctx.state.set(param_state_key(name), value)
+      }
+      apply_middleware(middlewares, respond)(ctx)
+    }
     None => respond(ctx)
   }
 }

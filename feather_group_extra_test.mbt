@@ -266,3 +266,19 @@ test "group prefixes ignore query and fragment suffixes" {
   assert_eq(response.status, 200)
   assert_eq(response.body, "pong")
 }
+
+///|
+test "nested group prefixes normalize like top-level groups" {
+  let app = @feather.App::new()
+  let v1 = app.group("//api/").group("v1//?x=1#frag")
+  ignore(v1.get("/ping", fn(ctx) { ctx.text(200, "pong") }))
+  assert_eq(app.routes(), [("GET", "/api/v1/ping")])
+  let response = app.respond({
+    method: "GET",
+    path: "/api/v1/ping",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "pong")
+}

@@ -2771,6 +2771,7 @@ async fn handle_static(
   defer ctx.run_cleanups()
   attach_raw_body(ctx, raw_body)
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
+  bind_static_mount_params(ctx, request.path, mount)
   let chain = if mount.middlewares.length() == 0 {
     match app.static_chain {
       Some(chain) => chain
