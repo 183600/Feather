@@ -463,6 +463,31 @@ test "Context cookies trim whitespace around values" {
 }
 
 ///|
+test "Context cookies returns an isolated map" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: { "Cookie": "a=1; b=2" },
+    body: "",
+  })
+  let leaked = ctx.cookies()
+  leaked.set("a", "poisoned")
+  leaked.set("c", "injected")
+  assert_eq(ctx.cookies().get("a"), Some("1"))
+  assert_eq(ctx.cookies().get("c"), None)
+  assert_eq(ctx.cookie("a"), Some("1"))
+  assert_eq(ctx.cookie("c"), None)
+  let other = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: { "Cookie": "a=1; b=2" },
+    body: "",
+  })
+  assert_eq(other.cookie("a"), Some("1"))
+  assert_eq(other.cookie("c"), None)
+}
+
+///|
 test "Context set_cookie renders attributes" {
   let ctx = @feather.create_context()
   ctx.set_cookie(

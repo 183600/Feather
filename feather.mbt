@@ -3367,14 +3367,15 @@ fn multipart_parts_lookup(
 }
 
 ///|
-/// The parsed `Cookie` header, keyed by name. The result is the cached parse;
-/// treat it as read-only instead of mutating it.
+/// The parsed `Cookie` header, keyed by name. Callers receive their own copy,
+/// so mutating the result cannot disturb a later request that carries the same
+/// header and hits the parse cache.
 pub fn Context::cookies(self : Context) -> Map[String, String] {
   let header = self.header("Cookie")
   if header == "" {
     return Map([])
   }
-  cookie_map_lookup(header)
+  cookie_map_lookup(header).copy()
 }
 
 ///|
