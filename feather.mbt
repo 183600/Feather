@@ -9823,6 +9823,263 @@ pub fn middleware_https_redirect(
 }
 
 ///|
+/// Whether `code` is a character allowed in a host name. Underscores are
+/// accepted too because they occur in real deployments even though DNS host
+/// labels should not use them.
+fn is_host_name_character(code : Int32) -> Bool {
+  (code >= 48 && code <= 57) ||
+  (code >= 65 && code <= 90) ||
+  (code >= 97 && code <= 122) ||
+  code == 45 ||
+  code == 46 ||
+  code == 95
+}
+
+///|
+/// Validate the part of an authority between the brackets (for an IP literal)
+/// or the whole host name. Bracketed hosts additionally allow the `:` and `%`
+/// characters used by IPv6 addresses and zone identifiers.
+fn valid_host_name(view : StringView, bracketed : Bool) -> Bool {
+  let length = view.length()
+  if length == 0 {
+    return false
+  }
+  let mut i = 0
+  while i < length {
+    let code = view.unsafe_get(i).to_int()
+    let allowed = is_host_name_character(code) ||
+      (bracketed && (code == 58 || code == 37))
+    if !allowed {
+      return false
+    }
+    i = i + 1
+  }
+  !(!bracketed && view.unsafe_get(0) == ('.' : UInt16))
+}
+
+///|
+/// Whether `value` is a syntactically valid decimal TCP/UDP port. An empty
+/// value or one above 65535 is rejected.
+fn valid_host_port(value : StringView) -> Bool {
+  let length = value.length()
+  if length == 0 {
+    return false
+  }
+  let mut port = 0
+  let mut i = 0
+  while i < length {
+    let digit = value.unsafe_get(i).to_int() - 48
+    if digit < 0 || digit > 9 {
+      return false
+    }
+    port = port * 10 + digit
+    if port > 65535 {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+///|
+/// Parse a `Host` header (or a configured host) into its port-less name.
+///
+/// A bracketed IPv6 literal keeps its brackets; an optional numeric port is
+/// validated and dropped. A malformed authority, embedded whitespace or
+/// control character, unbracketed IPv6 literal, or an empty host yields
+/// `None`. A single trailing dot, which denotes an absolute DNS name, is
+/// removed so `example.com.` matches `example.com`.
+fn host_authority_host(value : StringView) -> String? {
+  let authority = trim_ascii_space(value)
+  let length = authority.length()
+  if length == 0 {
+    return None
+  }
+  // Header values must not carry separators or control characters into the
+  // parsed host: such values are malformed rather than matchable.
+  let mut scan = 0
+  while scan < length {
+    let code = authority.unsafe_get(scan).to_int()
+    if code <= 0x20 || code == 0x7F || code == 44 {
+      return None
+    }
+    scan = scan + 1
+  }
+  if authority.unsafe_get(0) == ('[' : UInt16) {
+    let close = match authority.find("]") {
+      Some(index) => index
+      None => return None
+    }
+    if close <= 1 || !valid_host_name(authority[1:close], true) {
+      return None
+    }
+    let rest = authority[close + 1:]
+    if rest.length() == 0 {
+      return Some(authority[:close + 1].to_owned())
+    }
+    if rest.unsafe_get(0) != (':' : UInt16) ||
+      !valid_host_port(rest[1:]) {
+      return None
+    }
+    return Some(authority[:close + 1].to_owned())
+  }
+  let mut colons = 0
+  let mut last_colon = -1
+  let mut i = 0
+  while i < length {
+    if authority.unsafe_get(i) == (':' : UInt16) {
+      colons = colons + 1
+      last_colon = i
+    }
+    i = i + 1
+  }
+  let host = if colons == 0 {
+    authority
+  } else if colons == 1 {
+    if last_colon <= 0 || !valid_host_port(authority[last_colon + 1:]) {
+      return None
+    }
+    authority[:last_colon]
+  } else {
+    // More than one colon without brackets is a bare IPv6 literal, which is
+    // not a valid HTTP authority.
+    return None
+  }
+  if !valid_host_name(host, false) {
+    return None
+  }
+  let text = host.to_owned()
+  if text.length() > 1 && text.has_suffix(".") {
+    Some(text[:text.length() - 1].to_owned())
+  } else {
+    Some(text)
+  }
+}
+
+///|
+/// Normalize one configured host pattern. `"*"` accepts any well-formed host;
+/// `"*.example.com"` accepts that domain's subdomains; everything else is an
+/// exact host name. A configured port is accepted and ignored.
+fn normalize_host_pattern(value : String) -> String? {
+  let trimmed = trim_ascii_space(value.view())
+  if trimmed == "*" {
+    return Some("*")
+  }
+  if trimmed.has_prefix("*.") {
+    match host_authority_host(trimmed[2:]) {
+      Some(host) => Some("*." + host)
+      None => None
+    }
+  } else {
+    host_authority_host(trimmed)
+  }
+}
+
+///|
+/// Case-insensitive `ends_with` for ASCII host names.
+fn host_ends_with_ignore_ascii_case(
+  value : StringView,
+  suffix : StringView,
+) -> Bool {
+  if suffix.length() > value.length() {
+    return false
+  }
+  let offset = value.length() - suffix.length()
+  let mut i = 0
+  while i < suffix.length() {
+    let left = value.unsafe_get(offset + i).to_int()
+    let right = suffix.unsafe_get(i).to_int()
+    let lower_left = if left >= 65 && left <= 90 { left + 32 } else { left }
+    let lower_right = if right >= 65 && right <= 90 {
+      right + 32
+    } else {
+      right
+    }
+    if lower_left != lower_right {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+///|
+/// Whether a validated request `host` matches a normalized configured
+/// `pattern`.
+fn host_matches_pattern(host : String, pattern : String) -> Bool {
+  if pattern == "*" {
+    return true
+  }
+  let pattern_view = pattern.view()
+  if pattern_view.has_prefix("*.") {
+    let suffix = pattern_view[1:]
+    host.length() > suffix.length() &&
+    host_ends_with_ignore_ascii_case(host.view(), suffix)
+  } else {
+    host.view().equal_ignore_ascii_case(pattern_view)
+  }
+}
+
+///|
+/// Middleware that rejects requests whose `Host` header is not in the
+/// allowlist with `400 Bad Request`, before the handler runs.
+///
+/// Host names are matched case-insensitively after an optional port is
+/// stripped, so `example.com`, `Example.COM:8080` and `example.com.` all match
+/// the entry `"example.com"`. An entry starting with `*.` accepts any
+/// subdomain of that domain (`*.example.com` matches `api.example.com` and
+/// `a.b.example.com`, but not `example.com` itself), and `"*"` accepts any
+/// well-formed authority. Malformed authorities, including embedded control
+/// characters, unbracketed IPv6 literals and invalid ports, are rejected.
+///
+/// The `Host` header is used directly and forwarded-host headers are ignored,
+/// so a client cannot bypass the check by setting `X-Forwarded-Host`. A
+/// missing `Host` is rejected by default; pass `allow_missing=true` for
+/// HTTP/1.0 clients or health checks that do not send one.
+pub fn middleware_allowed_hosts(
+  hosts : Array[String],
+  allow_missing~ : Bool = false,
+) -> Middleware {
+  let patterns : Array[String] = []
+  for host in hosts {
+    match normalize_host_pattern(host) {
+      Some(pattern) => patterns.push(pattern)
+      None => ()
+    }
+  }
+  fn(next) {
+    fn(ctx) raise {
+      let raw = ctx.header("Host")
+      if trim_ascii_space(raw.view()).is_empty() {
+        if allow_missing {
+          next(ctx)
+        } else {
+          ctx.text(400, "400 Bad Request")
+        }
+        return
+      }
+      let accepted = match host_authority_host(raw.view()) {
+        Some(host) => {
+          let mut matched = false
+          for pattern in patterns {
+            if host_matches_pattern(host, pattern) {
+              matched = true
+            }
+          }
+          matched
+        }
+        None => false
+      }
+      if accepted {
+        next(ctx)
+      } else {
+        ctx.text(400, "400 Bad Request")
+      }
+    }
+  }
+}
+
+///|
 /// Middleware that lets HTML forms perform non-`POST` methods.
 ///
 /// Browsers can only submit `GET` and `POST` forms, so frameworks commonly

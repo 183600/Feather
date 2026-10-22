@@ -152,6 +152,13 @@ Authentication middleware is available for basic credentials
 (`middleware_basic_auth` / `middleware_basic_auth_with`) and bearer tokens
 (`middleware_bearer_auth` / `middleware_bearer_auth_with`).
 
+`middleware_allowed_hosts(["example.com", "*.example.com"])` rejects requests
+whose `Host` header is not accepted with `400` before the handler runs. Ports
+and a trailing root dot are ignored, `*.example.com` accepts subdomains (but
+not the apex), and `"*"` accepts any well-formed authority. The check reads
+`Host` directly, never forwarded-host headers; pass `allow_missing=true` for
+HTTP/1.0 clients that omit it.
+
 `middleware_body_limit` rejects oversized request bodies with `413` before the
 handler runs, which is useful for allowing only small payloads on a specific
 route while `App::max_body_size` keeps the server-wide bound.
