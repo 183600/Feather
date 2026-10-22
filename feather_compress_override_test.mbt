@@ -59,6 +59,24 @@ async test "context compress applies its own minimum size" {
 }
 
 ///|
+async test "context compress accepts the full Int32 threshold range" {
+  let body = "feather ".repeat(200)
+  let app = @feather.App::new().get("/large-threshold", fn(ctx) {
+    ctx.compress(min_size=200_000_000)
+    ctx.text(200, body)
+  })
+  let response = app.respond_async({
+    method: "GET",
+    path: "/large-threshold",
+    headers: Map([("Accept-Encoding", "gzip")]),
+    body: "",
+  })
+  assert_eq(response.headers.get("Content-Encoding"), None)
+  assert_eq(response.headers.get("Vary"), Some("Accept-Encoding"))
+  assert_eq(response.body, body)
+}
+
+///|
 async test "context compress still negotiates the accepted encoding" {
   let body = "feather ".repeat(200)
   let app = @feather.App::new().get("/big", fn(ctx) {

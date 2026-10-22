@@ -52,8 +52,8 @@ fn compression_settings(app : App, ctx : Context) -> (Bool, Int32) {
       if value == "off" {
         (false, app.compress_min_size)
       } else if value.has_prefix("on:") {
-        let minimum = match parse_decimal(value[3:].view()) {
-          Some(size) => size
+        let minimum = match parse_int_value(value[3:].view()) {
+          Some(size) => if size < 0 { 0 } else { size }
           None => 0
         }
         (true, minimum)
