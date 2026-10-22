@@ -215,6 +215,24 @@ pub fn apply_middleware(
 }
 
 ///|
+/// Every method `App::all` / `RouteGroup::all` / `Feather::all` registers.
+/// `CONNECT` and `TRACE` are part of HTTP/1.1 just like the usual verbs, so an
+/// "all methods" route must cover them too.
+fn standard_methods() -> Array[String] {
+  [
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "HEAD",
+    "OPTIONS",
+    "CONNECT",
+    "TRACE",
+  ]
+}
+
+///|
 fn clean_path_view(path : String) -> StringView {
   match path_query_index(path) {
     Some(index) => path[:index]
@@ -7762,12 +7780,30 @@ pub fn RouteGroup::options(
 }
 
 ///|
+pub fn RouteGroup::connect(
+  self : RouteGroup,
+  path : String,
+  handler : Handler,
+) -> RouteGroup {
+  self.route("CONNECT", path, handler)
+}
+
+///|
+pub fn RouteGroup::trace(
+  self : RouteGroup,
+  path : String,
+  handler : Handler,
+) -> RouteGroup {
+  self.route("TRACE", path, handler)
+}
+
+///|
 pub fn RouteGroup::all(
   self : RouteGroup,
   path : String,
   handler : Handler,
 ) -> RouteGroup {
-  for meth in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+  for meth in standard_methods() {
     ignore(self.route(meth, path, handler))
   }
   self
@@ -8204,8 +8240,18 @@ pub fn App::options(self : App, path : String, handler : Handler) -> App {
 }
 
 ///|
+pub fn App::connect(self : App, path : String, handler : Handler) -> App {
+  self.route("CONNECT", path, handler)
+}
+
+///|
+pub fn App::trace(self : App, path : String, handler : Handler) -> App {
+  self.route("TRACE", path, handler)
+}
+
+///|
 pub fn App::all(self : App, path : String, handler : Handler) -> App {
-  for meth in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+  for meth in standard_methods() {
     ignore(self.route(meth, path, handler))
   }
   self
@@ -10278,12 +10324,30 @@ pub fn Feather::options(
 }
 
 ///|
+pub fn Feather::connect(
+  self : Feather,
+  path : String,
+  handler : Handler,
+) -> Feather {
+  self.route("CONNECT", path, handler)
+}
+
+///|
+pub fn Feather::trace(
+  self : Feather,
+  path : String,
+  handler : Handler,
+) -> Feather {
+  self.route("TRACE", path, handler)
+}
+
+///|
 pub fn Feather::all(
   self : Feather,
   path : String,
   handler : Handler,
 ) -> Feather {
-  for meth in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+  for meth in standard_methods() {
     ignore(self.route(meth, path, handler))
   }
   self

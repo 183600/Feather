@@ -17,8 +17,10 @@ long-term design notes are in [PLAN.md](PLAN.md).
 ## Features
 
 - **Routing** – method routes (`get`/`post`/`put`/`patch`/`delete`/`head`/
-  `options`/`all`), `:param` and `*wildcard` segments, route groups, named
-  routes and `url_for`, per-route middleware, and a fallback handler.
+  `options`/`connect`/`trace`/`all`), `:param` and `*wildcard` segments, route
+  groups, named routes and `url_for`, per-route middleware, and a fallback
+  handler. `all` covers every standard HTTP method, including `CONNECT` and
+  `TRACE`.
 - **Middleware** – CORS, request logging, panic recovery, request IDs,
   rate limiting, basic and bearer auth, CSRF, secure headers, HTTPS redirect,
   method override, sessions, and a problem-details error handler whose
