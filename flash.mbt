@@ -336,11 +336,19 @@ pub fn Context::flash_take_all(self : Context) -> Map[String, Array[String]] {
 
 ///|
 /// Look at the flash messages queued for `category` without consuming them.
-/// Returns `[]` when there is no session or nothing was queued.
+/// Returns `[]` when there is no session, nothing was queued, or the session
+/// was destroyed and therefore will not be persisted.
 pub fn Context::flash_peek(
   self : Context,
   category~ : String = FLASH_DEFAULT_CATEGORY,
 ) -> Array[String] {
+  // A destroyed session is discarded when the response is sent, so its queued
+  // messages can never reach a later request. Do not show them as if they
+  // would survive, matching `flash_take` / `flash_take_all`.
+  match self.session {
+    Some(session) => if session.destroyed { return [] }
+    None => ()
+  }
   match self.session_materialized() {
     Some(session) =>
       match session.flash_pending {
