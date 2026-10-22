@@ -84,3 +84,53 @@ async test "server keeps a custom cache policy on static responses" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+async test "static middleware validators override file validators" {
+  let dir = @fs.tmpdir(prefix="feather-static-validators")
+  @fs.write_file(dir + "/app.js", "console.log(1)")
+  let custom_etag = "\"middleware-v1\""
+  let custom_last_modified = "Thu, 01 Jan 1970 00:00:00 GMT"
+  let app = @feather.App::new().static_files_with("/assets", dir, [
+    fn(next) {
+      fn(ctx) {
+        ctx.set_header("ETag", custom_etag)
+        ctx.set_header("Last-Modified", custom_last_modified)
+        next(ctx)
+      }
+    },
+  ])
+  let etag_key = @http.CaseInsensitiveString("ETag")
+  let last_modified_key = @http.CaseInsensitiveString("Last-Modified")
+  let if_none_match_key = @http.CaseInsensitiveString("If-None-Match")
+  let if_range_key = @http.CaseInsensitiveString("If-Range")
+  let range_key = @http.CaseInsensitiveString("Range")
+  with_server(app, client => {
+    let first = client.get("/assets/app.js")
+    assert_eq(first.code, 200)
+    assert_eq(first.headers.get(etag_key), Some(custom_etag))
+    assert_eq(
+      first.headers.get(last_modified_key),
+      Some(custom_last_modified),
+    )
+    assert_eq(client.read_all().text(), "console.log(1)")
+    let not_modified = client.get(
+      "/assets/app.js",
+      extra_headers=Map([(if_none_match_key, custom_etag)]),
+    )
+    assert_eq(not_modified.code, 304)
+    assert_eq(not_modified.headers.get(etag_key), Some(custom_etag))
+    ignore(client.read_all())
+    let range = client.get(
+      "/assets/app.js",
+      extra_headers=Map([
+        (if_range_key, custom_etag),
+        (range_key, "bytes=0-3"),
+      ]),
+    )
+    assert_eq(range.code, 206)
+    assert_eq(range.headers.get(etag_key), Some(custom_etag))
+    assert_eq(client.read_all().text(), "cons")
+  })
+  @fs.rmdir(dir, recursive=true)
+}

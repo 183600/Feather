@@ -1201,6 +1201,20 @@ fn static_base_headers(
 }
 
 ///|
+/// Add a validator header only when the response does not already carry one,
+/// so middleware-supplied `ETag` / `Last-Modified` values survive static file
+/// serving just as handler-supplied values survive `send_file_response`.
+fn set_header_if_absent(
+  headers : @http.Headers,
+  name : @http.CaseInsensitiveString,
+  value : String,
+) -> Unit {
+  if !headers.contains(name) {
+    headers.set(name, value)
+  }
+}
+
+///|
 /// Send a plain-text error response for a static request, carrying the request
 /// context's headers and cookies.
 async fn send_static_error(
@@ -1374,7 +1388,23 @@ async fn serve_static_file(
   let etag_key = header_etag
   let last_modified_key = header_last_modified
   let cache_control_key = header_cache_control
-  match evaluate_preconditions(request, etag, mtime_secs, true) {
+  // A middleware may override the validators the static file would otherwise
+  // advertise. Preconditions must be evaluated against the values the response
+  // actually carries, matching `send_file_response`.
+  let effective_etag = match get_header_ignore_case(extra_headers, "ETag") {
+    Some(value) => value
+    None => etag
+  }
+  let effective_mtime = match
+    get_header_ignore_case(extra_headers, "Last-Modified") {
+    Some(value) =>
+      match parse_http_date_view(trim_ascii_space(value.view())) {
+        Some(seconds) => seconds
+        None => mtime_secs
+      }
+    None => mtime_secs
+  }
+  match evaluate_preconditions(request, effective_etag, effective_mtime, true) {
     PreconditionFailed => {
       send_static_error(
         conn, extra_headers, cookies, head, 412, "412 Precondition Failed", precompressed,
@@ -1387,8 +1417,8 @@ async fn serve_static_file(
       // seeded for a body response must not leak into it.
       headers.remove(header_content_type)
       headers.remove(header_content_length)
-      headers.set(etag_key, etag)
-      headers.set(last_modified_key, last_modified)
+      set_header_if_absent(headers, etag_key, etag)
+      set_header_if_absent(headers, last_modified_key, last_modified)
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
       }
@@ -1404,7 +1434,7 @@ async fn serve_static_file(
   } else {
     match request.headers.get(header_range) {
       Some(value) =>
-        if if_range_allows(request, etag, mtime_secs) {
+        if if_range_allows(request, effective_etag, effective_mtime) {
           parse_byte_range(value, size)
         } else {
           ByteRangeFull
@@ -1440,8 +1470,8 @@ async fn serve_static_file(
         "/" +
         size.to_string(),
       )
-      headers.set(etag_key, etag)
-      headers.set(last_modified_key, last_modified)
+      set_header_if_absent(headers, etag_key, etag)
+      set_header_if_absent(headers, last_modified_key, last_modified)
       headers.set(accept_ranges_key, "bytes")
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
@@ -1457,8 +1487,8 @@ async fn serve_static_file(
       let headers = static_base_headers(extra_headers, cookies, 5)
       headers.set(content_type_key, content_type_value)
       headers.set(content_length_key, size.to_string())
-      headers.set(etag_key, etag)
-      headers.set(last_modified_key, last_modified)
+      set_header_if_absent(headers, etag_key, etag)
+      set_header_if_absent(headers, last_modified_key, last_modified)
       headers.set(accept_ranges_key, "bytes")
       if cache_control != "" {
         headers.set(cache_control_key, cache_control)
