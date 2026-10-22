@@ -1393,6 +1393,11 @@ async fn send_response(
         }
     }
     headers.set(header_content_length, body_length.to_string())
+  } else if response.status == 205 {
+    // `205 Reset Content` must indicate a zero-length body. The runtime emits
+    // that framing automatically for GET but not for HEAD, so write it
+    // explicitly to keep both methods on the same framing.
+    headers.set(header_content_length, "0")
   } else if head && body_allowed {
     // A HEAD response has no bytes but must advertise the same zero length as
     // the matching GET, replacing any stale length seeded by middleware.
