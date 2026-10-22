@@ -8599,15 +8599,58 @@ fn drop_satisfied_if_match(
 }
 
 ///|
-pub fn Context::fresh(self : Context, etag : String) -> Bool {
-  if etag == "" {
+/// Whether the request's conditional headers report that the representation
+/// described by `etag` and/or `last_modified` is still fresh.
+///
+/// A present `If-None-Match` is evaluated first and takes precedence over
+/// `If-Modified-Since`, as RFC 9110 requires. Pass `last_modified` (an
+/// HTTP-date such as the value returned by `format_http_date`) to also answer
+/// date-only `If-Modified-Since` requests; date validation only applies to
+/// `GET` and `HEAD`, the methods for which a `304` is defined. Returns `false`
+/// when neither validator matches or both are absent/invalid.
+pub fn Context::fresh(
+  self : Context,
+  etag : String,
+  last_modified? : String,
+) -> Bool {
+  let none_match = self.header("If-None-Match")
+  if none_match != "" {
+    // `If-None-Match` takes precedence over `If-Modified-Since` (RFC 9110
+    // §13.1.3), so a present but non-matching tag must not fall back to the
+    // date condition. Without a validator there is nothing for the tag to
+    // match.
+    if etag == "" {
+      return false
+    }
+    return etag_header_matches(none_match.view(), etag)
+  }
+  // A date validator only makes sense for the safe retrieval methods.
+  let http_method = normalize_method(self.request.method)
+  if http_method != "GET" && http_method != "HEAD" {
     return false
   }
-  let header = self.header("If-None-Match")
-  if header == "" {
-    return false
+  let modified = match last_modified {
+    Some(value) =>
+      match parse_http_date_view(trim_ascii_space(value.view())) {
+        Some(seconds) => Some(seconds)
+        None => None
+      }
+    None => None
   }
-  etag_header_matches(header.view(), etag)
+  let since = match modified {
+    Some(_) =>
+      match parse_http_date_view(
+        trim_ascii_space(self.header("If-Modified-Since").view()),
+      ) {
+        Some(seconds) => Some(seconds)
+        None => None
+      }
+    None => None
+  }
+  match (modified, since) {
+    (Some(modified), Some(since)) => modified <= since
+    _ => false
+  }
 }
 
 ///|

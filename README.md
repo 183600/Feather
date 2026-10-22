@@ -234,6 +234,12 @@ ignore(app.get("/api/items/:id", fn(ctx) {
 }))
 ```
 
+`Context::fresh` also accepts `last_modified=` (an HTTP-date), so handlers that
+only track a modification time can answer `If-Modified-Since` with `304`:
+`ctx.fresh("", last_modified=stamp)`. As required by RFC 9110, a present
+`If-None-Match` takes precedence over the date condition, and date validation
+only applies to `GET` and `HEAD`.
+
 `cache_public` and `cache_private` accept `immutable=true`; `no_store` and
 `no_cache` cover the common non-storable and revalidate-first cases. Header
 helpers (`has_header`, `response_header`, `has_response_header`,
