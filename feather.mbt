@@ -9467,10 +9467,24 @@ fn cors_middleware(
             "Access-Control-Allow-Methods",
             allow_methods,
           )
+          // With credentials the `*` wildcard is a literal header name, so a
+          // preflight asking for anything else must see its own list echoed
+          // back (Fetch: CORS-preflight fetch).
+          let allowed_headers = if allow_headers == "*" && allow_credentials {
+            match get_header_ignore_case(
+              ctx.request.headers,
+              "Access-Control-Request-Headers",
+            ) {
+              Some(requested) => if requested == "" { allow_headers } else { requested }
+              None => allow_headers
+            }
+          } else {
+            allow_headers
+          }
           set_header_ignore_case(
             ctx.response.headers,
             "Access-Control-Allow-Headers",
-            allow_headers,
+            allowed_headers,
           )
           if max_age > 0 {
             set_header_ignore_case(

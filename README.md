@@ -142,7 +142,9 @@ CORS can be limited to a fixed set of origins with
 `middleware_cors_allowlist`, or decided per request with
 `middleware_cors_with`. Both echo the accepted `Origin` and add `Vary: Origin`,
 and they still answer preflight requests from rejected origins with `204`
-without CORS headers.
+without CORS headers. When credentials are enabled the preflight's
+`Access-Control-Request-Headers` is echoed instead of the literal `*`, which
+browsers reject in credentialed requests.
 
 Authentication middleware is available for basic credentials
 (`middleware_basic_auth` / `middleware_basic_auth_with`) and bearer tokens

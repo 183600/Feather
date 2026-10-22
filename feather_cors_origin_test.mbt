@@ -135,3 +135,55 @@ test "cors allowlist matches origins exactly" {
   empty.handle(denied)
   assert_eq(denied.response.headers.get("Access-Control-Allow-Origin"), None)
 }
+
+///|
+test "cors credentials echo requested preflight headers" {
+  let app = @feather.App::new()
+    .use(@feather.middleware_cors(allow_credentials=true))
+    .get("/me", fn(ctx) { ctx.text(200, "ok") })
+
+  let reflected = cors_request(
+    "OPTIONS",
+    Map([
+      ("Origin", "https://example.com"),
+      ("Access-Control-Request-Method", "GET"),
+      ("Access-Control-Request-Headers", "X-Token, X-Trace"),
+    ]),
+  )
+  app.handle(reflected)
+  assert_eq(reflected.response.status, 204)
+  assert_eq(
+    reflected.response.headers.get("Access-Control-Allow-Headers"),
+    Some("X-Token, X-Trace"),
+  )
+
+  let absent = cors_request(
+    "OPTIONS",
+    Map([
+      ("Origin", "https://example.com"),
+      ("Access-Control-Request-Method", "GET"),
+    ]),
+  )
+  app.handle(absent)
+  assert_eq(
+    absent.response.headers.get("Access-Control-Allow-Headers"),
+    Some("*"),
+  )
+
+  let anonymous = @feather.App::new()
+    .use(@feather.middleware_cors())
+    .get("/me", fn(ctx) { ctx.text(200, "ok") })
+  let wildcard = cors_request(
+    "OPTIONS",
+    Map([
+      ("Origin", "https://example.com"),
+      ("Access-Control-Request-Method", "GET"),
+      ("Access-Control-Request-Headers", "X-Token"),
+    ]),
+  )
+  anonymous.handle(wildcard)
+  assert_eq(
+    wildcard.response.headers.get("Access-Control-Allow-Headers"),
+    Some("*"),
+  )
+}
