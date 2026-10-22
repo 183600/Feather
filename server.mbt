@@ -1676,6 +1676,34 @@ fn stream_seed_headers(response : Response) -> Map[String, String] {
 }
 
 ///|
+/// Whether an `Expect` field only names the one expectation this server
+/// implements. Empty list entries are ignored, so a trailing comma does not
+/// turn a valid `100-continue` into an unsupported expectation.
+fn expectation_supported(value : StringView) -> Bool {
+  for part in value.split(",") {
+    let token = trim_ascii_space(part)
+    if !token.is_empty() &&
+      !token.equal_ignore_ascii_case("100-continue".view()) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// Whether an `Expect` field asks for the interim `100 Continue` response.
+fn expects_continue(value : StringView) -> Bool {
+  for part in value.split(",") {
+    if trim_ascii_space(part).equal_ignore_ascii_case(
+        "100-continue".view(),
+      ) {
+      return true
+    }
+  }
+  false
+}
+
+///|
 /// Answer an `Expect: 100-continue` handshake with the interim `100 Continue`
 /// response (RFC 9110 §10.1.1), so clients that wait for it before uploading
 /// a body are not left blocked until they time out. The final response is sent
@@ -1686,9 +1714,7 @@ async fn send_continue_if_expected(
 ) -> Unit {
   match request.headers.get(header_expect) {
     Some(value) =>
-      if trim_ascii_space(value.view()).equal_ignore_ascii_case(
-          "100-continue".view(),
-        ) {
+      if expects_continue(value.view()) {
         conn.send_response(100, "Continue") catch {
           _ => ()
         }
@@ -3183,6 +3209,17 @@ async fn handle_request(
     }
   }
   let head = request.meth is @http.Head
+  // RFC 9110 §10.1.1 requires a 417 when the client asks for an expectation
+  // this server does not implement. Reject before reading the body and close,
+  // because the unread upload would otherwise pin the connection.
+  match request.headers.get(header_expect) {
+    Some(value) =>
+      if !expectation_supported(value.view()) {
+        send_error_and_close(conn, 417, "417 Expectation Failed", head)
+        return
+      }
+    None => ()
+  }
   let request_coding = match request.headers.get(header_content_encoding) {
     Some(value) => request_body_coding(value.view())
     None => RequestBodyIdentity

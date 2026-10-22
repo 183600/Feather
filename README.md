@@ -46,8 +46,9 @@ long-term design notes are in [PLAN.md](PLAN.md).
   limits, trusted-proxy handling, graceful shutdown/drain, configurable
   connection limits, absolute-form request-target normalization, server-wide
   `OPTIONS *` responses, `HEAD` framing that drops the body while keeping the
-  `Content-Length` the matching `GET` would send, and request-body decoding for
-  a single `gzip` coding (unsupported or repeated codings are rejected with
+  `Content-Length` the matching `GET` would send, `Expect: 100-continue`
+  (unsupported expectations are rejected with `417`), and request-body decoding
+  for a single `gzip` coding (unsupported or repeated codings are rejected with
   `415`).
 - **Static files** – directory mounts with index files, cache control, range
   requests, and path-traversal protection.

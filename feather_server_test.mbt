@@ -249,6 +249,25 @@ async test "server answers expect 100-continue before reading the body" {
 }
 
 ///|
+async test "server rejects an unsupported expectation with 417" {
+  let app = @feather.App::new().post("/upload", fn(ctx) {
+    ctx.text(200, ctx.request.body)
+  })
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "POST /upload HTTP/1.1\r\nHost: test\r\nContent-Length: 4\r\nExpect: something-else\r\n\r\nping",
+      ),
+    )
+    let head = @async.with_timeout(2000, () => read_http_head(conn)) catch {
+      _ => ""
+    }
+    assert_true(head.has_prefix("HTTP/1.1 417"), msg=head)
+    assert_true(head.to_lower().contains("content-length: 22"), msg=head)
+  })
+}
+
+///|
 async test "server closes the connection after an oversized body" {
   let app = @feather.App::new().post("/upload", fn(ctx) {
     ctx.text(200, ctx.request.body)
