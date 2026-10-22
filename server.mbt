@@ -1392,6 +1392,51 @@ async fn write_file_range(
 }
 
 ///|
+/// Read an entire regular file into memory. Returns `None` for a file too large
+/// to address as a single MoonBit `Bytes` or when a read fails.
+async fn read_file_bytes(file : @fs.File, size : Int64) -> Bytes? {
+  if size < 0L || size > 2147483647L {
+    return None
+  }
+  let length = size.to_int()
+  if length == 0 {
+    return Some(b"")
+  }
+  let buffer = FixedArray::make(length, b'\x00')
+  let mut offset = 0
+  while offset < length {
+    let read = file.read_at(
+      buffer,
+      position=offset.to_int64(),
+      len=length - offset,
+    ) catch {
+      _ => return None
+    }
+    if read <= 0 {
+      return None
+    }
+    offset = offset + read
+  }
+  Some(buffer.unsafe_reinterpret_as_bytes())
+}
+
+///|
+/// Write `length` bytes starting at `start` from an in-memory representation.
+async fn write_bytes_range(
+  conn : @http.ServerConnection,
+  data : Bytes,
+  start : Int64,
+  length : Int64,
+) -> Unit {
+  if length <= 0L {
+    return
+  }
+  let first = start.to_int()
+  let count = length.to_int()
+  conn.write(data[first:first + count])
+}
+
+///|
 /// Open the `gzip` sibling of `file_path`, if it exists and is a regular file.
 async fn open_precompressed_gzip(file_path : String) -> @fs.File? {
   let handle = Some(@fs.open(file_path + ".gz", mode=@fs.ReadOnly)) catch {
@@ -1505,13 +1550,15 @@ async fn send_static_error(
 }
 
 ///|
-/// Add the negotiation headers a static file response needs.
+/// Add the negotiation headers a static file response needs. `vary_encoding`
+/// is set whenever the selected representation depends on `Accept-Encoding`,
+/// including an on-the-fly gzip encoding from `App::compress`.
 fn decorate_static_headers(
   headers : @http.Headers,
-  precompressed : Bool,
+  vary_encoding : Bool,
   serving_gzip : Bool,
 ) -> Unit {
-  if precompressed {
+  if vary_encoding {
     add_vary_header(headers, "Accept-Encoding")
   }
   if serving_gzip {
@@ -1545,6 +1592,8 @@ async fn serve_static_file(
   cookies : Array[@http.Cookie],
   response_started~ : Ref[Bool],
   auto_etag~ : Bool = true,
+  compress_enabled~ : Bool = false,
+  compress_min_size~ : Int32 = 1024,
 ) -> Unit {
   // From here on every path writes a response header. Record that before the
   // first await so a timeout racing with file lookup or streaming closes the
@@ -1706,9 +1755,63 @@ async fn serve_static_file(
     cache_key=file_path,
     gzip=serving_gzip,
   )
-  // `Context::no_etag` suppresses the generated static validator but keeps an
-  // explicit one supplied by middleware or the handler.
-  let generated_etag = if auto_etag { etag } else { "" }
+  // A precompressed sibling is already the negotiated representation. Without
+  // one, `App::compress` can still gzip an eligible static file on the fly;
+  // this keeps static responses subject to the same application-wide
+  // compression setting as dynamic ones.
+  let mut compressed_body : Bytes? = None
+  let mut dynamic_gzip = false
+  let dynamic_eligible = !serving_gzip &&
+    compress_enabled &&
+    content_type_is_compressible(content_type_value.view())
+  if dynamic_eligible {
+    match accept_encoding {
+      Some(value) =>
+        if accept_encoding_allows_gzip_cached(value) &&
+          (
+            refuses_identity ||
+            size >= (if compress_min_size > 0 {
+              compress_min_size.to_int64()
+            } else {
+              0L
+            })
+          ) {
+          match read_file_bytes(file, size) {
+            Some(raw) => {
+              let compressed : Bytes? = Some(gzip_compress(raw)) catch {
+                _ => None
+              }
+              match compressed {
+                Some(bytes) =>
+                  // Like dynamic compression, keep the identity
+                  // representation when gzip would not shrink it, unless the
+                  // client explicitly refused identity.
+                  if refuses_identity || bytes.length() < raw.length() {
+                    compressed_body = Some(bytes)
+                    dynamic_gzip = true
+                  }
+                None => ()
+              }
+            }
+            None => ()
+          }
+        }
+      None => ()
+    }
+  }
+  let serving_selected_gzip = serving_gzip || dynamic_gzip
+  // `Vary` describes the representation-selection process, not just this
+  // response: once application compression is enabled for a compressible
+  // static file, a gzip-capable client must not share a cache entry with an
+  // identity client even when this particular reply ended up uncompressed.
+  let vary_encoding = precompressed || dynamic_eligible
+  // A dynamic gzip representation is semantically equivalent to the source
+  // file but has different bytes, so its generated validator must be weak.
+  let generated_etag = if auto_etag {
+    if dynamic_gzip { "W/" + etag } else { etag }
+  } else {
+    ""
+  }
   let etag_key = header_etag
   let last_modified_key = header_last_modified
   let cache_control_key = header_cache_control
@@ -1748,12 +1851,18 @@ async fn serve_static_file(
       if cache_control != "" {
         set_header_if_absent(headers, cache_control_key, cache_control)
       }
-      decorate_static_headers(headers, precompressed, serving_gzip)
+      decorate_static_headers(
+        headers, vary_encoding, serving_selected_gzip,
+      )
       send_with_date(conn, 304, "Not Modified", headers, cookies~)
       conn.end_response()
       return
     }
     PreconditionPass => ()
+  }
+  let representation_size = match compressed_body {
+    Some(bytes) => bytes.length().to_int64()
+    None => size
   }
   let range = if head {
     ByteRangeFull
@@ -1761,7 +1870,7 @@ async fn serve_static_file(
     match request.headers.get(header_range) {
       Some(value) =>
         if if_range_allows(request, effective_etag, effective_mtime) {
-          parse_byte_range(value, size)
+          parse_byte_range(value, representation_size)
         } else {
           ByteRangeFull
         }
@@ -1776,9 +1885,12 @@ async fn serve_static_file(
     ByteRangeInvalid => {
       let headers = static_base_headers(extra_headers, cookies, 2)
       headers.remove(content_type_key)
-      headers.set(content_range_key, "bytes */" + size.to_string())
+      headers.set(
+        content_range_key,
+        "bytes */" + representation_size.to_string(),
+      )
       headers.set(accept_ranges_key, "bytes")
-      decorate_static_headers(headers, precompressed, false)
+      decorate_static_headers(headers, vary_encoding, false)
       send_with_date(conn, 416, "Range Not Satisfiable", headers, cookies~)
       conn.end_response()
     }
@@ -1794,7 +1906,7 @@ async fn serve_static_file(
         "-" +
         end.to_string() +
         "/" +
-        size.to_string(),
+        representation_size.to_string(),
       )
       if generated_etag != "" {
         set_header_if_absent(headers, etag_key, generated_etag)
@@ -1804,17 +1916,22 @@ async fn serve_static_file(
       if cache_control != "" {
         set_header_if_absent(headers, cache_control_key, cache_control)
       }
-      decorate_static_headers(headers, precompressed, serving_gzip)
+      decorate_static_headers(
+        headers, vary_encoding, serving_selected_gzip,
+      )
       send_with_date(conn, 206, "Partial Content", headers, cookies~)
       if !head {
-        write_file_range(conn, file, start, length)
+        match compressed_body {
+          Some(bytes) => write_bytes_range(conn, bytes, start, length)
+          None => write_file_range(conn, file, start, length)
+        }
       }
       conn.end_response()
     }
     ByteRangeFull => {
       let headers = static_base_headers(extra_headers, cookies, 5)
       set_header_if_absent(headers, content_type_key, content_type_value)
-      headers.set(content_length_key, size.to_string())
+      headers.set(content_length_key, representation_size.to_string())
       if generated_etag != "" {
         set_header_if_absent(headers, etag_key, generated_etag)
       }
@@ -1823,10 +1940,15 @@ async fn serve_static_file(
       if cache_control != "" {
         set_header_if_absent(headers, cache_control_key, cache_control)
       }
-      decorate_static_headers(headers, precompressed, serving_gzip)
+      decorate_static_headers(
+        headers, vary_encoding, serving_selected_gzip,
+      )
       send_with_date(conn, 200, "OK", headers, cookies~)
       if !head {
-        write_file_range(conn, file, 0L, size)
+        match compressed_body {
+          Some(bytes) => write_bytes_range(conn, bytes, 0L, representation_size)
+          None => write_file_range(conn, file, 0L, size)
+        }
       }
       conn.end_response()
     }
@@ -1890,6 +2012,8 @@ async fn handle_static(
       Map([]),
       [],
       response_started~,
+      compress_enabled=app.compress_enabled,
+      compress_min_size=app.compress_min_size,
     )
     return
   }
@@ -1959,6 +2083,7 @@ async fn handle_static(
     }
   }
   if !failed && ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) {
+    let (compress, min_size) = compression_settings(app, ctx)
     serve_static_file(
       conn,
       file_path,
@@ -1971,6 +2096,8 @@ async fn handle_static(
       ctx.response.cookies,
       response_started~,
       auto_etag=response_file_etag_enabled(ctx),
+      compress_enabled=compress,
+      compress_min_size=min_size,
     )
   } else {
     match ctx.file_response() {
