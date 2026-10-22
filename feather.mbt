@@ -1751,12 +1751,27 @@ fn App::server_methods(self : App) -> Array[String] {
 ///
 /// `Allow` adds `HEAD` implicitly whenever `GET` is listed, so the server-wide
 /// `OPTIONS *` reply needs this distinction: a WebSocket-only application
-/// advertises `GET` but must not claim `HEAD`.
+/// advertises `GET` but must not claim `HEAD`. An ordinary `GET` route that a
+/// WebSocket route shadows at the same pattern is not reachable for `HEAD`
+/// either, so it does not contribute to the server-wide capability.
 fn App::server_allows_head(self : App) -> Bool {
-  self.router.registered_methods().contains("GET") ||
-  !self.static_mounts.is_empty() ||
-  !self.sse_handlers.is_empty() ||
-  !self.stream_handlers.is_empty()
+  if !self.static_mounts.is_empty() ||
+    !self.sse_handlers.is_empty() ||
+    !self.stream_handlers.is_empty() {
+    return true
+  }
+  let websocket_paths : Array[String] = []
+  for pair in self.ws_router.routes() {
+    let (_method, path) = pair
+    websocket_paths.push(path)
+  }
+  for pair in self.router.routes() {
+    let (method, path) = pair
+    if method == "GET" && !websocket_paths.contains(path) {
+      return true
+    }
+  }
+  false
 }
 
 ///|
