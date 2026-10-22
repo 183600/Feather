@@ -9909,10 +9909,205 @@ fn is_host_name_character(code : Int32) -> Bool {
 }
 
 ///|
+/// Value of one hexadecimal digit, or `-1` for any other character.
+fn hex_digit_value(unit : UInt16) -> Int32 {
+  let code = unit.to_int()
+  if code >= 48 && code <= 57 {
+    code - 48
+  } else if code >= 65 && code <= 70 {
+    code - 65 + 10
+  } else if code >= 97 && code <= 102 {
+    code - 97 + 10
+  } else {
+    -1
+  }
+}
+
+///|
+/// Whether `view` is a dotted-decimal IPv4 address with four octets in range.
+fn valid_ipv4_literal(view : StringView) -> Bool {
+  let parts : Array[StringView] = []
+  for part in view.split(".") {
+    parts.push(part)
+  }
+  if parts.length() != 4 {
+    return false
+  }
+  for part in parts {
+    let length = part.length()
+    if length == 0 || length > 3 {
+      return false
+    }
+    if length > 1 && part.unsafe_get(0) == ('0' : UInt16) {
+      return false
+    }
+    let mut value = 0
+    let mut i = 0
+    while i < length {
+      let digit = part.unsafe_get(i).to_int() - 48
+      if digit < 0 || digit > 9 {
+        return false
+      }
+      value = value * 10 + digit
+      i = i + 1
+    }
+    if value > 255 {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// Count the 16-bit groups in one side of an IPv6 address. The optional dotted
+/// tail is only valid at the end of the whole address and contributes two
+/// groups instead of one.
+fn ipv6_group_count(
+  view : StringView,
+  allow_ipv4_tail : Bool,
+) -> Int32? {
+  if view.is_empty() {
+    return Some(0)
+  }
+  let parts : Array[StringView] = []
+  for part in view.split(":") {
+    parts.push(part)
+  }
+  let last = parts.length() - 1
+  let mut groups = 0
+  let mut index = 0
+  while index < parts.length() {
+    let part = parts[index]
+    if part.is_empty() {
+      return None
+    }
+    if part.contains(".") {
+      if !allow_ipv4_tail || index != last || !valid_ipv4_literal(part) {
+        return None
+      }
+      groups = groups + 2
+    } else {
+      let length = part.length()
+      if length > 4 {
+        return None
+      }
+      let mut i = 0
+      while i < length {
+        if hex_digit_value(part.unsafe_get(i)) < 0 {
+          return None
+        }
+        i = i + 1
+      }
+      groups = groups + 1
+    }
+    index = index + 1
+  }
+  Some(groups)
+}
+
+///|
+/// Validate a bracketed IP literal: an IPv6 address with at most one `::`
+/// compression (and an optional zone identifier), or an RFC 3986 IPvFuture
+/// literal such as `[v1.foo]`.
+fn valid_bracketed_host(view : StringView) -> Bool {
+  let length = view.length()
+  if length == 0 {
+    return false
+  }
+  if view.unsafe_get(0) == ('v' : UInt16) ||
+    view.unsafe_get(0) == ('V' : UInt16) {
+    let dot = match view.find(".") {
+      Some(index) => index
+      None => return false
+    }
+    if dot <= 1 {
+      return false
+    }
+    let mut i = 1
+    while i < dot {
+      if hex_digit_value(view.unsafe_get(i)) < 0 {
+        return false
+      }
+      i = i + 1
+    }
+    i = dot + 1
+    if i >= length {
+      return false
+    }
+    while i < length {
+      let code = view.unsafe_get(i).to_int()
+      let allowed = is_host_name_character(code) ||
+        code == 58 ||
+        code == 33 ||
+        (code >= 36 && code <= 38) ||
+        code == 39 ||
+        code == 40 ||
+        code == 41 ||
+        code == 42 ||
+        code == 43 ||
+        code == 44 ||
+        code == 59 ||
+        code == 61
+      if !allowed {
+        return false
+      }
+      i = i + 1
+    }
+    return true
+  }
+  // A zone identifier follows `%` and is not part of the IPv6 address. In a
+  // URI it is usually percent-encoded (`%25eth0`), so keep this part
+  // permissive but reject separators that would break the authority.
+  let address = match view.find("%") {
+    Some(index) => {
+      if index == 0 || index + 1 >= length {
+        return false
+      }
+      let mut i = index + 1
+      while i < length {
+        let code = view.unsafe_get(i).to_int()
+        if !(is_host_name_character(code) || code == 37) {
+          return false
+        }
+        i = i + 1
+      }
+      view[:index]
+    }
+    None => view
+  }
+  match address.find("::") {
+    Some(index) => {
+      let left = address[:index]
+      let right = address[index + 2:]
+      if right.find("::") is Some(_) {
+        return false
+      }
+      let left_groups = match ipv6_group_count(left, false) {
+        Some(groups) => groups
+        None => return false
+      }
+      let right_groups = match ipv6_group_count(right, true) {
+        Some(groups) => groups
+        None => return false
+      }
+      // `::` represents at least one zero group.
+      left_groups + right_groups <= 7
+    }
+    None =>
+      match ipv6_group_count(address, true) {
+        Some(groups) => groups == 8
+        None => false
+      }
+  }
+}
+
+///|
 /// Validate the part of an authority between the brackets (for an IP literal)
-/// or the whole host name. Bracketed hosts additionally allow the `:` and `%`
-/// characters used by IPv6 addresses and zone identifiers.
+/// or the whole host name.
 fn valid_host_name(view : StringView, bracketed : Bool) -> Bool {
+  if bracketed {
+    return valid_bracketed_host(view)
+  }
   let length = view.length()
   if length == 0 {
     return false
@@ -9920,14 +10115,12 @@ fn valid_host_name(view : StringView, bracketed : Bool) -> Bool {
   let mut i = 0
   while i < length {
     let code = view.unsafe_get(i).to_int()
-    let allowed = is_host_name_character(code) ||
-      (bracketed && (code == 58 || code == 37))
-    if !allowed {
+    if !is_host_name_character(code) {
       return false
     }
     i = i + 1
   }
-  !(!bracketed && view.unsafe_get(0) == ('.' : UInt16))
+  view.unsafe_get(0) != ('.' : UInt16)
 }
 
 ///|

@@ -143,6 +143,41 @@ test "allowed hosts wildcard entry accepts any well formed authority" {
 }
 
 ///|
+test "allowed hosts validates bracketed IP literals structurally" {
+  let (app, _) = host_test_app(["*"])
+  for host in [
+    "[::]",
+    "[::1]",
+    "[2001:db8::1]",
+    "[1:2:3:4:5:6:7:8]",
+    "[::ffff:192.0.2.1]",
+    "[fe80::1%25eth0]",
+    "[v1.foo]",
+  ] {
+    let ctx = host_test_context(host_test_headers(Some(host)))
+    app.handle(ctx)
+    assert_eq(ctx.response.status, 200)
+  }
+  for host in [
+    "[]",
+    "[:::]",
+    "[::::]",
+    "[gggg::1]",
+    "[1:2:3:4:5:6:7]",
+    "[1:2:3:4:5:6:7:8:9]",
+    "[1::2::3]",
+    "[1:2:3:4:5:6:7:8::]",
+    "[::ffff:192.0.2.999]",
+    "[192.0.2.1]",
+    "[::1%]",
+  ] {
+    let ctx = host_test_context(host_test_headers(Some(host)))
+    app.handle(ctx)
+    assert_eq(ctx.response.status, 400)
+  }
+}
+
+///|
 test "allowed hosts ignores malformed configured patterns" {
   let (app, _) = host_test_app(["", "*.", "bad host", "example.com:bad"])
   let ctx = host_test_context(host_test_headers(Some("example.com")))
