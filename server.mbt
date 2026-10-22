@@ -97,6 +97,11 @@ let header_expect : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
 )
 
 ///|
+let header_connection : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
+  "Connection",
+)
+
+///|
 let header_location : @http.CaseInsensitiveString = @http.CaseInsensitiveString(
   "Location",
 )
@@ -1194,6 +1199,18 @@ async fn send_continue_if_expected(
 }
 
 ///|
+/// Whether the request's `Connection` header asks for the connection to close
+/// after this response. The runtime owns the connection loop, so the framework
+/// closes the socket itself to make `Connection: close` effective.
+fn request_wants_close(request : @http.Request) -> Bool {
+  match request.headers.get(header_connection) {
+    Some(value) =>
+      header_list_has_token(value.view(), "close".view())
+    None => false
+  }
+}
+
+///|
 fn append_trailing_slash(path : String) -> String {
   // Insert the slash into the path component, before the first `?` or `#`.
   // The fragment delimiter may come first, in which case a `?` inside it is
@@ -2040,6 +2057,12 @@ async fn handle_request(
   app.in_flight.val = app.in_flight.val + 1
   defer {
     app.in_flight.val = app.in_flight.val - 1
+  }
+  let close_after_response = request_wants_close(request)
+  defer {
+    if close_after_response {
+      conn.close()
+    }
   }
   let head = request.meth is @http.Head
   // Reject a declared oversized body before the `100-continue` handshake or

@@ -62,6 +62,39 @@ async test "server serves text route" {
 }
 
 ///|
+async test "server closes the connection when the client requests it" {
+  let app = @feather.App::new().get("/hello", fn(ctx) {
+    ctx.text(200, "hello")
+  })
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "GET /hello HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n",
+      ),
+    )
+    let head = @async.with_timeout(2000, () => read_http_head(conn)) catch {
+      _ => ""
+    }
+    assert_true(head.has_prefix("HTTP/1.1 200"))
+    let closed = try {
+      @async.with_timeout(2000, () => {
+        let mut done = false
+        while !done {
+          match conn.read_some() {
+            Some(_) => ()
+            None => done = true
+          }
+        }
+      })
+      true
+    } catch {
+      _ => false
+    }
+    assert_true(closed)
+  })
+}
+
+///|
 async test "server exposes route parameters" {
   let app = @feather.App::new().get("/users/:id", fn(ctx) {
     ctx.text(200, "user=" + ctx.param("id"))
