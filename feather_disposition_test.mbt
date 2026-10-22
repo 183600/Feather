@@ -86,3 +86,14 @@ test "attachment reaches the response of a served route" {
   )
   assert_eq(response.body, "a,b\n")
 }
+
+///|
+test "attachment set before a file response survives" {
+  let ctx = @feather.create_context()
+  ctx.attachment("report.csv")
+  ctx.file(200, "/srv/report.csv")
+  assert_eq(
+    ctx.response.headers.get("Content-Disposition"),
+    Some("attachment; filename=\"report.csv\""),
+  )
+}
