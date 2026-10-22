@@ -21,9 +21,11 @@ long-term design notes are in [PLAN.md](PLAN.md).
   routes and `url_for`, per-route middleware, and a fallback handler.
 - **Middleware** – CORS, request logging, panic recovery, request IDs,
   rate limiting, basic and bearer auth, CSRF, secure headers, HTTPS redirect,
-  method override, sessions, and a problem-details error handler.
+  method override, sessions, and a problem-details error handler whose
+  negotiated bodies vary on `Accept`.
 - **Context** – path/query/form/multipart access, typed query/param/form
-  helpers (including integers, booleans, and finite floats), JSON bodies, text/HTML/JSON/bytes responses, files and downloads,
+  helpers (including integers, booleans, and finite floats), JSON bodies,
+  text/HTML/JSON/bytes responses, files and downloads,
   cookies (including signed cookies), flash messages, content negotiation,
   conditional requests (ETag / `If-None-Match` / `If-Modified-Since`), range
   requests, gzip response compression, and cache-control helpers.

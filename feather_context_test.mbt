@@ -211,7 +211,10 @@ test "cors appends to an existing Vary header" {
     .get("/v", fn(ctx) { ctx.text(200, "ok") })
   let ctx = @feather.create_context()
   app.handle(ctx)
-  assert_eq(ctx.response.headers.get("Vary"), Some("Accept-Encoding, Origin"))
+  assert_eq(
+    ctx.response.headers.get("Vary"),
+    Some("Accept-Encoding, Origin, Accept"),
+  )
 }
 
 ///|

@@ -226,7 +226,7 @@ test "middleware cors supports credentials and preflight options" {
     ctx.response.headers.get("Access-Control-Expose-Headers"),
     Some("X-Total"),
   )
-  assert_eq(ctx.response.headers.get("Vary"), Some("Origin"))
+  assert_eq(ctx.response.headers.get("Vary"), Some("Origin, Accept"))
   let preflight = @feather.Context::new({
     method: "OPTIONS",
     path: "/x",

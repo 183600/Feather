@@ -1423,6 +1423,9 @@ fn negotiated_error_body(
   plain_detail : String,
 ) -> Unit {
   clear_replaced_body_headers(ctx.response.headers)
+  // The rendering below is chosen from `Accept`, so the response must not be
+  // reused for a request with different preferences.
+  ctx.vary("Accept")
   if ctx.wants_problem_details() {
     set_header_ignore_case(
       ctx.response.headers,
@@ -1599,6 +1602,7 @@ pub fn error_response(ctx : Context, status : Int32, message : String) -> Unit {
   ctx.file = None
   ctx.response.status = status
   clear_replaced_body_headers(ctx.response.headers)
+  ctx.vary("Accept")
   if ctx.wants_problem_details() {
     set_header_ignore_case(
       ctx.response.headers,
@@ -1626,6 +1630,7 @@ pub fn error_response_with_payload(
   payload : Json,
 ) -> Unit {
   ctx.file = None
+  ctx.vary("Accept")
   let problem = ctx.wants_problem_details()
   let body : Map[String, Json] = Map([], capacity=5)
   if problem {
