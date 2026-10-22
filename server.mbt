@@ -1019,14 +1019,48 @@ async fn send_oversized_and_close(
 const ASYNC_CHAIN_PASS_KEY : String = "__feather_async_pass"
 
 ///|
+/// Apply the ordinary dynamic-response pipeline (preconditions, compression,
+/// generated ETags) to a context produced by a handler or middleware chain.
+///
+/// Async endpoint middleware can short-circuit with an ordinary response; it
+/// must go through the same negotiation and validator stages as a normal route
+/// instead of being written verbatim.
+async fn finalize_dynamic_response(
+  app : App,
+  request : @http.Request,
+  ctx : Context,
+) -> Unit {
+  if ctx.file_response() is None {
+    let (input, allows_not_modified) = precondition_input_http(request)
+    let (failed, remaining) = precheck_preconditions(
+      input,
+      allows_not_modified,
+      ctx.response,
+    )
+    if !failed {
+      let (compress, min_size) = compression_settings(app, ctx)
+      if compress {
+        compress_response(accept_encoding_of(request), ctx.response, min_size)
+      }
+      if app.etag_enabled {
+        apply_etag(ctx.response)
+      }
+      apply_preconditions_input(remaining, allows_not_modified, ctx.response)
+    }
+  }
+}
+
+///|
 /// Send the response a short-circuiting middleware produced for an
 /// asynchronous endpoint, supporting both ordinary bodies and file responses.
 async fn send_context_response(
+  app : App,
   conn : @http.ServerConnection,
   ctx : Context,
   head : Bool,
   request : @http.Request,
 ) -> Unit {
+  finalize_dynamic_response(app, request, ctx)
   match ctx.file_response() {
     Some(file) => send_file_response(conn, ctx.response, file, head, request)
     None => send_response(conn, ctx.response, head)
@@ -1791,24 +1825,7 @@ async fn build_response(
     err => internal_error(ctx, "\{err}")
   }
   let file = ctx.file_response()
-  if file is None {
-    let (input, allows_not_modified) = precondition_input_http(request)
-    let (failed, remaining) = precheck_preconditions(
-      input,
-      allows_not_modified,
-      ctx.response,
-    )
-    if !failed {
-      let (compress, min_size) = compression_settings(app, ctx)
-      if compress {
-        compress_response(accept_encoding_of(request), ctx.response, min_size)
-      }
-      if app.etag_enabled {
-        apply_etag(ctx.response)
-      }
-      apply_preconditions_input(remaining, allows_not_modified, ctx.response)
-    }
-  }
+  finalize_dynamic_response(app, request, ctx)
   (ctx.response, file)
 }
 
@@ -1844,7 +1861,7 @@ async fn handle_websocket(
     ctx.state.set(PARAM_PREFIX + name, value)
   }
   if !app.run_async_middleware(ctx, route_chain) {
-    send_context_response(conn, ctx, false, request)
+    send_context_response(app, conn, ctx, false, request)
     return
   }
   let socket = @websocket.from_http_server(request, conn) catch { _ => return }
@@ -1892,7 +1909,7 @@ async fn handle_sse(
     ctx.state.set(PARAM_PREFIX + name, value)
   }
   if !app.run_async_middleware(ctx, route_chain) {
-    send_context_response(conn, ctx, false, request)
+    send_context_response(app, conn, ctx, false, request)
     return
   }
   let headers : @http.Headers = Map(
@@ -1971,7 +1988,7 @@ async fn handle_stream(
     ctx.state.set(PARAM_PREFIX + name, value)
   }
   if !app.run_async_middleware(ctx, route_chain) {
-    send_context_response(conn, ctx, false, request)
+    send_context_response(app, conn, ctx, false, request)
     return
   }
   let stream = Stream::new(
