@@ -4565,6 +4565,12 @@ let last_mime_path : Ref[String?] = Ref(None)
 let last_mime_value : Ref[String] = Ref("")
 
 ///|
+/// The media type associated with the extension of `path`.
+///
+/// Matching is case-insensitive and only the last path segment is considered.
+/// A URL query string or fragment is ignored, so `mime_type_for` works for both
+/// filesystem paths (`"public/app.js"`) and URLs (`"/app.js?v=1"`). Paths
+/// without an extension get `"application/octet-stream"`.
 pub fn mime_type_for(path : String) -> String {
   match last_mime_path.val {
     Some(cached) =>
@@ -4574,8 +4580,20 @@ pub fn mime_type_for(path : String) -> String {
     None => ()
   }
   let view = path.view()
+  // A query or fragment is not part of the extension, even though it may
+  // itself contain a dot (`app.js?v=1.2`).
+  let mut end = view.length()
+  let mut scan = 0
+  while scan < end {
+    let code = view.unsafe_get(scan)
+    if code == ('?' : UInt16) || code == ('#' : UInt16) {
+      end = scan
+      break
+    }
+    scan = scan + 1
+  }
   let mut dot = -1
-  let mut i = view.length() - 1
+  let mut i = end - 1
   while i >= 0 {
     let code = view.unsafe_get(i)
     if code == ('.' : UInt16) {
@@ -4588,7 +4606,7 @@ pub fn mime_type_for(path : String) -> String {
     i = i - 1
   }
   let result = if dot >= 0 {
-    let extension = view[dot + 1:]
+    let extension = view[dot + 1:end]
     if has_ascii_upper(extension) {
       let lower = extension.to_lower().view()
       mime_for_extension(lower)

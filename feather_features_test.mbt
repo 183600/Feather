@@ -740,3 +740,21 @@ async test "server still routes app handlers next to static mounts" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+test "mime_type_for ignores query strings and fragments" {
+  assert_eq(
+    @feather.mime_type_for("/assets/app.js?v=1.2"),
+    "text/javascript; charset=utf-8",
+  )
+  assert_eq(
+    @feather.mime_type_for("https://example.com/logo.PNG#preview"),
+    "image/png",
+  )
+  assert_eq(
+    @feather.mime_type_for("data.json?format=pretty&x=.txt"),
+    "application/json; charset=utf-8",
+  )
+  assert_eq(@feather.mime_type_for("noext?download=.zip"), "application/octet-stream")
+  assert_eq(@feather.mime_type_for("?v=1"), "application/octet-stream")
+}
