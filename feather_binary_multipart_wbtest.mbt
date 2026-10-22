@@ -56,6 +56,18 @@ test "resolve_part_bytes falls back to encoding text" {
 }
 
 ///|
+test "resolve_part_bytes fallback replaces lone surrogates" {
+  let lone_high = String::from_array([Char::from_int(0xD800)])
+  let lone_low = String::from_array([Char::from_int(0xDC00)])
+  let (bytes, text) = resolve_part_bytes(
+    "A" + lone_high + "B" + lone_low,
+    None,
+  )
+  assert_eq(bytes, @utf8.encode("A\u{FFFD}B\u{FFFD}"))
+  assert_eq(text, "A\u{FFFD}B\u{FFFD}")
+}
+
+///|
 fn lossless_multipart_body(byte : Int32) -> (String, String) {
   let prefix = "--B\r\nContent-Disposition: form-data; name=\"f\"; filename=\"a.bin\"\r\n\r\n"
   let suffix = "\r\n--B--\r\n"

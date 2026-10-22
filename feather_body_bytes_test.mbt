@@ -21,6 +21,22 @@ test "body_bytes is empty when the request has no body" {
 }
 
 ///|
+test "body_bytes replaces lone surrogates instead of aborting" {
+  let lone_high = String::from_array([Char::from_int(0xD800)])
+  let lone_low = String::from_array([Char::from_int(0xDC00)])
+  let pair = String::from_array([
+    Char::from_int(0xD83D), Char::from_int(0xDE00),
+  ])
+  let ctx = @feather.Context::new({
+    method: "POST",
+    path: "/",
+    headers: Map([]),
+    body: "A" + lone_high + "B" + lone_low + "C" + pair,
+  })
+  assert_eq(ctx.body_bytes(), @utf8.encode("A\u{FFFD}B\u{FFFD}C" + pair))
+}
+
+///|
 async test "server reads a binary request body byte for byte" {
   let payload : Bytes = b"\x00\xff\xfe\x80\xc3\x28\x10\x7fAB"
   let app = @feather.App::new().post("/upload", fn(ctx) {

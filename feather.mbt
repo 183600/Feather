@@ -1768,9 +1768,9 @@ pub fn Context::body_bytes(self : Context) -> Bytes {
     Some(encoded) =>
       match base64_decode(encoded) {
         Some(bytes) => bytes
-        None => @utf8.encode(self.request.body)
+        None => encode_utf8_lossy(self.request.body.view())
       }
-    None => @utf8.encode(self.request.body)
+    None => encode_utf8_lossy(self.request.body.view())
   }
 }
 
@@ -3828,7 +3828,7 @@ fn decode_url_bytes(bytes : BytesView, plus_as_space : Bool) -> String {
 ///|
 /// Encode `source` as UTF-8, replacing unpaired surrogates with U+FFFD so the
 /// conversion is total for any `String`.
-fn encode_url_source(source : StringView) -> Bytes {
+fn encode_utf8_lossy(source : StringView) -> Bytes {
   let length = source.length()
   let out : Array[Byte] = Array(capacity=length)
   let mut i = 0
@@ -3884,7 +3884,7 @@ fn decode_url_impl(source : StringView, plus_as_space : Bool) -> String {
     return source.to_owned()
   }
   if !ascii_only {
-    return decode_url_bytes(encode_url_source(source), plus_as_space)
+    return decode_url_bytes(encode_utf8_lossy(source), plus_as_space)
   }
   let out = FixedArray::make(length, b' ')
   let mut out_index = 0
@@ -5282,7 +5282,10 @@ fn resolve_part_bytes(data : String, raw_data : String?) -> (Bytes, String) {
       let bytes = encode_utf8_lossless(raw)
       (bytes, @utf8.decode_lossy(bytes))
     }
-    None => (@utf8.encode(data), data)
+    None => {
+      let bytes = encode_utf8_lossy(data.view())
+      (bytes, @utf8.decode_lossy(bytes))
+    }
   }
 }
 
