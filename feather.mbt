@@ -10216,6 +10216,7 @@ pub fn App::respond(self : App, request : Request) -> Response {
   if ctx.file_response() is None {
     // Without request headers there can be no precondition.
     if ctx.request.headers.is_empty() {
+      ignore(negotiate_existing_encoding(None, ctx.response))
       if response_etag_enabled(self, ctx) {
         apply_etag(ctx.response)
       }
@@ -10227,6 +10228,12 @@ pub fn App::respond(self : App, request : Request) -> Response {
         ctx.response,
       )
       if !failed {
+        ignore(
+          negotiate_existing_encoding(
+            get_header_ignore_case(ctx.request.headers, "Accept-Encoding"),
+            ctx.response,
+          ),
+        )
         finish_response(
           self, ctx, ctx.response, remaining, allows_not_modified,
         )

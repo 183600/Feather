@@ -149,3 +149,20 @@ async test "an explicit identity coding is replaced when gzip is needed" {
     payload,
   )
 }
+
+///|
+test "offline respond validates handler supplied encodings" {
+  let app = @feather.App::new().get("/encoded", fn(ctx) {
+    ctx.bytes(200, b"encoded", content_type="text/plain; charset=utf-8")
+    ctx.set_header("Content-Encoding", "gzip")
+  })
+  let refused = app.respond({
+    method: "GET",
+    path: "/encoded",
+    headers: Map([("Accept-Encoding", "identity")]),
+    body: "",
+  })
+  assert_eq(refused.status, 406)
+  assert_eq(refused.headers.get("Content-Encoding"), None)
+  assert_eq(refused.headers.get("Vary"), Some("Accept-Encoding"))
+}
