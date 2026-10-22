@@ -9023,6 +9023,24 @@ fn normalize_prefix(prefix : String) -> String {
 }
 
 ///|
+/// Whether `path` is `prefix` itself or lies below it as a whole path segment.
+///
+/// `prefix` is expected to be normalized (a leading slash and no trailing
+/// slash, or `""` for the root). Segment-aware comparison keeps `/apiary`
+/// outside a `/api` scope, unlike a plain string prefix test.
+fn path_is_within_prefix(path : StringView, prefix : StringView) -> Bool {
+  let prefix_length = prefix.length()
+  if prefix_length == 0 {
+    return true
+  }
+  if path.length() < prefix_length || path[:prefix_length] != prefix {
+    return false
+  }
+  path.length() == prefix_length ||
+  path[prefix_length:].has_prefix("/")
+}
+
+///|
 fn join_paths(prefix : String, path : String) -> String {
   let base = normalize_prefix(prefix)
   if path == "" || path == "/" {
@@ -9644,6 +9662,60 @@ pub fn App::use(self : App, middleware : Middleware) -> App {
     mount.chain = None
   }
   self
+}
+
+///|
+/// Install middleware that runs only when `predicate` accepts the request.
+///
+/// The predicate runs after the application's earlier middleware and before
+/// the scoped middleware, so it can inspect request state those middleware
+/// established. When it returns `false`, the scoped middleware is skipped and
+/// the request continues down the chain unchanged. The middleware is composed
+/// once per chain, not once per request, and installing it invalidates the
+/// cached chain exactly like `App::use`.
+pub fn App::use_when(
+  self : App,
+  predicate : (Context) -> Bool,
+  middleware : Middleware,
+) -> App {
+  self.use(fn(next) {
+    let scoped = middleware(next)
+    fn(ctx) raise {
+      if predicate(ctx) {
+        scoped(ctx)
+      } else {
+        next(ctx)
+      }
+    }
+  })
+}
+
+///|
+/// Install middleware for `prefix` and everything below it.
+///
+/// Matching is segment-aware and case-sensitive: `/api` covers `/api`,
+/// `/api/` and `/api/users`, but not `/apiary`. The query string is ignored.
+/// An empty prefix or `"/"` installs the middleware application-wide. Prefixes
+/// are normalized like route groups (`api//v1/` becomes `/api/v1`), and the
+/// scoped middleware runs in the position where this method was called
+/// relative to `App::use`. This is the path-scoped counterpart of
+/// `App::use`, useful for applying authentication, CORS or cache policy to
+/// part of an application without creating a separate `RouteGroup`.
+pub fn App::use_prefix(
+  self : App,
+  prefix : String,
+  middleware : Middleware,
+) -> App {
+  let normalized = normalize_prefix(prefix)
+  self.use_when(
+    fn(ctx) {
+      path_is_within_prefix(
+        clean_path_view(ctx.request.path),
+        normalized.view(),
+      )
+    },
+    middleware,
+  )
 }
 
 ///|
@@ -12669,6 +12741,30 @@ pub fn create_feather(config : Config) -> Feather {
 ///|
 pub fn Feather::use(self : Feather, middleware : Middleware) -> Feather {
   ignore(self.app.use(middleware))
+  self
+}
+
+///|
+/// Install predicate-scoped middleware on the wrapped application. See
+/// `App::use_when`.
+pub fn Feather::use_when(
+  self : Feather,
+  predicate : (Context) -> Bool,
+  middleware : Middleware,
+) -> Feather {
+  ignore(self.app.use_when(predicate, middleware))
+  self
+}
+
+///|
+/// Install prefix-scoped middleware on the wrapped application. See
+/// `App::use_prefix`.
+pub fn Feather::use_prefix(
+  self : Feather,
+  prefix : String,
+  middleware : Middleware,
+) -> Feather {
+  ignore(self.app.use_prefix(prefix, middleware))
   self
 }
 

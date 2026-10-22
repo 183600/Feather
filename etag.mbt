@@ -40,6 +40,24 @@ pub fn Context::no_etag(self : Context) -> Unit {
 }
 
 ///|
+/// Middleware that enables automatic `ETag` generation for the responses it
+/// wraps.
+///
+/// This is the middleware form of `Context::etag`, so a route group or a
+/// path-scoped installation (see `App::use_prefix`) can make just one part of
+/// an application cacheable without calling `ctx.etag()` in every handler.
+/// Handlers can still opt out with `Context::no_etag`, set their own validator,
+/// or use `Cache-Control: no-store`.
+pub fn middleware_etag() -> Middleware {
+  fn(next) {
+    fn(ctx) raise {
+      ctx.etag()
+      next(ctx)
+    }
+  }
+}
+
+///|
 /// Whether the automatic `ETag` stage should run for this response, honoring
 /// the per-response override before the application-wide setting.
 fn response_etag_enabled(app : App, ctx : Context) -> Bool {

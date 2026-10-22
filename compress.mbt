@@ -43,6 +43,24 @@ pub fn Context::no_compress(self : Context) -> Unit {
 }
 
 ///|
+/// Middleware that opts the responses it wraps into gzip compression.
+///
+/// This is the middleware form of `Context::compress`, so a route group or a
+/// path-scoped installation (see `App::use_prefix`) can compress just one part
+/// of an application without enabling compression globally. Negotiation still
+/// honors `Accept-Encoding`, and handlers can opt out with
+/// `Context::no_compress`.
+pub fn middleware_compress(min_size~ : Int32 = 0) -> Middleware {
+  let minimum = if min_size < 0 { 0 } else { min_size }
+  fn(next) {
+    fn(ctx) raise {
+      ctx.compress(min_size=minimum)
+      next(ctx)
+    }
+  }
+}
+
+///|
 /// Whether this response should be compressed and the threshold to use,
 /// honoring a per-response `Context::compress` / `Context::no_compress`
 /// decision before the application-wide setting.

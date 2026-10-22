@@ -23,8 +23,8 @@ long-term design notes are in [PLAN.md](PLAN.md).
   `TRACE`.
 - **Middleware** – CORS, request logging, panic recovery, request IDs,
   rate limiting, basic and bearer auth, CSRF, secure headers, HTTPS redirect,
-  method override, sessions, and a problem-details error handler whose
-  negotiated bodies vary on `Accept`.
+  method override, sessions, path- or predicate-scoped installation, and a
+  problem-details error handler whose negotiated bodies vary on `Accept`.
 - **Context** – path/query/form/multipart access, multi-value `query_all` /
   `form_all` maps and `has_query` / `has_form` / `has_param` presence checks,
   raw `pathname` / `query_string` request-target accessors, typed
@@ -210,6 +210,15 @@ HTTP/1.0 clients that omit it.
 handler runs, which is useful for allowing only small payloads on a specific
 route while `App::max_body_size` keeps the server-wide bound.
 
+`App::use_prefix("/api", middleware)` installs middleware only for a path
+segment and everything below it, so authentication, CORS or cache policy can
+apply to part of an application without creating a `RouteGroup`. Matching is
+segment-aware (`/api` covers `/api` and `/api/users`, not `/apiary`), ignores
+the query string, and keeps the installation position relative to `App::use`.
+An empty prefix or `"/"` applies application-wide. `App::use_when(predicate,
+middleware)` is the general form when the decision depends on request state or
+another header rather than the path.
+
 Sessions and CSRF are available as middleware plus `Context` helpers
 (`session_get`, `session_set`, `session_has`, `session_keys`, `session_remove`,
 `session_clear`, `session_destroy`, and JSON/flash variants):
@@ -286,7 +295,10 @@ type. Handlers can override this per response with `ctx.compress(min_size=0)` to
 opt in even when application-wide compression is off, or `ctx.no_compress()` to
 opt out. `app.etag()` enables automatic ETag generation for responses that do not
 set one; `ctx.etag()` / `ctx.no_etag()` make the same decision for a single
-response, so route middleware can cache just an API subset.
+response, so route middleware can cache just an API subset. The
+`middleware_etag()` and `middleware_compress(min_size=0)` wrappers expose the
+same decisions as middleware, which pairs naturally with
+`App::use_prefix` or `route_with` to cache or compress only one route group.
 
 ## Static files
 
