@@ -4784,6 +4784,44 @@ pub fn Context::defer_cleanup(
 }
 
 ///|
+/// Percent-encode an RFC 5987 `ext-value` payload. `url_encode` leaves the
+/// RFC 3986 sub-delimiters `'` and `*` unescaped, but neither is an RFC 5987
+/// `attr-char`, so a filename containing one would produce a malformed
+/// `filename*` parameter.
+fn encode_rfc5987_value(value : String) -> String {
+  let encoded = url_encode(value)
+  let view = encoded.view()
+  let length = view.length()
+  let mut needs_escape = false
+  let mut scan = 0
+  while scan < length {
+    let code = view.unsafe_get(scan).to_int()
+    if code == 39 || code == 42 {
+      needs_escape = true
+      break
+    }
+    scan = scan + 1
+  }
+  if !needs_escape {
+    return encoded
+  }
+  let builder = StringBuilder(size_hint=length + 8)
+  let mut i = 0
+  while i < length {
+    let code = view.unsafe_get(i).to_int()
+    if code == 39 {
+      builder.write_string("%27")
+    } else if code == 42 {
+      builder.write_string("%2A")
+    } else {
+      builder.write_char(code.unsafe_to_char())
+    }
+    i = i + 1
+  }
+  builder.to_string()
+}
+
+///|
 /// Build a `Content-Disposition` field value with `disposition` (`attachment`
 /// or `inline`) and the given file name, quoting and escaping the ASCII form
 /// and appending an RFC 6266 `filename*` parameter for non-ASCII names.
@@ -4815,7 +4853,7 @@ fn content_disposition_value(disposition : String, name : String) -> String {
     "; filename=\"" +
     escaped.to_string() +
     "\"; filename*=UTF-8''" +
-    url_encode(clean)
+    encode_rfc5987_value(clean)
   } else {
     disposition + "; filename=\"" + escaped.to_string() + "\""
   }

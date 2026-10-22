@@ -247,6 +247,28 @@ fn declared_body_exceeds_limit(
 }
 
 ///|
+/// Bytes that may be read from a gzip-coded request body before decoding.
+///
+/// The configured body limit applies to the decoded representation, but the
+/// compressed input is slightly larger than an incompressible payload because
+/// of the gzip header, deflate block framing and trailer. Allow that bounded
+/// overhead here and enforce the real limit again after decompression.
+fn gzip_body_read_limit(limit : Int32) -> Int32 {
+  if limit < 0 {
+    return limit
+  }
+  // Deflate's fixed-Huffman fallback can add roughly one bit per input byte,
+  // on top of the gzip header, block framing and trailer. Leave enough room
+  // for that worst case without letting the compressed input grow unbounded.
+  let overhead = limit / 8 + 256
+  if limit > 2147483647 - overhead {
+    2147483647
+  } else {
+    limit + overhead
+  }
+}
+
+///|
 async fn read_body_bytes(
   reader : &@io.Reader,
   limit : Int32,
@@ -614,14 +636,19 @@ async fn request_from_http(
       headers.set(text, value)
     }
   }
-  let body_hint = body_size_hint(request, max_body_size)
+  let read_limit = if gzip_encoded {
+    gzip_body_read_limit(max_body_size)
+  } else {
+    max_body_size
+  }
+  let body_hint = body_size_hint(request, read_limit)
   let raw_body = if gzip_encoded {
     decode_gzip_body(
-      read_body_bytes(body, max_body_size, size_hint=body_hint),
+      read_body_bytes(body, read_limit, size_hint=body_hint),
       max_body_size,
     )
   } else {
-    read_body_bytes(body, max_body_size, size_hint=body_hint)
+    read_body_bytes(body, read_limit, size_hint=body_hint)
   }
   let strict_text : String? = Some(@utf8.decode(raw_body)) catch {
     @utf8.Malformed(_) => None
@@ -1649,13 +1676,35 @@ async fn send_continue_if_expected(
 }
 
 ///|
+/// Whether a comma-separated field value contains `token` as a complete,
+/// literal entry. Unlike `header_list_has_token`, `*` is not a wildcard here:
+/// `Connection` lists concrete hop-by-hop options, so `Connection: *` does not
+/// mean `close`.
+fn header_list_has_exact_token(list : StringView, token : StringView) -> Bool {
+  let length = list.length()
+  let mut start = 0
+  let mut i = 0
+  while i <= length {
+    if i == length || list.unsafe_get(i) == (',' : UInt16) {
+      let entry = trim_ascii_space(list[start:i])
+      if entry.equal_ignore_ascii_case(token) {
+        return true
+      }
+      start = i + 1
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
 /// Whether the request's `Connection` header asks for the connection to close
 /// after this response. The runtime owns the connection loop, so the framework
 /// closes the socket itself to make `Connection: close` effective.
 fn request_wants_close(request : @http.Request) -> Bool {
   match request.headers.get(header_connection) {
     Some(value) =>
-      header_list_has_token(value.view(), "close".view())
+      header_list_has_exact_token(value.view(), "close".view())
     None => false
   }
 }
@@ -2610,7 +2659,15 @@ async fn handle_static(
     // still has to be consumed under the application-wide limit: a static
     // request must not smuggle an unbounded body past `App::max_body_size`
     // just because no handler ever asks for it.
-    let raw_body = read_body_bytes(body, app.max_body_size) catch {
+    let coding = match request.headers.get(header_content_encoding) {
+      Some(value) => request_body_coding(value.view())
+      None => RequestBodyIdentity
+    }
+    let read_limit = match coding {
+      RequestBodyGzip => gzip_body_read_limit(app.max_body_size)
+      _ => app.max_body_size
+    }
+    let raw_body = read_body_bytes(body, read_limit) catch {
       PayloadTooLarge => {
         send_error_and_close(conn, 413, "413 Payload Too Large", head)
         return
@@ -2625,38 +2682,34 @@ async fn handle_static(
     // do the same, otherwise a small compressed body could bypass
     // `App::max_body_size` on a static URL and an unsupported coding would be
     // silently ignored.
-    match request.headers.get(header_content_encoding) {
-      Some(value) =>
-        match request_body_coding(value.view()) {
-          RequestBodyUnsupported => {
-            send_error_and_close(
-              conn, 415, "415 Unsupported Media Type", head,
-            )
-            return
-          }
-          RequestBodyGzip => {
-            ignore(
-              decode_gzip_body(raw_body, app.max_body_size) catch {
-                PayloadTooLarge => {
-                  send_error_and_close(conn, 413, "413 Payload Too Large", head)
-                  return
-                }
-                MalformedRequestBody => {
-                  send_simple(conn, 400, "400 Bad Request", head)
-                  return
-                }
-                _ => {
-                  send_error_and_close(
-                    conn, 500, "500 Internal Server Error", head,
-                  )
-                  return
-                }
-              },
-            )
-          }
-          RequestBodyIdentity => ()
-        }
-      None => ()
+    match coding {
+      RequestBodyUnsupported => {
+        send_error_and_close(
+          conn, 415, "415 Unsupported Media Type", head,
+        )
+        return
+      }
+      RequestBodyGzip => {
+        ignore(
+          decode_gzip_body(raw_body, app.max_body_size) catch {
+            PayloadTooLarge => {
+              send_error_and_close(conn, 413, "413 Payload Too Large", head)
+              return
+            }
+            MalformedRequestBody => {
+              send_simple(conn, 400, "400 Bad Request", head)
+              return
+            }
+            _ => {
+              send_error_and_close(
+                conn, 500, "500 Internal Server Error", head,
+              )
+              return
+            }
+          },
+        )
+      }
+      RequestBodyIdentity => ()
     }
     serve_static_file(
       conn,
@@ -3090,7 +3143,17 @@ async fn handle_request(
   let head = request.meth is @http.Head
   // Reject a declared oversized body before the `100-continue` handshake or
   // the first read, so a client that never uploads cannot pin the connection.
-  if declared_body_exceeds_limit(request, app.max_body_size) {
+  // For a gzip-coded body the declared length describes the compressed input,
+  // which is allowed to exceed the decoded limit by the codec overhead.
+  let declared_limit = match request.headers.get(header_content_encoding) {
+    Some(value) =>
+      match request_body_coding(value.view()) {
+        RequestBodyGzip => gzip_body_read_limit(app.max_body_size)
+        _ => app.max_body_size
+      }
+    None => app.max_body_size
+  }
+  if declared_body_exceeds_limit(request, declared_limit) {
     send_oversized_and_close(conn, head)
     return
   }

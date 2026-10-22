@@ -394,7 +394,14 @@ fn reject_unacceptable_identity(
   }
   // A ranged representation cannot be re-encoded as a range of the encoded
   // bytes without rewriting `Content-Range`, so an identity refusal leaves no
-  // acceptable representation even when application compression is off.
+  // acceptable representation even when application compression is off. The
+  // resource can also answer 406 for those clients, so even the identity 206
+  // must vary on `Accept-Encoding`.
+  let ranged = response.status == 206 ||
+    get_header_ignore_case(response.headers, "Content-Range") is Some(_)
+  if ranged {
+    add_vary_accept_encoding(response)
+  }
   match accept_encoding {
     Some(value) => if accept_encoding_refuses_identity(value) {
       add_vary_accept_encoding(response)
@@ -481,8 +488,10 @@ async fn compress_response(
   // explicitly refused there is therefore no acceptable representation.
   if response.status == 206 ||
     get_header_ignore_case(response.headers, "Content-Range") is Some(_) {
+    // The same resource answers 406 when identity is refused, so the selected
+    // representation depends on `Accept-Encoding` even for this identity 206.
+    add_vary_accept_encoding(response)
     if refuses_identity {
-      add_vary_accept_encoding(response)
       set_not_acceptable(response)
     }
     return
