@@ -9096,6 +9096,43 @@ fn collect_route_nodes(
 }
 
 ///|
+/// Seed a mounted request with the child application's app-scoped state.
+///
+/// Parent state is already present on the context; mounted values only fill
+/// missing keys so request-local overrides and the parent's defaults keep
+/// their usual precedence.
+fn mounted_state_middleware(child : App) -> Middleware {
+  fn(next) {
+    fn(ctx) raise {
+      for key, value in child.state {
+        if !ctx.state.contains(key) {
+          ctx.state.set(key, value)
+        }
+      }
+      for key, value in child.json_state {
+        if !ctx.json_state.contains(key) {
+          ctx.json_state.set(key, value)
+        }
+      }
+      next(ctx)
+    }
+  }
+}
+
+///|
+/// The middleware chain a mounted child contributes: first its app state, then
+/// the child's own application middleware. This mirrors serving the child
+/// directly, while the mount middleware stays outside both.
+fn mounted_child_middlewares(child : App) -> Array[Middleware] {
+  let combined : Array[Middleware] = Array(
+    capacity=child.middlewares.length() + 1,
+  )
+  combined.push(mounted_state_middleware(child))
+  combined.append(child.middlewares)
+  combined
+}
+
+///|
 /// Wrap an asynchronous route's pre-composed middleware chain with the outer
 /// mount middleware and the middlewares of the application being mounted, once
 /// at mount time. The outer middleware runs first, then the child
@@ -9175,13 +9212,14 @@ pub fn App::mount_with(
 ) -> App {
   let outer = middlewares.copy()
   let base = normalize_prefix(prefix)
+  let child_middlewares = mounted_child_middlewares(child)
   let routes : Array[(String, String, Handler)] = []
   for method, root in child.router.trees {
     collect_route_nodes(root, method, routes)
   }
   for route in routes {
     let (method, path, handler) = route
-    let wrapped = mounted_route_chain(outer, child.middlewares, handler)
+    let wrapped = mounted_route_chain(outer, child_middlewares, handler)
     self.router.add_route(method, join_paths(base, path), wrapped)
   }
   for name, named in child.router.named {
@@ -9204,7 +9242,7 @@ pub fn App::mount_with(
       precompressed: mount.precompressed,
       middlewares: mounted_static_middlewares(
         outer,
-        child.middlewares,
+        child_middlewares,
         mount.middlewares,
       ),
       chain: None,
@@ -9222,7 +9260,7 @@ pub fn App::mount_with(
       mounted,
       mounted_route_chain(
         outer,
-        child.middlewares,
+        child_middlewares,
         child.ws_middlewares.get(path).unwrap_or(async_chain_terminal),
       ),
     )
@@ -9235,7 +9273,7 @@ pub fn App::mount_with(
       mounted,
       mounted_route_chain(
         outer,
-        child.middlewares,
+        child_middlewares,
         child.sse_middlewares.get(path).unwrap_or(async_chain_terminal),
       ),
     )
@@ -9248,7 +9286,7 @@ pub fn App::mount_with(
       mounted,
       mounted_route_chain(
         outer,
-        child.middlewares,
+        child_middlewares,
         child.stream_middlewares.get(path).unwrap_or(async_chain_terminal),
       ),
     )
