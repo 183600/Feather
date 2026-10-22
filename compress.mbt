@@ -107,7 +107,42 @@ fn parse_quality(value : StringView) -> Int32 {
 }
 
 ///|
-/// Check whether `Accept-Encoding` allows the `gzip` coding.
+/// Quality explicitly assigned to `coding` by parsed entries, or `-1` when the
+/// header neither names it nor supplies a wildcard.
+fn explicit_encoding_quality(
+  entries : Array[EncodingEntry],
+  coding : StringView,
+) -> Int32 {
+  let mut exact : Int32 = -1
+  let mut star : Int32 = -1
+  for entry in entries {
+    if entry.token.equal_ignore_ascii_case(coding) {
+      exact = entry.quality
+    } else if entry.token == "*" {
+      star = entry.quality
+    }
+  }
+  if exact >= 0 { exact } else { star }
+}
+
+///|
+/// Whether gzip is not only acceptable but at least as preferred as identity.
+///
+/// `gzip;q=0.1, identity;q=1` must keep the unencoded representation, while an
+/// unqualified `gzip` (where identity is only implicitly acceptable) may be
+/// compressed when the payload benefits. A wildcard quality counts for both
+/// codings, so `*;q=0.5` still permits gzip.
+fn encoding_entries_prefer_gzip(entries : Array[EncodingEntry]) -> Bool {
+  let gzip_quality = explicit_encoding_quality(entries, "gzip".view())
+  if gzip_quality <= 0 {
+    return false
+  }
+  let identity_quality = explicit_encoding_quality(entries, "identity".view())
+  identity_quality < 0 || gzip_quality >= identity_quality
+}
+
+///|
+/// Check whether `Accept-Encoding` allows and prefers the `gzip` coding.
 ///
 /// A coding is allowed when its quality value is positive, or when it is not
 /// mentioned but `*` has a positive quality value. An empty header allows
@@ -116,7 +151,7 @@ fn accept_encoding_allows_gzip(header : StringView) -> Bool {
   if trim_ascii_space(header).is_empty() {
     return false
   }
-  accept_encoding_quality(header, "gzip".view()) > 0
+  encoding_entries_prefer_gzip(parse_encoding_entries(header))
 }
 
 ///|
@@ -125,7 +160,7 @@ fn accept_encoding_allows_gzip_cached(header : String) -> Bool {
   if trim_ascii_space(header.view()).is_empty() {
     return false
   }
-  encoding_quality_from(encoding_entries_cached(header), "gzip".view()) > 0
+  encoding_entries_prefer_gzip(encoding_entries_cached(header))
 }
 
 ///|

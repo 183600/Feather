@@ -26,6 +26,13 @@ test "accept encoding gzip negotiation" {
   assert_true(accept_encoding_allows_gzip("*".view()))
   assert_true(accept_encoding_allows_gzip("GZIP".view()))
   assert_true(accept_encoding_allows_gzip("identity;q=0, *;q=0.5".view()))
+  assert_true(accept_encoding_allows_gzip("gzip;q=0.5".view()))
+  assert_true(accept_encoding_allows_gzip("gzip;q=1, identity;q=0.1".view()))
+  assert_true(accept_encoding_allows_gzip("*;q=0.5".view()))
+  assert_false(accept_encoding_allows_gzip("gzip;q=0.1, identity;q=1".view()))
+  assert_false(
+    accept_encoding_allows_gzip("gzip;q=0.1, identity;q=1, br;q=1".view()),
+  )
   assert_false(accept_encoding_allows_gzip("".view()))
   assert_false(accept_encoding_allows_gzip("deflate".view()))
   assert_false(accept_encoding_allows_gzip("identity".view()))

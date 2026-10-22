@@ -98,6 +98,26 @@ async test "server compresses responses for gzip clients" {
 }
 
 ///|
+async test "server keeps identity when the client prefers it" {
+  let payload = "feather compression payload ".repeat(128)
+  let app = @feather.App::new()
+    .compress(min_size=0)
+    .get("/big", fn(ctx) { ctx.text(200, payload) })
+  with_server(app, client => {
+    let response = client.get(
+      "/big",
+      extra_headers=Map([
+        (accept_encoding_key, "gzip;q=0.1, identity;q=1"),
+      ]),
+    )
+    assert_eq(response.code, 200)
+    assert_eq(response.headers.get(content_encoding_key), None)
+    assert_eq(response.headers.get(vary_key), Some("Accept-Encoding"))
+    assert_eq(client.read_all().text(), payload)
+  })
+}
+
+///|
 async test "server compresses json responses" {
   let app = @feather.App::new()
     .compress(min_size=16)
