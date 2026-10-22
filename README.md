@@ -287,7 +287,14 @@ only track a modification time can answer `If-Modified-Since` with `304`:
 only applies to `GET` and `HEAD`.
 
 `cache_public` and `cache_private` accept `immutable=true`; `no_store` and
-`no_cache` cover the common non-storable and revalidate-first cases. Header
+`no_cache` cover the common non-storable and revalidate-first cases, while
+`Context::cache_control("public, max-age=60, s-maxage=300")` installs an
+arbitrary policy (an empty value removes the field). The corresponding
+middleware (`middleware_cache_control`, `middleware_no_store`,
+`middleware_no_cache`, `middleware_cache_public`, `middleware_cache_private`)
+applies a policy after the handler returns and keeps a handler-supplied value
+unless `overwrite=true`; combine it with `App::use_prefix` to cache only one
+part of an application. Header
 helpers (`has_header`, `response_header`, `has_response_header`,
 `remove_response_header`, `append_header`, `set_header_if_absent`) match names
 case-insensitively; the response helpers are useful in middleware that

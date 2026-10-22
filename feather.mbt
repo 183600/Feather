@@ -2646,6 +2646,105 @@ pub fn Context::no_cache(self : Context) -> Unit {
 }
 
 ///|
+/// Replace the response's `Cache-Control` field with arbitrary directives.
+///
+/// This is the escape hatch for policies the typed helpers do not model, such
+/// as `public, max-age=60, s-maxage=300, stale-while-revalidate=30`. Control
+/// characters are stripped so a caller-supplied value cannot forge another
+/// response header. Passing an empty value removes the field.
+pub fn Context::cache_control(
+  self : Context,
+  directives : String,
+) -> Unit {
+  let cleaned = strip_control_characters(directives)
+  let value = trim_ascii_space(cleaned.view()).to_owned()
+  if value.is_empty() {
+    ignore(remove_header_ignore_case(self.response.headers, "Cache-Control"))
+  } else {
+    set_header_ignore_case(self.response.headers, "Cache-Control", value)
+  }
+}
+
+///|
+/// Middleware that installs a default `Cache-Control` policy for the responses
+/// it wraps.
+///
+/// The policy is applied after the handler returns, so a handler's own
+/// `Cache-Control` value is kept by default. Pass `overwrite=true` to make the
+/// middleware authoritative and replace any value the handler set. Because the
+/// header is written after the handler, an error escaping the chain is not
+/// decorated; install a recovery middleware outside this one when error
+/// responses should also carry the policy. The value goes through
+/// `Context::cache_control`, so control characters are stripped and an empty
+/// value removes the field.
+pub fn middleware_cache_control(
+  directives : String,
+  overwrite~ : Bool = false,
+) -> Middleware {
+  let cleaned = strip_control_characters(directives)
+  let value = trim_ascii_space(cleaned.view()).to_owned()
+  fn(next) {
+    fn(ctx) raise {
+      next(ctx)
+      if overwrite || !ctx.has_response_header("Cache-Control") {
+        ctx.cache_control(value)
+      }
+    }
+  }
+}
+
+///|
+/// Middleware that forbids storing the responses it wraps
+/// (`Cache-Control: no-store`), without clobbering a more specific value set by
+/// the handler. Handy for authenticated pages and API tokens.
+pub fn middleware_no_store() -> Middleware {
+  middleware_cache_control("no-store")
+}
+
+///|
+/// Middleware that requires caches to revalidate the responses it wraps
+/// (`Cache-Control: no-cache`), without clobbering a value set by the handler.
+pub fn middleware_no_cache() -> Middleware {
+  middleware_cache_control("no-cache")
+}
+
+///|
+/// Middleware that lets shared caches store the responses it wraps for
+/// `max_age` seconds, mirroring `Context::cache_public`. Negative lifetimes are
+/// clamped to zero and `immutable=true` adds the `immutable` directive. A
+/// handler's own `Cache-Control` value still wins.
+pub fn middleware_cache_public(
+  max_age : Int32,
+  immutable~ : Bool = false,
+) -> Middleware {
+  let seconds = if max_age > 0 { max_age } else { 0 }
+  let value = if immutable {
+    "public, max-age=\{seconds}, immutable"
+  } else {
+    "public, max-age=\{seconds}"
+  }
+  middleware_cache_control(value)
+}
+
+///|
+/// Middleware that lets only the end user's cache store the responses it wraps
+/// for `max_age` seconds, mirroring `Context::cache_private`. Negative lifetimes
+/// are clamped to zero and `immutable=true` adds the `immutable` directive. A
+/// handler's own `Cache-Control` value still wins.
+pub fn middleware_cache_private(
+  max_age : Int32,
+  immutable~ : Bool = false,
+) -> Middleware {
+  let seconds = if max_age > 0 { max_age } else { 0 }
+  let value = if immutable {
+    "private, max-age=\{seconds}, immutable"
+  } else {
+    "private, max-age=\{seconds}"
+  }
+  middleware_cache_control(value)
+}
+
+///|
 pub fn Context::text(self : Context, status : Int32, body : String) -> Unit {
   self.file = None
   self.response.status = status
