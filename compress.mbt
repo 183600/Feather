@@ -371,16 +371,17 @@ fn reject_unacceptable_identity(
   if response.status < 200 ||
     response.status == 204 ||
     response.status == 205 ||
-    response.status == 304 ||
-    response.status == 206 {
+    response.status == 304 {
     return
   }
+  // A ranged representation cannot be re-encoded as a range of the encoded
+  // bytes without rewriting `Content-Range`, so an identity refusal leaves no
+  // acceptable representation even when application compression is off.
   match accept_encoding {
-    Some(value) =>
-      if accept_encoding_refuses_identity(value) {
-        add_vary_accept_encoding(response)
-        set_not_acceptable(response)
-      }
+    Some(value) => if accept_encoding_refuses_identity(value) {
+      add_vary_accept_encoding(response)
+      set_not_acceptable(response)
+    }
     None => ()
   }
 }
