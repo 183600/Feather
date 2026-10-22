@@ -193,6 +193,14 @@ Authentication middleware is available for basic credentials
 (`middleware_basic_auth` / `middleware_basic_auth_with`) and bearer tokens
 (`middleware_bearer_auth` / `middleware_bearer_auth_with`).
 
+`middleware_secure_headers` installs `nosniff`, frame and referrer policies by
+default. It also accepts `hsts`, `content_security_policy`,
+`content_security_policy_report_only`, `permissions_policy`, and
+`cross_origin_opener_policy` / `cross_origin_embedder_policy` /
+`cross_origin_resource_policy`; optional headers are only emitted when
+configured, and their names are matched case-insensitively against values
+already on the response.
+
 `middleware_request_id` reuses a validated incoming id or mints a
 `feather-<n>` value, stores it for `Context::request_id`, and echoes it in the
 response. Pass `generate` for UUID/ULID or tracing ids and `max_length` to bound

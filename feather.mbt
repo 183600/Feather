@@ -11997,54 +11997,86 @@ pub fn Context::vary(self : Context, value : String) -> Unit {
 }
 
 ///|
+/// Set an optional hardening header, leaving the response untouched when the
+/// caller did not configure a value.
+fn set_optional_hardening_header(
+  headers : Map[String, String],
+  name : String,
+  value : String?,
+) -> Unit {
+  match value {
+    Some(value) => set_header_ignore_case(headers, name, value)
+    None => ()
+  }
+}
+
+///|
 /// Middleware that adds hardening headers to every response: `nosniff`,
 /// clickjacking protection and a referrer policy by default.
 ///
 /// Pass `hsts` to also advertise `Strict-Transport-Security` (only meaningful
-/// over HTTPS) and `content_security_policy` to lock down which resources the
-/// browser may load.
+/// over HTTPS), `content_security_policy` to lock down which resources the
+/// browser may load, or the corresponding `*_report_only` /
+/// `permissions_policy` / `cross_origin_*` options for the modern policy
+/// headers. Optional values are only emitted when supplied, so a minimal
+/// installation keeps the same response headers as before.
 pub fn middleware_secure_headers(
   content_type_options~ : String = "nosniff",
   frame_options~ : String = "DENY",
   referrer_policy~ : String = "no-referrer",
   hsts? : String,
   content_security_policy? : String,
+  content_security_policy_report_only? : String,
+  permissions_policy? : String,
+  cross_origin_opener_policy? : String,
+  cross_origin_embedder_policy? : String,
+  cross_origin_resource_policy? : String,
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
+      let headers = ctx.response.headers
       set_header_ignore_case(
-        ctx.response.headers,
+        headers,
         "X-Content-Type-Options",
         content_type_options,
       )
-      set_header_ignore_case(
-        ctx.response.headers,
-        "X-Frame-Options",
-        frame_options,
+      set_header_ignore_case(headers, "X-Frame-Options", frame_options)
+      set_header_ignore_case(headers, "Referrer-Policy", referrer_policy)
+      set_optional_hardening_header(
+        headers,
+        "Strict-Transport-Security",
+        hsts,
       )
-      set_header_ignore_case(
-        ctx.response.headers,
-        "Referrer-Policy",
-        referrer_policy,
+      set_optional_hardening_header(
+        headers,
+        "Content-Security-Policy",
+        content_security_policy,
       )
-      match hsts {
-        Some(value) =>
-          set_header_ignore_case(
-            ctx.response.headers,
-            "Strict-Transport-Security",
-            value,
-          )
-        None => ()
-      }
-      match content_security_policy {
-        Some(value) =>
-          set_header_ignore_case(
-            ctx.response.headers,
-            "Content-Security-Policy",
-            value,
-          )
-        None => ()
-      }
+      set_optional_hardening_header(
+        headers,
+        "Content-Security-Policy-Report-Only",
+        content_security_policy_report_only,
+      )
+      set_optional_hardening_header(
+        headers,
+        "Permissions-Policy",
+        permissions_policy,
+      )
+      set_optional_hardening_header(
+        headers,
+        "Cross-Origin-Opener-Policy",
+        cross_origin_opener_policy,
+      )
+      set_optional_hardening_header(
+        headers,
+        "Cross-Origin-Embedder-Policy",
+        cross_origin_embedder_policy,
+      )
+      set_optional_hardening_header(
+        headers,
+        "Cross-Origin-Resource-Policy",
+        cross_origin_resource_policy,
+      )
       next(ctx)
     }
   }

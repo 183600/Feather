@@ -101,7 +101,7 @@ pub fn middleware_recover(log? : (String) -> Unit) -> ((Context) -> Unit raise) 
 
 pub fn middleware_request_id(header? : String, generate? : () -> String, max_length? : Int32, trust_incoming? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
-pub fn middleware_secure_headers(content_type_options? : String, frame_options? : String, referrer_policy? : String, hsts? : String, content_security_policy? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+pub fn middleware_secure_headers(content_type_options? : String, frame_options? : String, referrer_policy? : String, hsts? : String, content_security_policy? : String, content_security_policy_report_only? : String, permissions_policy? : String, cross_origin_opener_policy? : String, cross_origin_embedder_policy? : String, cross_origin_resource_policy? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_session(SessionStore, cookie? : String, path? : String, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool, partitioned? : Bool, rolling? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
