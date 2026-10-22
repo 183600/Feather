@@ -29,7 +29,8 @@ long-term design notes are in [PLAN.md](PLAN.md).
   `query_string` request-target accessors, typed query/param/form
   helpers (including 32- and 64-bit integers, booleans, and finite floats),
   JSON bodies,
-  text bodies decoded with the request's declared charset,
+  text bodies decoded with the request's declared charset (UTF-8, Latin-1,
+  ASCII, and UTF-16 LE/BE),
   matched-route identity (`route_pattern` / `route_method` / `route_name`) for
   logging and metrics,
   text/HTML/JSON/bytes responses, files and downloads,
