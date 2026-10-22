@@ -325,3 +325,21 @@ test "server-wide OPTIONS includes async endpoints" {
   assert_true(allow.contains("HEAD"), msg=allow)
   assert_true(allow.contains("OPTIONS"), msg=allow)
 }
+
+///|
+async test "async endpoint body reads honor request_timeout" {
+  let app = @feather.App::new()
+    .request_timeout(50)
+    .sse("/events", async fn(_ctx, _sse) { () })
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "GET /events HTTP/1.1\r\nHost: test\r\nContent-Length: 10\r\n\r\n",
+      ),
+    )
+    let head = @async.with_timeout(2000, () => read_http_head(conn)) catch {
+      _ => ""
+    }
+    assert_true(head.has_prefix("HTTP/1.1 504"), msg=head)
+  })
+}

@@ -410,6 +410,59 @@ fn content_encoding_is_acceptable(
 }
 
 ///|
+/// Read an asynchronous endpoint's request body under the application request
+/// timeout. Long-lived SSE/stream/WebSocket handlers themselves are exempt from
+/// the timeout, but a client must not be able to hold the connection open
+/// forever by declaring a body it never sends.
+async fn request_from_http_with_timeout(
+  app : App,
+  request : @http.Request,
+  body : &@io.Reader,
+  conn : @http.ServerConnection,
+) -> (Request, Bytes?)? {
+  let read = () => {
+    let (req, raw_body) = request_from_http(request, body, app.max_body_size)
+    Some((req, raw_body))
+  }
+  let head = request.meth is @http.Head
+  if app.timeout > 0 {
+    @async.with_timeout(app.timeout, read) catch {
+      @async.TimeoutError => {
+        send_error_and_close(conn, 504, "504 Gateway Timeout", head)
+        return None
+      }
+      PayloadTooLarge => {
+        send_error_and_close(conn, 413, "413 Payload Too Large", head)
+        return None
+      }
+      MalformedRequestBody => {
+        send_simple(conn, 400, "400 Bad Request", head)
+        return None
+      }
+      _ => {
+        send_error_and_close(conn, 500, "500 Internal Server Error", head)
+        return None
+      }
+    }
+  } else {
+    read() catch {
+      PayloadTooLarge => {
+        send_error_and_close(conn, 413, "413 Payload Too Large", head)
+        return None
+      }
+      MalformedRequestBody => {
+        send_simple(conn, 400, "400 Bad Request", head)
+        return None
+      }
+      _ => {
+        send_error_and_close(conn, 500, "500 Internal Server Error", head)
+        return None
+      }
+    }
+  }
+}
+
+///|
 /// Build the framework `Request` from an HTTP request and its body stream.
 ///
 /// The second component carries the body exactly as received (after gzip
@@ -2556,19 +2609,10 @@ async fn handle_websocket(
   route_path : String,
   head : Bool,
 ) -> Unit {
-  let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
-    PayloadTooLarge => {
-      send_error_and_close(conn, 413, "413 Payload Too Large", head)
-      return
-    }
-    MalformedRequestBody => {
-      send_simple(conn, 400, "400 Bad Request", head)
-      return
-    }
-    _ => {
-      send_error_and_close(conn, 500, "500 Internal Server Error", head)
-      return
-    }
+  let (req, raw_body) = match
+    request_from_http_with_timeout(app, request, body, conn) {
+    Some(prepared) => prepared
+    None => return
   }
   let ctx = app.context_for_request(req)
   defer ctx.run_cleanups()
@@ -2646,19 +2690,10 @@ async fn handle_sse(
   route_path : String,
   head : Bool,
 ) -> Unit {
-  let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
-    PayloadTooLarge => {
-      send_error_and_close(conn, 413, "413 Payload Too Large", head)
-      return
-    }
-    MalformedRequestBody => {
-      send_simple(conn, 400, "400 Bad Request", head)
-      return
-    }
-    _ => {
-      send_error_and_close(conn, 500, "500 Internal Server Error", head)
-      return
-    }
+  let (req, raw_body) = match
+    request_from_http_with_timeout(app, request, body, conn) {
+    Some(prepared) => prepared
+    None => return
   }
   let ctx = app.context_for_request(req)
   defer ctx.run_cleanups()
@@ -2712,19 +2747,10 @@ async fn handle_stream(
   route_path : String,
   head : Bool,
 ) -> Unit {
-  let (req, raw_body) = request_from_http(request, body, app.max_body_size) catch {
-    PayloadTooLarge => {
-      send_error_and_close(conn, 413, "413 Payload Too Large", head)
-      return
-    }
-    MalformedRequestBody => {
-      send_simple(conn, 400, "400 Bad Request", head)
-      return
-    }
-    _ => {
-      send_error_and_close(conn, 500, "500 Internal Server Error", head)
-      return
-    }
+  let (req, raw_body) = match
+    request_from_http_with_timeout(app, request, body, conn) {
+    Some(prepared) => prepared
+    None => return
   }
   let ctx = app.context_for_request(req)
   defer ctx.run_cleanups()
