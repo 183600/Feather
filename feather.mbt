@@ -3422,6 +3422,18 @@ fn parse_cookie_map(header : StringView) -> Map[String, String] {
         }
         if name_end > start {
           let name = header[start:name_end].to_owned()
+          // A cookie name that is not an HTTP token cannot have been written
+          // by `set_cookie` (which sanitizes names), so ignore it instead of
+          // exposing a spelling that `Context::cookie` can never look up.
+          let mut valid_name = true
+          let mut name_index = start
+          while name_index < name_end {
+            if !is_cookie_name_character(header.unsafe_get(name_index)) {
+              valid_name = false
+              break
+            }
+            name_index = name_index + 1
+          }
           let mut raw_start = eq + 1
           while raw_start < stop &&
                 is_cookie_whitespace(header.unsafe_get(raw_start)) {
@@ -3434,7 +3446,7 @@ fn parse_cookie_map(header : StringView) -> Map[String, String] {
           } else {
             header[raw_start:stop].to_owned()
           }
-          if !cookies.contains(name) {
+          if valid_name && !cookies.contains(name) {
             cookies.set(name, value)
           }
         }
@@ -4049,34 +4061,77 @@ fn strip_control_characters(value : String) -> String {
 }
 
 ///|
+/// Whether `unit` is an RFC 6265 cookie-name character.
+///
+/// A cookie name is an HTTP `token`: visible ASCII except for the `separators`
+/// set from RFC 2616, which includes whitespace, `=`, `;`, `,`, quotes,
+/// slashes, brackets and braces. Dropping anything else keeps a caller-supplied
+/// name from producing an invalid or ambiguous `Set-Cookie` field.
+fn is_cookie_name_character(unit : UInt16) -> Bool {
+  let code = unit.to_int()
+  if code < 0x21 || code > 0x7E {
+    return false
+  }
+  !(unit == ('(' : UInt16) ||
+    unit == (')' : UInt16) ||
+    unit == ('<' : UInt16) ||
+    unit == ('>' : UInt16) ||
+    unit == ('@' : UInt16) ||
+    unit == (',' : UInt16) ||
+    unit == (';' : UInt16) ||
+    unit == (':' : UInt16) ||
+    unit == ('\\' : UInt16) ||
+    unit == ('"' : UInt16) ||
+    unit == ('/' : UInt16) ||
+    unit == ('[' : UInt16) ||
+    unit == (']' : UInt16) ||
+    unit == ('?' : UInt16) ||
+    unit == ('=' : UInt16) ||
+    unit == ('{' : UInt16) ||
+    unit == ('}' : UInt16))
+}
+
+///|
+/// Whether `unit` is an RFC 6265 cookie-value character.
+///
+/// `cookie-octet` excludes whitespace, control characters, `"`, `,`, `;` and
+/// `\`. `=` and other ASCII punctuation are valid inside a value, which keeps
+/// base64 padding intact. Spaces and non-ASCII text are retained to preserve
+/// the existing cookie-value behaviour; they cannot forge another header line
+/// once control characters are removed.
+fn is_cookie_value_character(unit : UInt16) -> Bool {
+  let code = unit.to_int()
+  code >= 0x20 &&
+  code != 0x7F &&
+  unit != (',' : UInt16) &&
+  unit != (';' : UInt16) &&
+  unit != ('"' : UInt16) &&
+  unit != ('\\' : UInt16)
+}
+
+///|
 /// Whether `unit` may not appear in a cookie name or value.
 ///
-/// Besides control characters, the RFC 6265 cookie-octet set excludes `;`,
-/// `,`, `"` and `\`, and a cookie name may not contain whitespace or `=`.
-/// Dropping these characters keeps a caller-supplied value from forging
-/// additional `Set-Cookie` attributes such as `Domain` or `Secure`.
-fn is_cookie_character_unsafe(unit : UInt16, drop_space : Bool) -> Bool {
-  let code = unit.to_int()
-  code < 0x20 ||
-  code == 0x7F ||
-  unit == (';' : UInt16) ||
-  unit == (',' : UInt16) ||
-  (drop_space && unit == ('=' : UInt16)) ||
-  unit == ('"' : UInt16) ||
-  unit == ('\\' : UInt16) ||
-  (drop_space && code == 0x20)
+/// `name_mode` selects the stricter HTTP token grammar for cookie names; the
+/// value path only rejects characters that break the `cookie-octet` grammar.
+fn is_cookie_character_unsafe(unit : UInt16, name_mode : Bool) -> Bool {
+  if name_mode {
+    !is_cookie_name_character(unit)
+  } else {
+    !is_cookie_value_character(unit)
+  }
 }
 
 ///|
 /// Drop characters that are invalid or dangerous in a cookie name/value.
-fn sanitize_cookie_token(value : String, drop_space : Bool) -> String {
+fn sanitize_cookie_token(value : String, name_mode : Bool) -> String {
   let value = drop_lone_surrogates(value)
   let view = value.view()
   let length = view.length()
   let mut i = 0
   let mut needs_clean = false
   while i < length {
-    if is_cookie_character_unsafe(view.unsafe_get(i), drop_space) {
+    if is_cookie_character_unsafe(view.unsafe_get(i), name_mode) {
       needs_clean = true
       break
     }
@@ -4089,7 +4144,7 @@ fn sanitize_cookie_token(value : String, drop_space : Bool) -> String {
   let mut index = 0
   while index < length {
     let unit = view.unsafe_get(index)
-    if !is_cookie_character_unsafe(unit, drop_space) {
+    if !is_cookie_character_unsafe(unit, name_mode) {
       builder.write_char(unit.to_int().unsafe_to_char())
     }
     index = index + 1
@@ -12172,12 +12227,30 @@ fn cors_middleware(
       let is_options = ctx.get_method().view().equal_ignore_ascii_case(
         "OPTIONS".view(),
       )
+      // A wildcard policy with credentials cannot keep the wildcard grant for
+      // an Origin-bearing request; it echoes that Origin instead. The response
+      // therefore depends on `Origin` even when the request has none, where it
+      // falls back to `*`.
+      let wildcard_credentials = if allow_credentials {
+        match policy {
+          CorsOriginFixed(value) => value == "*"
+          CorsOriginPredicate(_) => false
+        }
+      } else {
+        false
+      }
       let (allowed_origin, dynamic_origin) = match policy {
         CorsOriginFixed(value) =>
           if value != "*" {
             (value, true)
-          } else if allow_credentials && origin != "" {
-            (origin, true)
+          } else if wildcard_credentials {
+            // A malformed Origin is discarded and answered like an anonymous
+            // request. Only a valid Origin, or the absence of the field, can
+            // change the representation that a shared cache must separate.
+            (
+              if origin != "" { origin } else { "*" },
+              origin != "" || raw_origin == "",
+            )
           } else {
             ("*", false)
           }
@@ -12200,7 +12273,11 @@ fn cors_middleware(
         // keep origins apart.
         ctx.vary("Origin")
       }
-      if allow_credentials {
+      if allow_credentials && (origin != "" || !wildcard_credentials) {
+        // `Access-Control-Allow-Origin: *` and credentials are an invalid
+        // pair. A no-Origin request is not a CORS request, so omit the
+        // credentials grant there while still keeping the wildcard for
+        // non-credentialed clients.
         set_header_ignore_case(
           ctx.response.headers,
           "Access-Control-Allow-Credentials",
