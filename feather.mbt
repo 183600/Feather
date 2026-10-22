@@ -2802,6 +2802,129 @@ pub fn[T : @json.ToJson] Context::json_of(
 }
 
 ///|
+/// Keep only an origin-form path from a candidate redirect target.
+///
+/// A leading `//` would be parsed as a protocol-relative URL by browsers, and
+/// a backslash is treated as a slash by some of them, so both are rejected
+/// rather than rewritten. Fragments are dropped because they identify a place
+/// in the returned document, not part of the request to replay.
+fn safe_local_redirect_path(candidate : StringView) -> String? {
+  if candidate.is_empty() ||
+    candidate.unsafe_get(0) != ('/' : UInt16) ||
+    candidate.has_prefix("//") ||
+    candidate.has_prefix("/\\") ||
+    candidate.contains("\\") {
+    return None
+  }
+  let end = match candidate.find("#") {
+    Some(index) => index
+    None => candidate.length()
+  }
+  if end == 0 {
+    return None
+  }
+  Some(candidate[:end].to_owned())
+}
+
+///|
+/// Turn a `Referer` into a local redirect target, or `None` when it does not
+/// name this host or cannot be parsed safely.
+///
+/// The result is always an origin-form path on the current host, even when the
+/// referer was an absolute URL. That is what keeps `Context::redirect_back`
+/// from becoming an open redirect: another origin is rejected, and a matching
+/// origin contributes only its path and query.
+fn local_referer_target(referer : String, authority : String) -> String? {
+  let raw = trim_ascii_space(referer.view()).to_owned()
+  if raw.is_empty() {
+    return None
+  }
+  let clean = strip_control_characters(raw)
+  if clean != raw {
+    return None
+  }
+  let view = clean.view()
+  if view.has_prefix("/") {
+    return safe_local_redirect_path(view)
+  }
+  let scheme_length = if starts_with_ignore_ascii_case(
+    view,
+    "http://".view(),
+  ) {
+    7
+  } else if starts_with_ignore_ascii_case(view, "https://".view()) {
+    8
+  } else {
+    return None
+  }
+  let rest = view[scheme_length:]
+  let mut end = 0
+  while end < rest.length() {
+    let code = rest.unsafe_get(end)
+    if code == ('/' : UInt16) ||
+      code == ('?' : UInt16) ||
+      code == ('#' : UInt16) {
+      break
+    }
+    end = end + 1
+  }
+  let host_part = rest[:end]
+  if host_part.is_empty() {
+    return None
+  }
+  let expected = match host_authority_host(authority.view()) {
+    Some(host) => host
+    None => return None
+  }
+  let actual = match host_authority_host(host_part) {
+    Some(host) => host
+    None => return None
+  }
+  if !expected.view().equal_ignore_ascii_case(actual.view()) {
+    return None
+  }
+  let tail = rest[end:]
+  if tail.is_empty() {
+    return Some("/")
+  }
+  let first = tail.unsafe_get(0)
+  if first == ('#' : UInt16) {
+    // A fragment-only referer points into the current document, not at a
+    // different path to return to.
+    return Some("/")
+  }
+  if first == ('?' : UInt16) {
+    let candidate = "/" + tail.to_owned()
+    return safe_local_redirect_path(candidate.view())
+  }
+  safe_local_redirect_path(tail)
+}
+
+///|
+/// Redirect back to the page named by the request's `Referer`.
+///
+/// The default is `303 See Other`, the right status after a form submission.
+/// Only a local target is used: an absolute referer is reduced to its path and
+/// query, and a referer naming another host, using a non-HTTP scheme, carrying
+/// control characters, or posing as a protocol-relative URL is ignored in
+/// favour of `fallback`. This keeps the helper safe against open-redirect
+/// abuse when the `Referer` header is attacker-controlled.
+pub fn Context::redirect_back(
+  self : Context,
+  status~ : Int32 = 303,
+  fallback~ : String = "/",
+) -> Unit {
+  let target = match local_referer_target(
+    self.header("Referer"),
+    self.forwarded_authority(),
+  ) {
+    Some(target) => target
+    None => if fallback == "" { "/" } else { fallback }
+  }
+  self.redirect(status, target)
+}
+
+///|
 pub fn Context::redirect(
   self : Context,
   status : Int32,

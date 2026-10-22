@@ -65,6 +65,8 @@ pub fn middleware_bearer_auth_with((String) -> Bool, realm? : String) -> ((Conte
 
 pub fn middleware_body_limit(Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
+pub fn middleware_compress(min_size? : Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
 pub fn middleware_cors(allow_origin? : String, allow_methods? : String, allow_headers? : String, expose_headers? : String, allow_credentials? : Bool, max_age? : Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_cors_allowlist(Array[String], allow_methods? : String, allow_headers? : String, expose_headers? : String, allow_credentials? : Bool, max_age? : Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
@@ -74,6 +76,8 @@ pub fn middleware_cors_with(allow_origin~ : (String) -> Bool, allow_methods? : S
 pub fn middleware_csrf(field? : String, header? : String, key? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_error_handler() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_etag() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_https_redirect(permanent? : Bool, host? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
@@ -227,6 +231,8 @@ pub fn App::trace(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::trust_proxy(Self, Int32) -> Self
 pub fn App::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn App::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
+pub fn App::use_prefix(Self, String, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
+pub fn App::use_when(Self, (Context) -> Bool, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 pub fn App::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
 pub fn App::websocket_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, @websocket.Conn) -> Unit) -> Self
 
@@ -359,6 +365,7 @@ pub fn Context::query_int64(Self, String) -> Int64?
 pub fn Context::query_string(Self) -> String
 pub fn Context::query_values(Self, String) -> Array[String]
 pub fn Context::redirect(Self, Int32, String) -> Unit
+pub fn Context::redirect_back(Self, status? : Int32, fallback? : String) -> Unit
 pub fn Context::remove_json_state(Self, String) -> Bool
 pub fn Context::remove_response_header(Self, String) -> Bool
 pub fn Context::remove_state(Self, String) -> Bool
@@ -467,6 +474,8 @@ pub fn Feather::trace(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::trust_proxy(Self, Int32) -> Self
 pub fn Feather::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn Feather::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
+pub fn Feather::use_prefix(Self, String, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
+pub fn Feather::use_when(Self, (Context) -> Bool, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 pub fn Feather::validate_body_size(Self, String) -> Bool
 pub fn Feather::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
 pub fn Feather::websocket_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, @websocket.Conn) -> Unit) -> Self

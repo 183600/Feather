@@ -37,7 +37,8 @@ long-term design notes are in [PLAN.md](PLAN.md).
   text/HTML/JSON/bytes responses, files and downloads,
   cookies (including signed cookies), flash messages, content negotiation,
   conditional requests (ETag / `If-None-Match` / `If-Modified-Since`), range
-  requests, gzip response compression, and cache-control helpers.
+  requests, gzip response compression, cache-control helpers, and safe
+  `redirect_back` handling.
 - **Async endpoints** – server-sent events (`sse`), streaming responses
   (`stream`), and WebSocket handlers (`websocket`).
 - **Server** – keep-alive HTTP/1.1 connections, request timeouts, body-size
@@ -269,6 +270,13 @@ ignore(app.get("/api/items/:id", fn(ctx) {
   }
 }))
 ```
+
+`Context::redirect_back()` returns the browser to the request's `Referer` with
+`303 See Other` by default. It never redirects off-site: a same-host absolute
+referer contributes only its local path and query, while another host, a
+non-HTTP scheme, control characters, or a protocol-relative `//host` target
+fall back to `/` (or the `fallback=` value). Pass `status=` to use a different
+redirect status after a form submission.
 
 `Context::fresh` also accepts `last_modified=` (an HTTP-date), so handlers that
 only track a modification time can answer `If-Modified-Since` with `304`:
