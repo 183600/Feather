@@ -1,8 +1,9 @@
 ///|
-/// Number of open file descriptors on Linux, or `None` on hosts without
-/// `/proc`. The directory handle used for the count is included on both sides
-/// of a before/after comparison, so its own descriptor cancels out.
-async fn static_redirect_fd_count() -> Int? {
+/// Number of open descriptors on Linux whose target is `prefix` or a file below
+/// it, or `None` on hosts without `/proc`. Restricting the count to the test's
+/// temporary directory keeps unrelated descriptors held by concurrently running
+/// tests from making the leak check flaky.
+async fn static_redirect_fd_count(prefix : String) -> Int? {
   let dir = @fs.opendir("/proc/self/fd") catch { _ => return None }
   let entries = dir.read_all() catch {
     _ => {
@@ -11,7 +12,14 @@ async fn static_redirect_fd_count() -> Int? {
     }
   }
   dir.close()
-  Some(entries.length())
+  let mut count = 0
+  for entry in entries {
+    let target = @fs.realpath("/proc/self/fd/" + entry) catch { _ => "" }
+    if target == prefix || target.has_prefix(prefix + "/") {
+      count = count + 1
+    }
+  }
+  Some(count)
 }
 
 ///|
@@ -35,13 +43,13 @@ async test "static mount root redirects release their probe handles" {
     // keep-alive socket so connection descriptors cannot skew the result.
     let warm = static_redirect_get(conn, "/assets")
     assert_true(warm.has_prefix("HTTP/1.1 301"), msg=warm)
-    match static_redirect_fd_count() {
+    match static_redirect_fd_count(dir) {
       Some(before) => {
         let first = static_redirect_get(conn, "/assets")
         assert_true(first.has_prefix("HTTP/1.1 301"), msg=first)
         let second = static_redirect_get(conn, "/assets?theme=dark")
         assert_true(second.has_prefix("HTTP/1.1 301"), msg=second)
-        match static_redirect_fd_count() {
+        match static_redirect_fd_count(dir) {
           Some(after) =>
             assert_true(
               after <= before,
