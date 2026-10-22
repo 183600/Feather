@@ -2518,18 +2518,43 @@ async fn handle_static(
     // still has to be consumed under the application-wide limit: a static
     // request must not smuggle an unbounded body past `App::max_body_size`
     // just because no handler ever asks for it.
-    ignore(
-      read_body_bytes(body, app.max_body_size) catch {
-        PayloadTooLarge => {
-          send_error_and_close(conn, 413, "413 Payload Too Large", head)
-          return
+    let raw_body = read_body_bytes(body, app.max_body_size) catch {
+      PayloadTooLarge => {
+        send_error_and_close(conn, 413, "413 Payload Too Large", head)
+        return
+      }
+      _ => {
+        send_error_and_close(conn, 500, "500 Internal Server Error", head)
+        return
+      }
+    }
+    // The dynamic path decodes a gzip request body before applying the limit
+    // to the expanded bytes. The fast path must do the same, otherwise a small
+    // compressed body could bypass `App::max_body_size` on a static URL.
+    match request.headers.get(header_content_encoding) {
+      Some(value) =>
+        if request_content_encoding_is_gzip(value.view()) {
+          ignore(
+            decode_gzip_body(raw_body, app.max_body_size) catch {
+              PayloadTooLarge => {
+                send_error_and_close(conn, 413, "413 Payload Too Large", head)
+                return
+              }
+              MalformedRequestBody => {
+                send_simple(conn, 400, "400 Bad Request", head)
+                return
+              }
+              _ => {
+                send_error_and_close(
+                  conn, 500, "500 Internal Server Error", head,
+                )
+                return
+              }
+            },
+          )
         }
-        _ => {
-          send_error_and_close(conn, 500, "500 Internal Server Error", head)
-          return
-        }
-      },
-    )
+      None => ()
+    }
     serve_static_file(
       conn,
       file_path,
