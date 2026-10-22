@@ -9052,6 +9052,29 @@ fn drop_satisfied_if_match(
 }
 
 ///|
+/// Request-state keys remembering the validators that made the last
+/// `Context::fresh` call report the representation as fresh.
+const FRESH_ETAG_STATE_KEY : String = "__feather_fresh_etag"
+const FRESH_LAST_MODIFIED_STATE_KEY : String = "__feather_fresh_last_modified"
+
+///|
+fn Context::remember_fresh_validators(
+  self : Context,
+  etag : String,
+  last_modified : String?,
+) -> Unit {
+  if etag != "" {
+    self.state.set(FRESH_ETAG_STATE_KEY, etag)
+  }
+  match last_modified {
+    Some(value) => if value != "" {
+      self.state.set(FRESH_LAST_MODIFIED_STATE_KEY, value)
+    }
+    None => ()
+  }
+}
+
+///|
 /// Whether the request's conditional headers report that the representation
 /// described by `etag` and/or `last_modified` is still fresh.
 ///
@@ -9061,11 +9084,17 @@ fn drop_satisfied_if_match(
 /// date-only `If-Modified-Since` requests; date validation only applies to
 /// `GET` and `HEAD`, the methods for which a `304` is defined. Returns `false`
 /// when neither validator matches or both are absent/invalid.
+///
+/// When the answer is `true`, the validators are remembered so a following
+/// `Context::not_modified()` without arguments can repeat the same `ETag` and
+/// `Last-Modified` that the matching `200` response would carry.
 pub fn Context::fresh(
   self : Context,
   etag : String,
   last_modified? : String,
 ) -> Bool {
+  ignore(self.state.remove(FRESH_ETAG_STATE_KEY))
+  ignore(self.state.remove(FRESH_LAST_MODIFIED_STATE_KEY))
   let none_match = self.header("If-None-Match")
   // Presence matters, not just a non-empty value: an empty or malformed
   // `If-None-Match` field still takes precedence over `If-Modified-Since`
@@ -9075,10 +9104,15 @@ pub fn Context::fresh(
     // condition. Without a representation ETag only the wildcard can match:
     // `*` names any existing representation, so it stays true even when the
     // caller does not have a validator to pass.
-    if etag == "" {
-      return etag_header_matches(none_match.view(), "")
+    let matched = if etag == "" {
+      etag_header_matches(none_match.view(), "")
+    } else {
+      etag_header_matches(none_match.view(), etag)
     }
-    return etag_header_matches(none_match.view(), etag)
+    if matched {
+      self.remember_fresh_validators(etag, last_modified)
+    }
+    return matched
   }
   // A date validator only makes sense for the safe retrieval methods.
   let http_method = normalize_method(self.request.method)
@@ -9103,10 +9137,14 @@ pub fn Context::fresh(
       }
     None => None
   }
-  match (modified, since) {
+  let matched = match (modified, since) {
     (Some(modified), Some(since)) => modified <= since
     _ => false
   }
+  if matched {
+    self.remember_fresh_validators(etag, last_modified)
+  }
+  matched
 }
 
 ///|
@@ -9123,11 +9161,19 @@ pub fn Context::not_modified(
   ignore(remove_header_ignore_case(self.response.headers, "Content-Length"))
   ignore(remove_header_ignore_case(self.response.headers, "Content-Range"))
   ignore(remove_header_ignore_case(self.response.headers, "Content-Disposition"))
-  match etag {
+  let resolved_etag = match etag {
+    Some(value) => Some(value)
+    None => self.state.get(FRESH_ETAG_STATE_KEY)
+  }
+  let resolved_last_modified = match last_modified {
+    Some(value) => Some(value)
+    None => self.state.get(FRESH_LAST_MODIFIED_STATE_KEY)
+  }
+  match resolved_etag {
     Some(etag) => set_header_ignore_case(self.response.headers, "ETag", etag)
     None => ()
   }
-  match last_modified {
+  match resolved_last_modified {
     Some(last_modified) =>
       set_header_ignore_case(
         self.response.headers,
