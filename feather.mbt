@@ -1520,6 +1520,9 @@ fn respond_options_with_allow(ctx : Context, allow : String) -> Unit {
   ctx.file = None
   ctx.response.status = 204
   clear_replaced_body_headers(ctx.response.headers)
+  // A 204 carries no representation, so a content type prepared for an
+  // earlier response must not leak into the automatic OPTIONS answer.
+  ignore(remove_header_ignore_case(ctx.response.headers, "Content-Type"))
   set_header_ignore_case(ctx.response.headers, "Allow", allow)
   ctx.response.data = None
   ctx.response.body = ""
