@@ -5572,12 +5572,12 @@ pub fn Context::form_default(
 }
 
 ///|
-/// The parsed query string, keyed by name. The result is the cached parse;
-/// treat it as read-only instead of mutating it.
+/// The parsed query string, keyed by name. The result is a fresh copy, so
+/// mutating it cannot disturb a later request that carries the same query.
 pub fn Context::queries(self : Context) -> Map[String, String] {
   let path = self.request.path
   match path_query_index(path) {
-    Some(index) => query_map_lookup(path, index)
+    Some(index) => query_map_lookup(path, index).copy()
     None => Map([])
   }
 }
@@ -5619,8 +5619,8 @@ fn collect_values(source : StringView, name : String) -> Array[String] {
 
 ///|
 /// Collect every value of a possibly repeated query parameter, in the order
-/// they appear in the query string. The result is the cached parse; treat it
-/// as read-only instead of mutating it.
+/// they appear in the query string. The result is a fresh array, so mutating
+/// it cannot disturb a later request that carries the same query.
 pub fn Context::query_values(self : Context, name : String) -> Array[String] {
   match path_query_index(self.request.path) {
     Some(index) =>
@@ -5628,7 +5628,7 @@ pub fn Context::query_values(self : Context, name : String) -> Array[String] {
         collect_values(query_source_view(self.request.path, index), name)
       } else {
         match query_multi_lookup(self.request.path, index).get(name) {
-          Some(values) => values
+          Some(values) => values.copy()
           None => []
         }
       }
@@ -5641,8 +5641,8 @@ pub fn Context::query_values(self : Context, name : String) -> Array[String] {
 /// order they appear in the request body.
 ///
 /// Returns an empty array when the body is not
-/// `application/x-www-form-urlencoded`. The result is the cached parse; treat
-/// it as read-only instead of mutating it.
+/// `application/x-www-form-urlencoded`. The result is a fresh array, so
+/// mutating it cannot disturb a later request that carries the same body.
 pub fn Context::form_values(self : Context, name : String) -> Array[String] {
   if !self.is_form() {
     return []
@@ -5651,20 +5651,21 @@ pub fn Context::form_values(self : Context, name : String) -> Array[String] {
     collect_values(self.request.body.view(), name)
   } else {
     match form_values_lookup(self.request.body).get(name) {
-      Some(values) => values
+      Some(values) => values.copy()
       None => []
     }
   }
 }
 
 ///|
-/// The parsed url-encoded form body, keyed by name. The result is the cached
-/// parse; treat it as read-only instead of mutating it.
+/// The parsed url-encoded form body, keyed by name. The result is a fresh
+/// copy, so mutating it cannot disturb a later request that carries the same
+/// body.
 pub fn Context::form_map(self : Context) -> Map[String, String] {
   if !self.is_form() {
     return Map([])
   }
-  form_map_lookup(self.request.body)
+  form_map_lookup(self.request.body).copy()
 }
 
 ///|
