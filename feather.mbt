@@ -8897,12 +8897,11 @@ pub fn App::handle(self : App, ctx : Context) -> Unit raise {
 }
 
 ///|
-/// Drop the buffered body of a `HEAD` response while keeping the framing the
-/// server would send: a non-empty body leaves its byte length in
-/// `Content-Length`, an empty body on a status that forbids one clears the
-/// header, and a status without a body drops any seeded length. `App::respond`
-/// and `App::respond_async` call this so their offline replies match the wire
-/// format produced by `send_response`.
+/// Drop the buffered body of a `HEAD` response while keeping its framing: a
+/// non-empty body leaves its byte length in `Content-Length`, an empty body
+/// advertises a zero length like the matching `GET`, and a status that forbids
+/// a body drops any seeded length. `App::respond` and `App::respond_async` call
+/// this so offline replies match the wire format produced by `send_response`.
 fn strip_head_body(response : Response) -> Unit {
   let body_allowed = response.status >= 200 &&
     response.status != 204 &&
@@ -8924,7 +8923,8 @@ fn strip_head_body(response : Response) -> Unit {
           "Content-Length",
           length.to_string(),
         )
-      None => ()
+      None =>
+        set_header_ignore_case(response.headers, "Content-Length", "0")
     }
   } else {
     ignore(remove_header_ignore_case(response.headers, "Content-Length"))

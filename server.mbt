@@ -855,10 +855,13 @@ async fn send_response(
         }
     }
     headers.set(header_content_length, body_length.to_string())
-  } else if !body_allowed || !head {
+  } else if head && body_allowed {
+    // A HEAD response has no bytes but must advertise the same zero length as
+    // the matching GET, replacing any stale length seeded by middleware.
+    headers.set(header_content_length, "0")
+  } else {
     // An empty body is framed by the runtime (zero bytes); a `Content-Length`
-    // seeded by middleware must not claim otherwise. A `HEAD` response keeps a
-    // handler-supplied length, since it advertises what the `GET` would send.
+    // seeded by middleware must not claim otherwise.
     headers.remove(header_content_length)
   }
   if response.cookies.length() > 0 {
