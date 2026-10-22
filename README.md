@@ -223,10 +223,11 @@ list-valued fields such as `Vary` and `Link` with a comma, while
 Cookie helpers accept `max_age` and an absolute `expires` timestamp in Unix
 seconds.
 
-`app.compress(min_size=1024)` enables gzip compression for eligible responses.
-Handlers can override this per response with `ctx.compress(min_size=0)` to opt
-in even when application-wide compression is off, or `ctx.no_compress()` to opt
-out. `app.etag()` enables automatic ETag generation for responses that do not
+`app.compress(min_size=1024)` enables gzip compression for eligible responses,
+including static files and `Context::file` downloads with a compressible media
+type. Handlers can override this per response with `ctx.compress(min_size=0)` to
+opt in even when application-wide compression is off, or `ctx.no_compress()` to
+opt out. `app.etag()` enables automatic ETag generation for responses that do not
 set one; `ctx.etag()` / `ctx.no_etag()` make the same decision for a single
 response, so route middleware can cache just an API subset.
 

@@ -552,6 +552,8 @@ async fn send_file_response(
   request : @http.Request,
   connect~ : Bool = false,
   auto_etag~ : Bool = true,
+  compress_enabled~ : Bool = false,
+  compress_min_size~ : Int32 = 1024,
 ) -> Unit {
   // A 2xx CONNECT response establishes a tunnel rather than carrying a
   // representation, so the prepared file is not sent and no length is framed.
@@ -600,25 +602,6 @@ async fn send_file_response(
     )
     return
   }
-  // A queued file response has no compressed variant, so a client that
-  // explicitly refuses identity has no acceptable representation.
-  let refuses_identity = match request.headers.get(header_accept_encoding) {
-    Some(value) => accept_encoding_refuses_identity(value)
-    None => false
-  }
-  if refuses_identity && status_allows_body(response.status) {
-    send_static_error(
-      conn,
-      response.headers,
-      response.cookies,
-      head,
-      406,
-      "406 Not Acceptable",
-      false,
-      vary_encoding=true,
-    )
-    return
-  }
   let size = handle.size() catch {
     _ => {
       send_static_error(
@@ -635,25 +618,123 @@ async fn send_file_response(
   }
   let mtime = handle.mtime() catch { _ => (0L, 0) }
   let (mtime_secs, mtime_nanos) = mtime
-  let (etag, last_modified, _) = file_validators(
+  let (etag, last_modified, content_type_value) = file_validators(
     file.path,
     size,
     mtime_secs,
     mtime_nanos,
     cache_key=file.path,
   )
+  let accept_encoding = request.headers.get(header_accept_encoding)
+  let refuses_identity = match accept_encoding {
+    Some(value) => accept_encoding_refuses_identity(value)
+    None => false
+  }
+  let effective_content_type = match
+    get_header_ignore_case(response.headers, "Content-Type") {
+    Some(value) => value
+    None =>
+      if file.content_type != "" {
+        file.content_type
+      } else {
+        content_type_value
+      }
+  }
+  let no_transform = match
+    get_header_ignore_case(response.headers, "Cache-Control") {
+    Some(control) =>
+      cache_control_has_directive(control.view(), "no-transform".view())
+    None => false
+  }
+  // A file response is a representation like any other, so the application's
+  // gzip setting applies when the media type is compressible and the handler
+  // did not opt out or provide an encoding of its own. Ranges and validators
+  // below are computed over the representation that is actually sent.
+  let compressible = compress_enabled &&
+    status_allows_body(response.status) &&
+    response.status != 206 &&
+    !no_transform &&
+    get_header_ignore_case(response.headers, "Content-Encoding") is None &&
+    get_header_ignore_case(response.headers, "Content-Range") is None &&
+    content_type_is_compressible(effective_content_type.view())
+  let mut compressed_body : Bytes? = None
+  if compressible {
+    match accept_encoding {
+      Some(value) =>
+        if accept_encoding_allows_gzip_cached(value) &&
+          (
+            refuses_identity ||
+            size >= compress_min_size.to_int64()
+          ) {
+          match read_file_bytes(handle, size) {
+            Some(raw) => {
+              let compressed : Bytes? = Some(gzip_compress(raw)) catch {
+                _ => None
+              }
+              match compressed {
+                Some(bytes) =>
+                  if refuses_identity || bytes.length() < raw.length() {
+                    compressed_body = Some(bytes)
+                  }
+                None => ()
+              }
+            }
+            None => ()
+          }
+        }
+      None => ()
+    }
+  }
+  let serving_gzip = compressed_body is Some(_)
+  if !serving_gzip && refuses_identity && status_allows_body(response.status) {
+    send_static_error(
+      conn,
+      response.headers,
+      response.cookies,
+      head,
+      406,
+      "406 Not Acceptable",
+      false,
+      vary_encoding=true,
+    )
+    return
+  }
+  let vary_encoding = compressible
   // `Context::no_etag` suppresses only the generated validator; an explicit
   // handler/middleware ETag is still preserved below.
-  let generated_etag = if auto_etag { etag } else { "" }
-  let headers = static_base_headers(response.headers, response.cookies, 4)
+  let generated_etag = if auto_etag {
+    if serving_gzip {
+      "W/" + etag
+    } else {
+      etag
+    }
+  } else {
+    ""
+  }
+  let headers = static_base_headers(response.headers, response.cookies, 6)
   if !headers.contains(header_content_type) {
-    headers.set(header_content_type, file.content_type)
+    headers.set(header_content_type, effective_content_type)
+  }
+  if serving_gzip {
+    headers.set(header_content_encoding, "gzip")
+    // A transformed representation is only weakly equivalent to the original
+    // file, so an ETag supplied by a handler must become weak as well.
+    match get_header_ignore_case(response.headers, "ETag") {
+      Some(value) =>
+        if !value.has_prefix("W/") {
+          headers.set(header_etag, "W/" + value)
+        }
+      None => ()
+    }
   }
   if generated_etag != "" && !headers.contains(header_etag) {
     headers.set(header_etag, generated_etag)
   }
   if !headers.contains(header_last_modified) {
     headers.set(header_last_modified, last_modified)
+  }
+  if vary_encoding {
+    add_vary_header(headers, "Accept-Encoding")
   }
   // A handler may override `ETag` / `Last-Modified`; preconditions must be
   // evaluated against the validators the response actually advertises.
@@ -702,14 +783,18 @@ async fn send_file_response(
       PreconditionPass => ()
     }
   }
+  let representation_size = match compressed_body {
+    Some(bytes) => bytes.length().to_int64()
+    None => size
+  }
   let mut status = response.status
   let mut start = 0L
-  let mut length = size
+  let mut length = representation_size
   if response.status == 200 && request.meth is @http.Get {
     match request.headers.get(header_range) {
       Some(value) =>
         if if_range_allows(request, effective_etag, effective_mtime) {
-          match parse_byte_range(value, size) {
+          match parse_byte_range(value, representation_size) {
             ByteRangeSpec(range_start, range_end) => {
               status = 206
               start = range_start
@@ -718,7 +803,11 @@ async fn send_file_response(
             ByteRangeInvalid => {
               headers.remove(header_content_length)
               headers.remove(header_content_type)
-              headers.set(header_content_range, "bytes */" + size.to_string())
+              headers.remove(header_content_encoding)
+              headers.set(
+                header_content_range,
+                "bytes */" + representation_size.to_string(),
+              )
               send_with_date(
                 conn,
                 416,
@@ -743,7 +832,7 @@ async fn send_file_response(
       "-" +
       (start + length - 1L).to_string() +
       "/" +
-      size.to_string(),
+      representation_size.to_string(),
     )
   }
   if !headers.contains(header_accept_ranges) {
@@ -763,7 +852,10 @@ async fn send_file_response(
     cookies=response.cookies,
   )
   if !head && body_allowed && length > 0L {
-    write_file_range(conn, handle, start, length)
+    match compressed_body {
+      Some(bytes) => write_bytes_range(conn, bytes, start, length)
+      None => write_file_range(conn, handle, start, length)
+    }
   }
   conn.end_response()
 }
@@ -1135,7 +1227,8 @@ async fn send_context_response(
   finalize_dynamic_response(app, request, ctx)
   let connect = request.meth is @http.Connect
   match ctx.file_response() {
-    Some(file) =>
+    Some(file) => {
+      let (compress, compress_min_size) = compression_settings(app, ctx)
       send_file_response(
         conn,
         ctx.response,
@@ -1144,7 +1237,10 @@ async fn send_context_response(
         request,
         connect~,
         auto_etag=response_file_etag_enabled(ctx),
+        compress_enabled=compress,
+        compress_min_size~,
       )
+    }
     None => send_response(conn, ctx.response, head, connect~)
   }
 }
@@ -2206,7 +2302,8 @@ async fn handle_static(
     // instead of trying to send a second response on it.
     response_started.val = true
     match ctx.file_response() {
-      Some(file) =>
+      Some(file) => {
+        let (compress, min_size) = compression_settings(app, ctx)
         send_file_response(
           conn,
           ctx.response,
@@ -2214,7 +2311,10 @@ async fn handle_static(
           head,
           request,
           auto_etag=response_file_etag_enabled(ctx),
+          compress_enabled=compress,
+          compress_min_size=min_size,
         )
+      }
       None => {
         let (input, allows_not_modified) = precondition_input_http(request)
         let (failed, remaining) = precheck_preconditions(
@@ -2252,7 +2352,7 @@ async fn build_response(
   request : @http.Request,
   body : &@io.Reader,
   conn : @http.ServerConnection,
-) -> (Response, FileResponse?, Bool) {
+) -> (Response, FileResponse?, Bool, Bool, Int32) {
   let (req, raw_body) = request_from_http(request, body, app.max_body_size)
   let ctx = app.context_for_request(req)
   attach_raw_body(ctx, raw_body)
@@ -2267,8 +2367,9 @@ async fn build_response(
   }
   let file = ctx.file_response()
   let auto_etag = response_file_etag_enabled(ctx)
+  let (compress, compress_min_size) = compression_settings(app, ctx)
   finalize_dynamic_response(app, request, ctx)
-  (ctx.response, file, auto_etag)
+  (ctx.response, file, auto_etag, compress, compress_min_size)
 }
 
 ///|
@@ -2646,7 +2747,8 @@ async fn handle_request(
       None => ()
     }
   }
-  let (response, file, auto_etag) = if app.timeout > 0 {
+  let (response, file, auto_etag, compress, compress_min_size) = if app.timeout >
+    0 {
     @async.with_timeout(app.timeout, () => {
       build_response(app, request, body, conn)
     }) catch {
@@ -2695,6 +2797,8 @@ async fn handle_request(
         request,
         connect=request.meth is @http.Connect,
         auto_etag~,
+        compress_enabled=compress,
+        compress_min_size~,
       )
     None =>
       send_response(
