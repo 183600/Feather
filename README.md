@@ -224,6 +224,13 @@ HTTP/1.0 clients that omit it.
 handler runs, which is useful for allowing only small payloads on a specific
 route while `App::max_body_size` keeps the server-wide bound.
 
+On a server that is exposed directly rather than behind a trusted reverse
+proxy, `middleware_strip_forwarded_headers()` removes `Forwarded`,
+`X-Forwarded-*` and `X-Real-IP` from the request, so a client cannot spoof
+`Context::protocol`, `Context::full_url`, `Context::forwarded_ip` or
+`Context::is_secure`. Do not install it behind a proxy whose forwarded values
+you need.
+
 `App::use_prefix("/api", middleware)` installs middleware only for a path
 segment and everything below it, so authentication, CORS or cache policy can
 apply to part of an application without creating a `RouteGroup`. Matching is

@@ -157,3 +157,36 @@ fn trusted_client_address(
     address
   }
 }
+
+///|
+/// Middleware that removes proxy forwarding headers from the request before
+/// downstream middleware and handlers run.
+///
+/// `Context::protocol`, `Context::forwarded_authority`, `Context::full_url`
+/// and `Context::forwarded_ip` honor `Forwarded`, `X-Forwarded-*` and
+/// `X-Real-IP` values supplied by the client. That is what an application
+/// behind a trusted reverse proxy wants, but on a directly exposed server the
+/// same headers are attacker-controlled and can spoof the scheme, host or
+/// client address. Install this middleware at the front of such an application
+/// so those fields fall back to the connection's peer address and the `Host`
+/// header. It is a no-op for every header except the forwarding set, and a
+/// proxy-fronted deployment should simply not install it.
+pub fn middleware_strip_forwarded_headers() -> Middleware {
+  let names : Array[String] = [
+    "Forwarded",
+    "X-Forwarded-For",
+    "X-Forwarded-Host",
+    "X-Forwarded-Proto",
+    "X-Forwarded-Port",
+    "X-Forwarded-Prefix",
+    "X-Real-IP",
+  ]
+  fn(next) {
+    fn(ctx) raise {
+      for name in names {
+        ignore(remove_header_ignore_case(ctx.request.headers, name))
+      }
+      next(ctx)
+    }
+  }
+}

@@ -105,6 +105,8 @@ pub fn middleware_secure_headers(content_type_options? : String, frame_options? 
 
 pub fn middleware_session(SessionStore, cookie? : String, path? : String, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool, partitioned? : Bool, rolling? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
+pub fn middleware_strip_forwarded_headers() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
 pub fn mime_type_for(String) -> String
 
 pub fn multipart_boundary(String) -> String?
