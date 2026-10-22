@@ -488,6 +488,26 @@ test "Context cookies returns an isolated map" {
 }
 
 ///|
+test "Context cookies prefer the first of duplicate names" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: { "Cookie": "sid=app; theme=dark; sid=root" },
+    body: "",
+  })
+  assert_eq(ctx.cookie("sid"), Some("app"))
+  assert_eq(ctx.cookie("theme"), Some("dark"))
+  assert_eq(ctx.cookies().get("sid"), Some("app"))
+  let quoted = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: { "Cookie": "a=\"first\"; a=second" },
+    body: "",
+  })
+  assert_eq(quoted.cookie("a"), Some("first"))
+}
+
+///|
 test "Context set_cookie renders attributes" {
   let ctx = @feather.create_context()
   ctx.set_cookie(

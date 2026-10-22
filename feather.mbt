@@ -2866,6 +2866,12 @@ fn is_cookie_whitespace(code : UInt16) -> Bool {
 }
 
 ///|
+/// Parse a `Cookie` request header into a name-to-value map.
+///
+/// User agents order same-name cookies with the longest (most specific) path
+/// first (RFC 6265 §5.4), so the first occurrence is the one to use. Later
+/// duplicates are ignored instead of shadowing a more specific cookie (such as
+/// a session scoped to `/app`).
 fn parse_cookie_map(header : StringView) -> Map[String, String] {
   let cookies : Map[String, String] = Map([], capacity=8)
   let length = header.length()
@@ -2908,7 +2914,9 @@ fn parse_cookie_map(header : StringView) -> Map[String, String] {
           } else {
             header[raw_start:stop].to_owned()
           }
-          cookies.set(name, value)
+          if !cookies.contains(name) {
+            cookies.set(name, value)
+          }
         }
       }
     }
