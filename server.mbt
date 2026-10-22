@@ -1543,8 +1543,13 @@ async fn serve_static_file(
   redirect_directories : Bool,
   extra_headers : Map[String, String],
   cookies : Array[@http.Cookie],
+  response_started~ : Ref[Bool],
   auto_etag~ : Bool = true,
 ) -> Unit {
+  // From here on every path writes a response header. Record that before the
+  // first await so a timeout racing with file lookup or streaming closes the
+  // connection instead of attempting a second (invalid) response.
+  response_started.val = true
   let accept_encoding = request.headers.get(header_accept_encoding)
   let refuses_identity = match accept_encoding {
     Some(value) => accept_encoding_refuses_identity(value)
@@ -1855,6 +1860,7 @@ async fn handle_static(
   precompressed : Bool,
   mount : StaticMount,
   head : Bool,
+  response_started~ : Ref[Bool],
 ) -> Unit {
   if app.middlewares.length() == 0 && mount.middlewares.length() == 0 {
     // The middleware-free fast path skips `request_from_http`, but the body
@@ -1883,6 +1889,7 @@ async fn handle_static(
       !mount.index.is_empty(),
       Map([]),
       [],
+      response_started~,
     )
     return
   }
@@ -1962,6 +1969,7 @@ async fn handle_static(
       !mount.index.is_empty(),
       ctx.response.headers,
       ctx.response.cookies,
+      response_started~,
       auto_etag=response_file_etag_enabled(ctx),
     )
   } else {
@@ -2348,16 +2356,25 @@ async fn handle_request(
         // redirected), matching the behaviour of trailing-slash requests.
         if !(mount.index.is_empty() && static_target_is_directory(file_path)) {
           // Static requests read the body and serve files just like dynamic
-          // ones, so they must obey the same per-request timeout.
+          // ones, so they must obey the same per-request timeout. Once a
+          // response header has been written, a late timeout can only close
+          // the connection: sending a second 504 would abort the runtime's
+          // response state machine.
+          let response_started = Ref(false)
           if app.timeout > 0 {
             @async.with_timeout(app.timeout, () => {
               handle_static(
                 app, request, body, conn, file_path, cache_control, precompressed, mount,
                 head,
+                response_started~,
               )
             }) catch {
               @async.TimeoutError =>
-                send_error_and_close(conn, 504, "504 Gateway Timeout", head)
+                if response_started.val {
+                  conn.close()
+                } else {
+                  send_error_and_close(conn, 504, "504 Gateway Timeout", head)
+                }
               _ =>
                 send_error_and_close(
                   conn, 500, "500 Internal Server Error", head,
@@ -2367,6 +2384,7 @@ async fn handle_request(
             handle_static(
               app, request, body, conn, file_path, cache_control, precompressed, mount,
               head,
+              response_started~,
             )
           }
           return
