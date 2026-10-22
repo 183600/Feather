@@ -9136,11 +9136,13 @@ fn Context::remember_fresh_validators(
 /// described by `etag` and/or `last_modified` is still fresh.
 ///
 /// A present `If-None-Match` is evaluated first and takes precedence over
-/// `If-Modified-Since`, as RFC 9110 requires. Pass `last_modified` (an
-/// HTTP-date such as the value returned by `format_http_date`) to also answer
-/// date-only `If-Modified-Since` requests; date validation only applies to
-/// `GET` and `HEAD`, the methods for which a `304` is defined. Returns `false`
-/// when neither validator matches or both are absent/invalid.
+/// `If-Modified-Since`, as RFC 9110 requires. Both conditions only apply to
+/// `GET` and `HEAD`, the methods for which a `304` is defined; on any other
+/// method this returns `false` so a handler cannot accidentally answer a
+/// conditional `POST`/`PUT` with `304`. Pass `last_modified` (an HTTP-date such
+/// as the value returned by `format_http_date`) to also answer date-only
+/// `If-Modified-Since` requests. Returns `false` when neither validator matches
+/// or both are absent/invalid.
 ///
 /// When the answer is `true`, the validators are remembered so a following
 /// `Context::not_modified()` without arguments can repeat the same `ETag` and
@@ -9152,11 +9154,18 @@ pub fn Context::fresh(
 ) -> Bool {
   ignore(self.state.remove(FRESH_ETAG_STATE_KEY))
   ignore(self.state.remove(FRESH_LAST_MODIFIED_STATE_KEY))
+  let http_method = normalize_method(self.request.method)
+  let allows_not_modified = http_method == "GET" || http_method == "HEAD"
   let none_match = self.header("If-None-Match")
   // Presence matters, not just a non-empty value: an empty or malformed
   // `If-None-Match` field still takes precedence over `If-Modified-Since`
   // (RFC 9110 §13.1.3), so it must not fall through to the date condition.
+  // A `304` is only valid for a retrieval, so an unsafe method never reports
+  // the representation as fresh even when the tag matches.
   if self.has_header("If-None-Match") {
+    if !allows_not_modified {
+      return false
+    }
     // A present but non-matching tag must not fall back to the date
     // condition. Without a representation ETag only the wildcard can match:
     // `*` names any existing representation, so it stays true even when the
@@ -9172,8 +9181,7 @@ pub fn Context::fresh(
     return matched
   }
   // A date validator only makes sense for the safe retrieval methods.
-  let http_method = normalize_method(self.request.method)
-  if http_method != "GET" && http_method != "HEAD" {
+  if !allows_not_modified {
     return false
   }
   let modified = match last_modified {
