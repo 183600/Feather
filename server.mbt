@@ -1700,23 +1700,6 @@ async fn serve_static_file(
     }
   }
   let serving_gzip = gzip_handle is Some(_)
-  if !serving_gzip && refuses_identity {
-    match base {
-      Some(handle) => handle.close()
-      None => ()
-    }
-    send_static_error(
-      conn,
-      extra_headers,
-      cookies,
-      head,
-      406,
-      "406 Not Acceptable",
-      precompressed,
-      vary_encoding=true,
-    )
-    return
-  }
   let file = match gzip_handle {
     Some(handle) => {
       match base {
@@ -1800,6 +1783,21 @@ async fn serve_static_file(
     }
   }
   let serving_selected_gzip = serving_gzip || dynamic_gzip
+  if !serving_selected_gzip && refuses_identity {
+    // There is no acceptable representation: no precompressed sibling, no
+    // on-the-fly encoding, and the client explicitly rejected identity.
+    send_static_error(
+      conn,
+      extra_headers,
+      cookies,
+      head,
+      406,
+      "406 Not Acceptable",
+      precompressed,
+      vary_encoding=true,
+    )
+    return
+  }
   // `Vary` describes the representation-selection process, not just this
   // response: once application compression is enabled for a compressible
   // static file, a gzip-capable client must not share a cache entry with an

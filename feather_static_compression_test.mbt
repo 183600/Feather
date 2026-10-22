@@ -184,3 +184,24 @@ async test "static middleware can opt a file out of compression" {
   })
   @fs.rmdir(dir, recursive=true)
 }
+
+///|
+async test "compressed static files honor an identity refusal" {
+  let dir = @fs.tmpdir(prefix="feather-static-compress-identity")
+  let payload = "identity is not acceptable ".repeat(64)
+  @fs.write_file(dir + "/only.txt", payload)
+  let app = @feather.App::new()
+    .compress(min_size=0)
+    .static_files("/assets", dir)
+  with_server(app, client => {
+    let response = client.get(
+      "/assets/only.txt",
+      extra_headers=Map([(static_gzip_accept, "gzip, identity;q=0")]),
+    )
+    assert_eq(response.code, 200)
+    assert_eq(response.headers.get(static_content_encoding), Some("gzip"))
+    let compressed = client.read_all().binary()
+    assert_eq(@utf8.decode_lossy(gunzip_for_test(compressed)), payload)
+  })
+  @fs.rmdir(dir, recursive=true)
+}
