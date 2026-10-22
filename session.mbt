@@ -254,6 +254,13 @@ pub fn SessionStore::get(self : SessionStore, id : String) -> Session? {
 /// for a refresh.
 fn SessionStore::store(self : SessionStore, session : Session) -> Unit {
   let now = @async.now()
+  // A session that expired while the handler was running must not be written
+  // back as if it were live: the next lookup would discard it, and the client
+  // would keep a cookie for data that is already gone.
+  if session.expires_at <= now {
+    ignore(self.sessions.remove(session.id))
+    return
+  }
   if !self.sessions.contains(session.id) {
     if self.sessions.length() >= SESSION_STORE_MAX_SESSIONS {
       // The throttle may have skipped the sweep even though expired sessions
@@ -705,9 +712,19 @@ fn session_persist(
         session.regenerate = false
         if session.modified || rotated is Some(_) {
           // Keep the existing deadline for an ordinary write: a fixed-lifetime
-          // session must not slide just because its data changed.
-          store.store(session)
-          session_send_cookie(ctx, config, session.id, config.max_age)
+          // session must not slide just because its data changed. If that
+          // deadline passed during the request, discard the write and expire
+          // the client cookie instead of advertising a fresh lifetime for a
+          // session the store will drop on its next lookup.
+          if session.expires_at <= @async.now() {
+            store.destroy(session.id)
+            if had_cookie {
+              session_send_cookie(ctx, config, "", Some(0L))
+            }
+          } else {
+            store.store(session)
+            session_send_cookie(ctx, config, session.id, config.max_age)
+          }
         }
       }
   }

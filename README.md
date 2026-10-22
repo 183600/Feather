@@ -196,7 +196,10 @@ ignore(app.post("/login", fn(ctx) {
 `http_only`, `secure`, `partitioned`, and `rolling` options; `domain` scopes a
 shared session across subdomains. Sessions have a fixed lifetime by default;
 `rolling=true` refreshes the server-side deadline and cookie on every request,
-and `Context::session_touch()` performs the same refresh from a handler.
+and `Context::session_touch()` performs the same refresh from a handler. If a
+session's deadline passes while a request is running, that request's write is
+discarded and the response expires the cookie instead of handing out a
+cookie for a session the store has already dropped.
 
 ## Responses and conditional requests
 
