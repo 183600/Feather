@@ -534,6 +534,18 @@ test "Feather validate_body_size uses app max body size" {
 }
 
 ///|
+test "Feather validate_body_size counts utf-8 bytes" {
+  let config : @feather.Config = { host: "localhost", port: 8080, timeout: 0, }
+  let feather = @feather.create_feather(config)
+  ignore(feather.app.max_body_size(6))
+  assert_true(feather.validate_body_size("你好"))
+  assert_false(feather.validate_body_size("你好!"))
+  ignore(feather.app.max_body_size(4))
+  assert_true(feather.validate_body_size("😀"))
+  assert_false(feather.validate_body_size("😀😀"))
+}
+
+///|
 async test "server maps HttpError to json status" {
   let app = @feather.App::new().get("/missing", fn(ctx) raise {
     ctx.fail(404, "not here")

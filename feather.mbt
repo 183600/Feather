@@ -10330,5 +10330,5 @@ pub fn Feather::static_cache_control_for(
 
 ///|
 pub fn Feather::validate_body_size(self : Feather, body : String) -> Bool {
-  body.length() <= self.app.max_body_size
+  utf8_byte_length(body.view()) <= self.app.max_body_size
 }

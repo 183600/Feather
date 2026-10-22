@@ -960,8 +960,10 @@ test "Context state with unicode values" {
 test "Feather validate_body_size with unicode characters" {
   let config : Config = { host: "localhost", port: 3000, timeout: 5000, }
   let feather = create_feather(config)
-  let unicode_body = "Hello 世界".repeat(100) // Should be under 1000 chars
+  let unicode_body = "Hello 世界".repeat(100) // 1200 UTF-8 bytes
+  ignore(feather.app.max_body_size(1200))
   assert_true(feather.validate_body_size(unicode_body))
+  assert_false(feather.validate_body_size(unicode_body + "!"))
 }
 
 ///|
