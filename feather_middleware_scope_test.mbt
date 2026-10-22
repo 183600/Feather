@@ -229,3 +229,39 @@ test "parent and child scopes both keep their own base" {
   assert_eq(events.val.join(","), "parent-use,parent-prefix,child-use,handler")
 }
 
+///|
+async test "scoped middleware applies to a mounted child static mount" {
+  let dir = @fs.tmpdir(prefix="feather-scope-static")
+  @fs.write_file(dir + "/app.js", "console.log(1)")
+  let calls = Ref(0)
+  let child = @feather.App::new()
+    .use_prefix("/assets", fn(next) {
+      fn(ctx) raise {
+        calls.val = calls.val + 1
+        ctx.set_header("X-Scoped", "yes")
+        next(ctx)
+      }
+    })
+    .static_files("/assets", dir)
+  let parent = @feather.App::new().mount("/v1", child)
+  with_server(parent, client => {
+    let response = client.get("/v1/assets/app.js")
+    assert_eq(response.code, 200)
+    assert_eq(
+      response.headers.get(@http.CaseInsensitiveString("X-Scoped")),
+      Some("yes"),
+    )
+    ignore(client.read_all())
+    let outside = client.get("/v1/other.js")
+    assert_eq(outside.code, 404)
+    assert_eq(
+      outside.headers.get(@http.CaseInsensitiveString("X-Scoped")),
+      None,
+    )
+    ignore(client.read_all())
+  })
+  assert_eq(calls.val, 1)
+  @fs.rmdir(dir, recursive=true)
+}
+
+
