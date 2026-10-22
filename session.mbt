@@ -355,18 +355,25 @@ pub fn Context::session(self : Context) -> Session? {
 /// Id of the session attached to this request, if any. Detached sessions are
 /// given their random id on first access and saved like any other first write,
 /// so the id returned here stays stable across requests that carry its cookie.
+///
+/// Returns `None` when the session was destroyed. It will not be persisted, so
+/// minting an id for it would hand the caller a value that can never be used by
+/// a later request.
 pub fn Context::session_id(self : Context) -> String? {
   match self.session_materialized() {
-    Some(session) => {
-      let assigned = session.id == ""
-      session_ensure_id(session)
-      if assigned && !session.destroyed {
-        // Asking for the id materializes the session: without saving it the
-        // client would receive no cookie and a different id on every request.
-        session.modified = true
+    Some(session) =>
+      if session.destroyed {
+        None
+      } else {
+        let assigned = session.id == ""
+        session_ensure_id(session)
+        if assigned {
+          // Asking for the id materializes the session: without saving it the
+          // client would receive no cookie and a different id on every request.
+          session.modified = true
+        }
+        Some(session.id)
       }
-      Some(session.id)
-    }
     None => None
   }
 }
