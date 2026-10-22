@@ -84,10 +84,28 @@ fn forwarded_chain(ctx : Context) -> Array[String] {
   let chain : Array[String] = []
   let mut i = parts.length() - 1
   while i >= 0 {
-    chain.push(trim_ascii_space(parts[i]).to_owned())
+    let value = trim_ascii_space(parts[i])
+    chain.push(normalize_legacy_forwarded_address(value))
     i = i - 1
   }
   chain
+}
+
+///|
+/// Normalize one legacy forwarded address. `X-Forwarded-For` and `X-Real-IP`
+/// commonly carry an IPv4 address with its source port (and sometimes a
+/// bracketed IPv6 literal with one); the port is connection metadata, not part
+/// of the client address, so it is stripped just like the RFC 7239 `for=`
+/// parameter. Values that carry no recognizable address are kept verbatim.
+fn normalize_legacy_forwarded_address(value : StringView) -> String {
+  if value.is_empty() {
+    value.to_owned()
+  } else {
+    match normalize_forwarded_for(value) {
+      Some(address) => address
+      None => value.to_owned()
+    }
+  }
 }
 
 ///|

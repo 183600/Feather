@@ -229,3 +229,54 @@ test "the rate limiter groups requests by the trusted client address" {
   })
   assert_eq(other.status, 200)
 }
+
+///|
+test "x-forwarded-for strips source ports from trusted client addresses" {
+  let one = ip_app(1)
+  assert_eq(
+    ip_of(one, Map([("X-Forwarded-For", "203.0.113.7:4711")])),
+    "203.0.113.7",
+  )
+  assert_eq(
+    ip_of(
+      one,
+      Map([("X-Forwarded-For", "203.0.113.7:4711, 198.51.100.4:5123")]),
+    ),
+    "198.51.100.4",
+  )
+  let two = ip_app(2)
+  assert_eq(
+    ip_of(
+      two,
+      Map([("X-Forwarded-For", "203.0.113.7:4711, 198.51.100.4:5123")]),
+    ),
+    "203.0.113.7",
+  )
+}
+
+///|
+test "forwarded_ip normalizes legacy forwarded addresses" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/ip",
+    headers: Map([("X-Forwarded-For", "203.0.113.7:4711, 198.51.100.4")]),
+    body: "",
+  })
+  assert_eq(ctx.forwarded_ip(), "203.0.113.7")
+  let real = @feather.Context::new({
+    method: "GET",
+    path: "/ip",
+    headers: Map([("X-Real-IP", "[2001:db8::1]:4711")]),
+    body: "",
+  })
+  assert_eq(real.forwarded_ip(), "[2001:db8::1]")
+  // A forwarding node that is not an address is still reported as written,
+  // matching the previous fallback behaviour.
+  let unknown = @feather.Context::new({
+    method: "GET",
+    path: "/ip",
+    headers: Map([("X-Forwarded-For", "unknown")]),
+    body: "",
+  })
+  assert_eq(unknown.forwarded_ip(), "unknown")
+}

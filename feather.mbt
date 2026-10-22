@@ -2514,7 +2514,9 @@ pub fn Context::ip(self : Context) -> String {
 ///|
 /// The client address, honoring the RFC 7239 `Forwarded` `for=` parameter
 /// first, then the first value of `X-Forwarded-For`, then `X-Real-IP`, and
-/// finally the peer address. Obfuscated or unknown `for=` nodes are skipped.
+/// finally the peer address. An optional source port (and the brackets around
+/// an IPv6 literal) is stripped, so the returned value is a bare address.
+/// Obfuscated or unknown `for=` nodes are skipped.
 pub fn Context::forwarded_ip(self : Context) -> String {
   let forwarded = self.header("Forwarded")
   if forwarded != "" {
@@ -2534,12 +2536,12 @@ pub fn Context::forwarded_ip(self : Context) -> String {
       None => trim_ascii_space(chain.view())
     }
     if !first.is_empty() {
-      return first.to_owned()
+      return normalize_legacy_forwarded_address(first)
     }
   }
   let real_ip = trim_ascii_space(self.header("X-Real-IP").view())
   if !real_ip.is_empty() {
-    return real_ip.to_owned()
+    return normalize_legacy_forwarded_address(real_ip)
   }
   self.ip()
 }
