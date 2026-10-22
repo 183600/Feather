@@ -188,6 +188,24 @@ test "scoped middleware is relative to a mounted child" {
 }
 
 ///|
+test "scoped middleware is relative to a dynamic mount prefix" {
+  let calls = Ref(0)
+  let child = @feather.App::new()
+    .use_prefix("/api", scope_test_mark("yes", calls))
+    .get("/api/items", scope_test_handler)
+    .get("/other", scope_test_handler)
+  let parent = @feather.App::new().mount("/tenant/:id", child)
+  let mounted = parent.respond(
+    scope_test_request("/tenant/acme/api/items"),
+  )
+  assert_eq(mounted.status, 200)
+  assert_eq(mounted.body, "in")
+  let outside = parent.respond(scope_test_request("/tenant/acme/other"))
+  assert_eq(outside.body, "out")
+  assert_eq(calls.val, 1)
+}
+
+///|
 test "nested mounts compose their scoped prefixes" {
   let calls = Ref(0)
   let leaf = @feather.App::new()
