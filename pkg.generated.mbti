@@ -356,6 +356,7 @@ pub fn Context::remove_state(Self, String) -> Bool
 pub fn Context::request_id(Self) -> String
 pub fn Context::response_header(Self, String) -> String
 pub fn Context::route_method(Self) -> String
+pub fn Context::route_name(Self) -> String
 pub fn Context::route_pattern(Self) -> String
 pub fn Context::run_cleanups(Self) -> Unit
 pub fn Context::session(Self) -> Session?
@@ -511,6 +512,7 @@ pub(all) struct Response {
 pub(all) struct Route {
   path : String
   method : String
+  name : String
   params : Map[String, String]
   wildcard : String
   wildcard_name : String
@@ -554,6 +556,7 @@ pub fn RouteGroup::websocket_with(Self, String, Array[((Context) -> Unit raise) 
 pub struct RouteNode {
   mut handler : ((Context) -> Unit raise)?
   mut route_path : String
+  mut route_name : String
   mut static_children : Map[String, RouteNode]?
   mut param_child : RouteNode?
   mut wildcard_child : RouteNode?

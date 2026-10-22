@@ -15,6 +15,10 @@ const ROUTE_PATTERN_STATE_KEY : String = "__feather_route_pattern"
 const ROUTE_METHOD_STATE_KEY : String = "__feather_route_method"
 
 ///|
+/// Request-state key holding the registered name of the route that matched.
+const ROUTE_NAME_STATE_KEY : String = "__feather_route_name"
+
+///|
 pub(all) suberror HttpError {
   HttpError(Int32, String)
 }
@@ -94,6 +98,8 @@ pub type StreamHandler = async (Context, Stream) -> Unit
 pub(all) struct Route {
   path : String
   method : String
+  /// Registered name, or `""` for an unnamed route.
+  name : String
   params : Map[String, String]
   wildcard : String
   wildcard_name : String
@@ -104,6 +110,7 @@ pub(all) struct Route {
 pub struct RouteNode {
   mut handler : Handler?
   mut route_path : String
+  mut route_name : String
   mut static_children : Map[String, RouteNode]?
   mut param_child : RouteNode?
   mut wildcard_child : RouteNode?
@@ -153,6 +160,7 @@ fn RouteNode::new() -> RouteNode {
   {
     handler: None,
     route_path: "",
+    route_name: "",
     static_children: None,
     param_child: None,
     wildcard_child: None,
@@ -678,6 +686,9 @@ pub fn Router::add_route(
   }
   node.handler = Some(handler)
   node.route_path = clean_path
+  // An unnamed registration replaces any name a previous registration of the
+  // same method and path installed.
+  node.route_name = ""
   node.param_names = param_names
   node.param_keys = param_keys
   node.pattern_kinds = pattern_kinds
@@ -719,6 +730,23 @@ pub fn Router::add_route_with(
 }
 
 ///|
+/// Attach `name` to the node registered for `meth path`. The route must have
+/// been added already; a missing node is ignored so callers can pass a cleaned
+/// path without reimplementing route normalization.
+fn Router::set_node_name(
+  self : Router,
+  meth : String,
+  path : String,
+  name : String,
+) -> Unit {
+  let clean_path = clean_path_view(path)
+  match self.find_node_raw(normalize_method(meth), clean_path) {
+    Some((node, _, _)) => node.route_name = name
+    None => ()
+  }
+}
+
+///|
 pub fn Router::add_named_route(
   self : Router,
   name : String,
@@ -728,6 +756,7 @@ pub fn Router::add_named_route(
 ) -> Unit {
   let clean_path = clean_route_path(path)
   self.add_route(meth, clean_path, handler)
+  self.set_node_name(meth, clean_path, name)
   self.named.set(name, { method: normalize_method(meth), path: clean_path, })
 }
 
@@ -744,6 +773,7 @@ pub fn Router::add_named_route_with(
 ) -> Unit {
   let clean_path = clean_route_path(path)
   self.add_route_with(meth, clean_path, middlewares, handler)
+  self.set_node_name(meth, clean_path, name)
   self.named.set(name, { method: normalize_method(meth), path: clean_path, })
 }
 
@@ -1461,6 +1491,7 @@ pub fn Router::route(
         } else {
           meth
         },
+        name: node.route_name,
         params: match params {
           // Route values are handed to callers, so keep them separate from the
           // internally cached bindings.
@@ -1482,6 +1513,7 @@ pub fn Router::matching(self : Router, meth : String, path : String) -> Route? {
     return Some({
       path: clean_path_view(path).to_owned(),
       method: normalize_method(meth),
+      name: "",
       params: Map([], capacity=0),
       wildcard: "",
       wildcard_name: "",
@@ -1545,6 +1577,7 @@ pub fn Router::dispatch_with(
   // custom router wrapper), so never let a previous match describe this one.
   ignore(ctx.state.remove(ROUTE_PATTERN_STATE_KEY))
   ignore(ctx.state.remove(ROUTE_METHOD_STATE_KEY))
+  ignore(ctx.state.remove(ROUTE_NAME_STATE_KEY))
   match self.match_dispatch(meth, clean_path) {
     DispatchFound(node, params, _) => {
       // A HEAD request can be served by a GET route, in which case the
@@ -1557,6 +1590,9 @@ pub fn Router::dispatch_with(
       }
       ctx.state.set(ROUTE_PATTERN_STATE_KEY, node.route_path)
       ctx.state.set(ROUTE_METHOD_STATE_KEY, route_method)
+      if node.route_name != "" {
+        ctx.state.set(ROUTE_NAME_STATE_KEY, node.route_name)
+      }
       bind_route_params(node, params, ctx)
       match node.handler {
         Some(handler) => handler(ctx)
@@ -2558,6 +2594,21 @@ pub fn Context::route_pattern(self : Context) -> String {
 /// route's registered method.
 pub fn Context::route_method(self : Context) -> String {
   match self.state.get(ROUTE_METHOD_STATE_KEY) {
+    Some(value) => value
+    None => ""
+  }
+}
+
+///|
+/// The name under which the matched route was registered with
+/// `App::route_named`, `RouteGroup::route_named` or `Router::add_named_route`.
+/// Returns `""` when the route is unnamed or when no ordinary route matched.
+///
+/// This is the companion of `Context::route_pattern` / `Context::route_method`
+/// for metrics grouped by named route, and it follows the same `HEAD`-to-`GET`
+/// fallback as `Context::route_method`.
+pub fn Context::route_name(self : Context) -> String {
+  match self.state.get(ROUTE_NAME_STATE_KEY) {
     Some(value) => value
     None => ""
   }
@@ -9600,10 +9651,15 @@ pub fn App::mount_with(
     self.router.add_route(method, join_paths(base, path), wrapped)
   }
   for name, named in child.router.named {
+    let mounted_path = join_paths(base, named.path)
     self.router.named.set(name, {
       method: named.method,
-      path: join_paths(base, named.path),
+      path: mounted_path,
     })
+    // The mounted route is registered through `add_route`, which clears the
+    // node's name; restore the child's name so `Context::route_name` keeps
+    // working through a mount.
+    self.router.set_node_name(named.method, mounted_path, name)
   }
   for mount in child.static_mounts {
     self.static_mounts.push({
