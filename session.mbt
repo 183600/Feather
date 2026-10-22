@@ -177,6 +177,11 @@ fn session_detached(ttl : Int64) -> Session {
 const SESSION_LAZY_KEY : String = "__feather_session_ttl"
 
 ///|
+/// State key under which the session middleware records its TTL for
+/// `Context::session_touch`, including requests that already carry a session.
+const SESSION_TTL_STATE_KEY : String = "__feather_session_ttl_ms"
+
+///|
 /// Parse the TTL text recorded under `SESSION_LAZY_KEY`, falling back to the
 /// default lifetime for malformed values.
 fn session_ttl_from_text(text : String) -> Int64 {
@@ -336,6 +341,30 @@ pub fn Context::session_id(self : Context) -> String? {
       Some(session.id)
     }
     None => None
+  }
+}
+
+///|
+/// Extend the attached session's lifetime to a full store TTL from now and
+/// mark it for persistence. Returns `false` when no session is attached (for
+/// example when `middleware_session` is not installed).
+///
+/// This is the sliding-expiration counterpart of `middleware_session`'s
+/// default fixed lifetime: call it from handlers that should keep an active
+/// user signed in, or enable `rolling=true` on the middleware to refresh every
+/// request automatically.
+pub fn Context::session_touch(self : Context) -> Bool {
+  match self.session_materialized() {
+    Some(session) => {
+      let ttl = match self.state.get(SESSION_TTL_STATE_KEY) {
+        Some(text) => session_ttl_from_text(text)
+        None => DEFAULT_SESSION_TTL
+      }
+      session.expires_at = session_expiry(@async.now(), ttl)
+      session.modified = true
+      true
+    }
+    None => false
   }
 }
 
@@ -671,6 +700,7 @@ pub fn middleware_session(
   http_only~ : Bool = true,
   secure~ : Bool = false,
   partitioned~ : Bool = false,
+  rolling~ : Bool = false,
 ) -> Middleware {
   let ttl = store.ttl()
   let whole_seconds = ttl / 1000L
@@ -701,9 +731,17 @@ pub fn middleware_session(
       }
       let is_new = existing is None
       let had_cookie = cookie_id is Some(_)
+      ctx.state.set(SESSION_TTL_STATE_KEY, lazy_ttl_text)
       match existing {
         Some(session) => {
           session.modified = false
+          if rolling {
+            // Sliding expiration: every request that carries a live session
+            // extends it and re-sends the cookie, so an active client does not
+            // get logged out at the original creation deadline.
+            session.expires_at = session_expiry(@async.now(), ttl)
+            session.modified = true
+          }
           ctx.session = Some(session)
         }
         None => ctx.state.set(SESSION_LAZY_KEY, lazy_ttl_text)

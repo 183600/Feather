@@ -184,8 +184,10 @@ ignore(app.post("/login", fn(ctx) {
 ```
 
 `middleware_session` also accepts `cookie`, `path`, `domain`, `same_site`,
-`http_only`, `secure`, and `partitioned` cookie options; `domain` scopes a
-shared session across subdomains.
+`http_only`, `secure`, `partitioned`, and `rolling` options; `domain` scopes a
+shared session across subdomains. Sessions have a fixed lifetime by default;
+`rolling=true` refreshes the server-side deadline and cookie on every request,
+and `Context::session_touch()` performs the same refresh from a handler.
 
 ## Responses and conditional requests
 
