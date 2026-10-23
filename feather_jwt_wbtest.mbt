@@ -339,3 +339,145 @@ test "jwt middleware uses a custom realm and rejects expired tokens" {
     Some("Bearer realm=\"Private API\""),
   )
 }
+
+///|
+test "verify_jwt_hs256 validates issuer and string audience" {
+  let now = 1_700_000_000L
+  let token = jwt_token_with_header(
+    jwt_header(),
+    Json::object({
+      "sub": Json::string("alice"),
+      "exp": Json::number((now + 60L).to_double()),
+      "iss": Json::string("https://issuer.example"),
+      "aud": Json::string("feather-api"),
+    }),
+    "secret",
+  )
+  let accepted = verify_jwt_hs256(
+    token,
+    "secret",
+    now=now,
+    issuer="https://issuer.example",
+    audience="feather-api",
+  )
+  assert_eq(accepted.subject(), "alice")
+  let wrong_issuer = try {
+    ignore(
+      verify_jwt_hs256(
+        token,
+        "secret",
+        now=now,
+        issuer="https://other.example",
+      ),
+    )
+    false
+  } catch {
+    JwtInvalidClaim(message) => message.contains("issuer")
+    _ => false
+  }
+  assert_true(wrong_issuer)
+  let wrong_audience = try {
+    ignore(
+      verify_jwt_hs256(token, "secret", now=now, audience="another-api"),
+    )
+    false
+  } catch {
+    JwtInvalidClaim(message) => message.contains("audience")
+    _ => false
+  }
+  assert_true(wrong_audience)
+}
+
+///|
+test "verify_jwt_hs256 accepts an audience array and rejects malformed claims" {
+  let now = 1_700_000_000L
+  let token = jwt_token(
+    Json::object({
+      "sub": Json::string("alice"),
+      "exp": Json::number((now + 60L).to_double()),
+      "aud": Json::array([
+        Json::string("web"),
+        Json::string("feather-api"),
+      ]),
+    }),
+    "secret",
+  )
+  let accepted = verify_jwt_hs256(
+    token,
+    "secret",
+    now=now,
+    audience="feather-api",
+  )
+  assert_eq(accepted.subject(), "alice")
+  let missing = jwt_token(jwt_claims(now + 60L, "alice"), "secret")
+  let rejected = try {
+    ignore(verify_jwt_hs256(missing, "secret", now=now, audience="feather-api"))
+    false
+  } catch {
+    JwtInvalidClaim(message) => message.contains("aud")
+    _ => false
+  }
+  assert_true(rejected)
+  let malformed = jwt_token(
+    Json::object({
+      "sub": Json::string("alice"),
+      "exp": Json::number((now + 60L).to_double()),
+      "aud": Json::number(42.0),
+    }),
+    "secret",
+  )
+  let malformed_rejected = try {
+    ignore(
+      verify_jwt_hs256(
+        malformed,
+        "secret",
+        now=now,
+        audience="feather-api",
+      ),
+    )
+    false
+  } catch {
+    JwtInvalidClaim(message) => message.contains("aud")
+    _ => false
+  }
+  assert_true(malformed_rejected)
+}
+
+///|
+test "jwt middleware enforces configured issuer and audience" {
+  let secret = "correct horse battery staple"
+  let now = @async.now() / 1000L
+  let app = App::new()
+    .use(
+      middleware_jwt_hs256(
+        secret,
+        issuer="https://issuer.example",
+        audience="feather-api",
+      ),
+    )
+    .get("/me", fn(ctx) { ctx.text(200, ctx.jwt_subject()) })
+  let valid_token = jwt_token(
+    Json::object({
+      "sub": Json::string("alice"),
+      "exp": Json::number((now + 60L).to_double()),
+      "iss": Json::string("https://issuer.example"),
+      "aud": Json::string("feather-api"),
+    }),
+    secret,
+  )
+  let accepted = app.respond(jwt_request(valid_token))
+  assert_eq(accepted.status, 200)
+  assert_eq(accepted.body, "alice")
+  let wrong_issuer_token = jwt_token(
+    Json::object({
+      "sub": Json::string("alice"),
+      "exp": Json::number((now + 60L).to_double()),
+      "iss": Json::string("https://other.example"),
+      "aud": Json::string("feather-api"),
+    }),
+    secret,
+  )
+  let rejected = app.respond(jwt_request(wrong_issuer_token))
+  assert_eq(rejected.status, 401)
+  assert_eq(rejected.body, "401 Unauthorized")
+}

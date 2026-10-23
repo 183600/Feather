@@ -89,7 +89,7 @@ pub fn middleware_etag() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_https_redirect(permanent? : Bool, host? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
-pub fn middleware_jwt_hs256(String, realm? : String, leeway? : Int32, require_exp? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+pub fn middleware_jwt_hs256(String, realm? : String, leeway? : Int32, require_exp? : Bool, issuer? : String, audience? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_logger(log? : (String) -> Unit, with_duration? : Bool, skip? : (Context) -> Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
@@ -139,7 +139,7 @@ pub fn url_decode(String) -> String
 
 pub fn url_encode(String) -> String
 
-pub fn verify_jwt_hs256(String, String, leeway? : Int32, now? : Int64, require_exp? : Bool) -> Jwt raise JwtError
+pub fn verify_jwt_hs256(String, String, leeway? : Int32, now? : Int64, require_exp? : Bool, issuer? : String, audience? : String) -> Jwt raise JwtError
 
 pub fn verify_signed_cookie_token(String, String, String, now? : Int64) -> String?
 

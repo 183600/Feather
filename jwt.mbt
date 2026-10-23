@@ -172,6 +172,10 @@ fn jwt_time_claim(value : Json, name : String) -> Double raise JwtError {
 /// are treated as zero), and `now` overrides the current Unix time in seconds,
 /// which is mainly useful in tests.
 ///
+/// Pass `issuer` and/or `audience` to require the corresponding registered
+/// claim. `aud` may be a single string or an array of strings, as RFC 7519
+/// permits; the token is accepted when one entry names `audience`.
+///
 /// The secret is UTF-8 encoded as-is. Use a high-entropy secret (at least 32
 /// random bytes for HS256) and keep it out of source control.
 pub fn verify_jwt_hs256(
@@ -180,6 +184,8 @@ pub fn verify_jwt_hs256(
   leeway~ : Int32 = 0,
   now? : Int64,
   require_exp~ : Bool = true,
+  issuer? : String,
+  audience? : String,
 ) -> Jwt raise JwtError {
   let (header_part, payload_part, signature_part) = jwt_compact_parts(
     token.view(),
@@ -251,6 +257,44 @@ pub fn verify_jwt_hs256(
         raise JwtNotYetValid
       }
     }
+    None => ()
+  }
+  match issuer {
+    Some(expected) =>
+      match claims.get("iss") {
+        Some(Json::String(actual)) =>
+          if actual != expected {
+            raise JwtInvalidClaim("issuer mismatch")
+          }
+        Some(_) => raise JwtInvalidClaim("iss must be a string")
+        None => raise JwtInvalidClaim("iss is required")
+      }
+    None => ()
+  }
+  match audience {
+    Some(expected) =>
+      match claims.get("aud") {
+        Some(Json::String(actual)) =>
+          if actual != expected {
+            raise JwtInvalidClaim("audience mismatch")
+          }
+        Some(Json::Array(entries)) => {
+          let mut matched = false
+          for entry in entries {
+            match entry {
+              Json::String(actual) => if actual == expected {
+                matched = true
+              }
+              _ => raise JwtInvalidClaim("aud must be a string or array of strings")
+            }
+          }
+          if !matched {
+            raise JwtInvalidClaim("audience mismatch")
+          }
+        }
+        Some(_) => raise JwtInvalidClaim("aud must be a string or array of strings")
+        None => raise JwtInvalidClaim("aud is required")
+      }
     None => ()
   }
   { header: header_json, claims: claims_json }
@@ -328,13 +372,17 @@ fn jwt_error_code(error : JwtError) -> String {
 ///
 /// `leeway` permits clock skew in seconds, `require_exp` (default `true`)
 /// rejects tokens without an `exp` claim, and `realm` is echoed in the
-/// challenge. Keep the secret private and use a high-entropy value; seeing
-/// this middleware's source is not a substitute for seeing its configuration.
+/// challenge. Pass `issuer` and/or `audience` to require the registered claims
+/// described by `verify_jwt_hs256`; a mismatch is refused like any other bad
+/// token. Keep the secret private and use a high-entropy value; seeing this
+/// middleware's source is not a substitute for seeing its configuration.
 pub fn middleware_jwt_hs256(
   secret : String,
   realm~ : String = "Restricted",
   leeway~ : Int32 = 0,
   require_exp~ : Bool = true,
+  issuer? : String,
+  audience? : String,
 ) -> Middleware {
   let challenge = bearer_auth_challenge(realm)
   let skew = if leeway < 0 { 0 } else { leeway }
@@ -348,6 +396,8 @@ pub fn middleware_jwt_hs256(
               secret,
               leeway=skew,
               require_exp~,
+              issuer?,
+              audience?,
             ),
           ) catch {
             err => {

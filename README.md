@@ -207,8 +207,10 @@ Authentication middleware is available for basic credentials
 compact HS256 JWT and stores its claims on the request. It accepts only
 `"alg": "HS256"` (so `none` and asymmetric algorithms are rejected), compares
 the HMAC in constant time, requires `exp` by default, honors `nbf`, and
-supports a `leeway` in seconds for clock skew. Invalid, expired or not-yet-valid
-tokens receive a `401` with a `WWW-Authenticate: Bearer realm="..."` challenge
+supports a `leeway` in seconds for clock skew. Pass `issuer` and/or `audience`
+to require the registered claims, with `aud` accepting either a string or an
+array of strings. Invalid, expired, not-yet-valid or wrongly scoped tokens
+receive a `401` with a `WWW-Authenticate: Bearer realm="..."` challenge
 before the handler runs. Handlers read the verified claims with
 `Context::jwt_claims`, `Context::jwt_claim`, or `Context::jwt_subject`, while
 outer logging middleware can read the stable failure category from
