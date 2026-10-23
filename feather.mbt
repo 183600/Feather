@@ -9592,41 +9592,14 @@ fn scoped_request_path(ctx : Context) -> StringView {
       if base == "" {
         path
       } else {
-        let base_segments = split_segments(base.view())
-        if base_segments.length() == 0 {
-          path
-        } else {
-          let length = path.length()
-          let mut pos = 0
-          let mut matched = 0
-          while matched < base_segments.length() {
-            let base_segment = base_segments[matched]
-            // Mount prefixes are route patterns, so `:param` captures any one
-            // segment and `*wildcard` consumes the rest of the path. Comparing
-            // the literal `:id` spelling would make a child's scoped
-            // middleware miss every dynamically mounted request.
-            if base_segment.has_prefix("*") {
-              return ""
-            }
-            pos = skip_slashes(path, pos)
-            if pos >= length {
-              return path
-            }
-            let end = segment_end(path, pos)
-            let segment = path[pos:end]
-            let segment_matches = if base_segment.has_prefix(":") {
-              !segment.is_empty()
-            } else {
-              normalize_static_route_segment(segment) ==
-              normalize_static_route_segment(base_segment)
-            }
-            if !segment_matches {
-              return path
-            }
-            matched = matched + 1
-            pos = end
-          }
-          path[pos:]
+        // Mount prefixes are route patterns, so resolve them with the same
+        // segment matcher the router uses. That keeps `:param` and a trailing
+        // `*wildcard` mount usable: the child-relative path starts where the
+        // matched prefix ends (or where the wildcard remainder begins), rather
+        // than at the literal pattern spelling.
+        match match_mount_prefix(path, base.view()) {
+          Some(matched) => path[matched.relative_start:]
+          None => path
         }
       }
     None => path
