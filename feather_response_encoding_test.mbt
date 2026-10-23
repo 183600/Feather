@@ -10,11 +10,13 @@ test "offline facade drops bodies for statuses that forbid them" {
     .get("/reset", fn(ctx) { ctx.text(205, "ignored") })
     .get("/not-modified", fn(ctx) { ctx.text(304, "ignored") })
   for pair in [
-    ("/no-content", 204),
-    ("/reset", 205),
-    ("/not-modified", 304),
+    ("/no-content", 204, None),
+    // `205 Reset Content` still frames its absent body as zero length, matching
+    // the server and RFC 9110's reset-content framing.
+    ("/reset", 205, Some("0")),
+    ("/not-modified", 304, None),
   ] {
-    let (path, status) = pair
+    let (path, status, content_length) = pair
     let response = app.respond({
       method: "GET",
       path,
@@ -24,7 +26,7 @@ test "offline facade drops bodies for statuses that forbid them" {
     assert_eq(response.status, status)
     assert_eq(response.body, "")
     assert_eq(response.data, None)
-    assert_eq(response.headers.get("Content-Length"), None)
+    assert_eq(response.headers.get("Content-Length"), content_length)
   }
 }
 

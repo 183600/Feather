@@ -22,3 +22,30 @@ async test "HEAD reset content matches the GET zero length" {
     assert_eq(client.read_all().text(), "")
   })
 }
+
+///|
+test "offline 205 responses frame zero length like the server" {
+  let app = @feather.App::new().get("/reset", fn(ctx) {
+    ctx.text(205, "ignored")
+  })
+  let get = app.respond({
+    method: "GET",
+    path: "/reset",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(get.status, 205)
+  assert_eq(get.headers.get("Content-Length"), Some("0"))
+  assert_eq(get.headers.get("Content-Type"), None)
+  assert_eq(get.body, "")
+
+  let head = app.respond({
+    method: "HEAD",
+    path: "/reset",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(head.status, 205)
+  assert_eq(head.headers.get("Content-Length"), Some("0"))
+  assert_eq(head.body, "")
+}

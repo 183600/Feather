@@ -11873,6 +11873,10 @@ fn strip_head_body(response : Response) -> Unit {
       None =>
         set_header_ignore_case(response.headers, "Content-Length", "0")
     }
+  } else if response.status == 205 {
+    // `205 Reset Content` must advertise a zero-length body, matching the
+    // server framing for both GET and HEAD.
+    set_header_ignore_case(response.headers, "Content-Length", "0")
   } else {
     ignore(remove_header_ignore_case(response.headers, "Content-Length"))
   }
@@ -11903,6 +11907,11 @@ fn strip_forbidden_body(response : Response) -> Unit {
     if response.status != 304 {
       clear_replaced_representation_headers(response.headers)
       ignore(remove_header_ignore_case(response.headers, "Content-Encoding"))
+      if response.status == 205 {
+        // The server frames `205 Reset Content` as an empty body with an
+        // explicit zero length; the offline facade should report the same.
+        set_header_ignore_case(response.headers, "Content-Length", "0")
+      }
     } else {
       ignore(remove_header_ignore_case(response.headers, "Content-Disposition"))
     }
