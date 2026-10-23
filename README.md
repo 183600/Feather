@@ -293,6 +293,18 @@ Pass `safe_methods` to replace that list, for example `safe_methods=[]` to
 protect every method or to exempt an extra verb while keeping the defaults
 explicit.
 
+`middleware_csrf_cookie(secret)` provides the same protection without a
+session store, using a signed double-submit cookie. Safe requests receive a
+random token in a cookie whose value is HMAC-signed with `secret`, and unsafe
+requests must echo the token in `X-CSRF-Token`, an urlencoded form field, or a
+multipart field. Handlers read the token with
+`Context::csrf_cookie_token()` when rendering a form. Because the cookie is
+signed, a sibling subdomain or another cookie-injection path cannot forge a
+valid token without the secret. The cookie name, field, header, path,
+`same_site`, `secure`, `partitioned`, `max_age`, and `safe_methods` are all
+configurable, and `http_only` defaults to `false` so browser scripts can read
+the cookie for JSON requests (leave it `true` when only forms need the token).
+
 `middleware_session` also accepts `cookie`, `path`, `domain`, `same_site`,
 `http_only`, `secure`, `partitioned`, and `rolling` options; `domain` scopes a
 shared session across subdomains. Sessions have a fixed lifetime by default;
