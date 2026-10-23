@@ -1097,6 +1097,11 @@ async fn send_file_response(
               headers.remove(header_content_type)
               headers.remove(header_content_encoding)
               headers.remove(header_content_disposition)
+              // The 416 body is not the selected representation, so its
+              // validators must not describe the error response as if it were
+              // a cacheable file.
+              headers.remove(header_etag)
+              headers.remove(header_last_modified)
               headers.set(
                 header_content_range,
                 "bytes */" + representation_size.to_string(),
@@ -2623,6 +2628,10 @@ async fn serve_static_file(
       let headers = static_base_headers(extra_headers, cookies, 2)
       headers.remove(content_type_key)
       headers.remove(header_content_disposition)
+      // A 416 has no selected representation, so the file's validators must
+      // not be attached to this empty error response.
+      headers.remove(header_etag)
+      headers.remove(header_last_modified)
       headers.set(
         content_range_key,
         "bytes */" + representation_size.to_string(),
