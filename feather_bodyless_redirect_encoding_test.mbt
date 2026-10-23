@@ -29,13 +29,15 @@ async test "a 304 keeps the content coding of the selected representation" {
   let request : @feather.Request = {
     method: "GET",
     path: "/cached",
-    headers: Map([("Accept-Encoding", "identity")]),
+    headers: Map([("Accept-Encoding", "gzip")]),
     body: "",
   }
   let sync = app.respond(request)
   assert_eq(sync.status, 304)
   assert_eq(sync.headers.get("Content-Encoding"), Some("gzip"))
+  assert_eq(sync.headers.get("Vary"), Some("Accept-Encoding"))
   let asynchronous = app.respond_async(request)
   assert_eq(asynchronous.status, 304)
   assert_eq(asynchronous.headers.get("Content-Encoding"), Some("gzip"))
+  assert_eq(asynchronous.headers.get("Vary"), Some("Accept-Encoding"))
 }

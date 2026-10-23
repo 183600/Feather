@@ -444,13 +444,11 @@ fn negotiate_existing_encoding(
 ) -> Bool {
   // A status that cannot carry a representation has no content coding to
   // negotiate. A stray handler- or middleware-supplied Content-Encoding must
-  // not turn a 204, 205, 304 or bodyless redirect into a 406 (or add a `Vary`
-  // key that describes no representation). A 304 keeps the coding because it
-  // still describes the selected representation.
-  if !has_negotiable_representation(response) {
-    if response.status != 304 {
-      ignore(remove_header_ignore_case(response.headers, "Content-Encoding"))
-    }
+  // not turn a 204, 205 or bodyless redirect into a 406 (or add a `Vary` key
+  // that describes no representation). A 304 is different: it still describes
+  // the selected representation, so its coding is negotiated as before.
+  if response.status != 304 && !has_negotiable_representation(response) {
+    ignore(remove_header_ignore_case(response.headers, "Content-Encoding"))
     return false
   }
   match get_header_ignore_case(response.headers, "Content-Encoding") {
