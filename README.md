@@ -22,9 +22,9 @@ long-term design notes are in [PLAN.md](PLAN.md).
   handler. `all` covers every standard HTTP method, including `CONNECT` and
   `TRACE`.
 - **Middleware** – CORS, request logging, panic recovery, request IDs,
-  rate limiting, basic and bearer auth, CSRF, secure headers, HTTPS redirect,
-  method override, sessions, path- or predicate-scoped installation, and a
-  problem-details error handler whose negotiated bodies vary on `Accept`.
+  rate limiting, basic, bearer and HS256 JWT auth, CSRF, secure headers, HTTPS
+  redirect, method override, sessions, path- or predicate-scoped installation,
+  and a problem-details error handler whose negotiated bodies vary on `Accept`.
 - **Context** – path/query/form/multipart access, multi-value `query_all` /
   `form_all` maps and `has_query` / `has_form` / `has_param` presence checks,
   raw `pathname` / `query_string` request-target accessors, typed
@@ -202,6 +202,31 @@ accepted origin and when the request asks for it.
 Authentication middleware is available for basic credentials
 (`middleware_basic_auth` / `middleware_basic_auth_with`) and bearer tokens
 (`middleware_bearer_auth` / `middleware_bearer_auth_with`).
+
+`middleware_jwt_hs256(secret)` verifies an `Authorization: Bearer` token as a
+compact HS256 JWT and stores its claims on the request. It accepts only
+`"alg": "HS256"` (so `none` and asymmetric algorithms are rejected), compares
+the HMAC in constant time, requires `exp` by default, honors `nbf`, and
+supports a `leeway` in seconds for clock skew. Invalid, expired or not-yet-valid
+tokens receive a `401` with a `WWW-Authenticate: Bearer realm="..."` challenge
+before the handler runs. Handlers read the verified claims with
+`Context::jwt_claims`, `Context::jwt_claim`, or `Context::jwt_subject`, while
+outer logging middleware can read the stable failure category from
+`Context::jwt_error` after the middleware returns:
+
+```moonbit
+let app = @feather.App::new()
+  .use(@feather.middleware_jwt_hs256(secret, realm="Example API"))
+  .get("/me", fn(ctx) {
+    ctx.json_of(200, { "subject": ctx.jwt_subject() })
+  })
+```
+
+Use `@feather.verify_jwt_hs256` directly when a handler needs the full
+`Jwt` value, including its protected header. The verifier accepts a `now=`
+override for tests and `require_exp=false` for issuers that use another expiry
+mechanism. The secret is UTF-8 encoded as-is; use a high-entropy value and keep
+it out of source control.
 
 `middleware_secure_headers` installs `nosniff`, frame and referrer policies by
 default. It also accepts `hsts`, `content_security_policy`,
