@@ -12,7 +12,7 @@ pub(all) suberror JwtError {
   JwtExpired
   /// The `nbf` claim is in the future (outside the configured leeway).
   JwtNotYetValid
-  /// A registered time claim is present but not a usable number.
+  /// A registered claim is malformed or does not match the expected value.
   JwtInvalidClaim(String)
 }
 

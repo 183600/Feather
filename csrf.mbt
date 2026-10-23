@@ -145,8 +145,8 @@ pub fn middleware_csrf(
   let safe : Map[String, Bool]? = match safe_methods {
     Some(methods) => {
       let table : Map[String, Bool] = Map([], capacity=methods.length())
-      for method in methods {
-        table.set(normalize_method(method), true)
+      for verb in methods {
+        table.set(normalize_method(verb), true)
       }
       Some(table)
     }
@@ -247,8 +247,8 @@ pub fn middleware_csrf_cookie(
   let safe : Map[String, Bool]? = match safe_methods {
     Some(methods) => {
       let table : Map[String, Bool] = Map([], capacity=methods.length())
-      for method in methods {
-        table.set(normalize_method(method), true)
+      for verb in methods {
+        table.set(normalize_method(verb), true)
       }
       Some(table)
     }
