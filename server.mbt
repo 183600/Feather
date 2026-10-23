@@ -815,6 +815,29 @@ async fn send_file_response(
   }
   let handle = @fs.open(file.path, mode=@fs.ReadOnly) catch {
     _ => {
+      // A bodyless status does not need the file's bytes, so a missing file
+      // must not override an intentional 1xx/204/205/304 response.
+      if status_allows_body(response.status) {
+        send_static_error(
+          conn,
+          response.headers,
+          response.cookies,
+          head,
+          404,
+          "404 Not Found",
+          false,
+        )
+      } else {
+        send_response(conn, response, head, connect~)
+      }
+      return
+    }
+  }
+  defer handle.close()
+  if handle.kind() is @fs.Directory {
+    // The same rule applies to a path that names a directory: for a bodyless
+    // status there is no file body to send, so report the requested status.
+    if status_allows_body(response.status) {
       send_static_error(
         conn,
         response.headers,
@@ -824,33 +847,28 @@ async fn send_file_response(
         "404 Not Found",
         false,
       )
-      return
+    } else {
+      send_response(conn, response, head, connect~)
     }
-  }
-  defer handle.close()
-  if handle.kind() is @fs.Directory {
-    send_static_error(
-      conn,
-      response.headers,
-      response.cookies,
-      head,
-      404,
-      "404 Not Found",
-      false,
-    )
     return
   }
   let size = handle.size() catch {
     _ => {
-      send_static_error(
-        conn,
-        response.headers,
-        response.cookies,
-        head,
-        500,
-        "500 Internal Server Error",
-        false,
-      )
+      // Size is only needed to frame a body. A bodyless status still has a
+      // well-defined response without it.
+      if status_allows_body(response.status) {
+        send_static_error(
+          conn,
+          response.headers,
+          response.cookies,
+          head,
+          500,
+          "500 Internal Server Error",
+          false,
+        )
+      } else {
+        send_response(conn, response, head, connect~)
+      }
       return
     }
   }
@@ -1106,6 +1124,10 @@ async fn send_file_response(
                 header_content_range,
                 "bytes */" + representation_size.to_string(),
               )
+              // The resource supports ranges even when this particular range
+              // is unsatisfiable; keep the 416 consistent with the 200/206
+              // responses and with the static-file path.
+              headers.set(header_accept_ranges, "bytes")
               if vary_encoding {
                 add_vary_header(headers, "Accept-Encoding")
               }
