@@ -1142,6 +1142,11 @@ async fn send_file_response(
     clear_bodyless_representation_headers(
       headers, keep_validators=status == 304,
     )
+    if status == 205 {
+      // `205 Reset Content` must still frame its body as zero length, for
+      // GET and HEAD alike.
+      headers.set(header_content_length, "0")
+    }
   }
   send_with_date(
     conn,

@@ -175,3 +175,20 @@ test "offline range on a non-200 response is left alone" {
   assert_eq(response.body, "created")
   assert_eq(response.headers.get("Content-Range"), None)
 }
+
+///|
+test "offline ranged response drops a stale full-body content length" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        ctx.set_header("Content-Length", "10")
+        next(ctx)
+      }
+    })
+    .get("/data", fn(ctx) { ctx.text(200, "0123456789") })
+  let response = app.respond(range_request("/data", "bytes=2-5"))
+  assert_eq(response.status, 206)
+  assert_eq(response.body, "2345")
+  assert_eq(response.headers.get("Content-Range"), Some("bytes 2-5/10"))
+  assert_eq(response.headers.get("Content-Length"), None)
+}

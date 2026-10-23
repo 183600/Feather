@@ -9467,6 +9467,11 @@ fn apply_buffered_range_core(
       let first = start.to_int()
       let sliced = data[first:end.to_int() + 1].to_bytes()
       response.status = 206
+      // The framing header still describes the full representation. The
+      // server recomputes it while writing, but the offline facade returns
+      // this response directly, so a length seeded by middleware must not
+      // claim more bytes than the partial body carries.
+      ignore(remove_header_ignore_case(response.headers, "Content-Length"))
       if original_is_bytes {
         response.data = Some(sliced)
         response.body = ""
@@ -11295,10 +11300,14 @@ pub fn App::endpoints(self : App) -> Array[Endpoint] {
 ///|
 /// Result of matching a static mount prefix against a request path.
 ///
-/// `consumed` is the path position just after the matched prefix and
-/// `relative_start` is where the path relative to the mount root begins. They
-/// differ for a mount whose prefix ends in a wildcard, where the captured
-/// remainder is itself part of the child-relative path.
+/// `consumed` measures the fixed part of the prefix: the path position just
+/// after the matched segments, or, for a prefix ending in a wildcard, the
+/// position where that wildcard starts. The captured remainder must not make a
+/// wildcard mount look more specific than a mount with a longer fixed prefix,
+/// so specificity comparisons use `consumed` rather than the full path length.
+/// `relative_start` is where the path relative to the mount root begins. The
+/// two differ for a wildcard prefix, where the captured remainder is itself
+/// part of the child-relative path.
 priv struct MountPrefixMatch {
   consumed : Int32
   relative_start : Int32
@@ -11333,7 +11342,7 @@ fn match_mount_prefix(
         params.set(name, join_wildcard(path, pos))
       }
       return Some({
-        consumed: length,
+        consumed: pos,
         relative_start: start,
         params,
       })
