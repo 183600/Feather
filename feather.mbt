@@ -7959,14 +7959,6 @@ fn parse_multipart_uncached(
       break
     }
     pos = skip_line_break(view, pos)
-    let data_end = match
-      find_part_delimiter(
-        view, crlf_delimiter_view, lf_delimiter_view, crlf_delimiter_table, lf_delimiter_table,
-        pos,
-      ) {
-      Some(index) => index
-      None => break
-    }
     // A part may carry no headers at all, in which case its blank line comes
     // immediately after the delimiter line.
     let (header_end, separator_length) = if pos + 1 < view.length() &&
@@ -7986,7 +7978,20 @@ fn parse_multipart_uncached(
         None => break
       }
     }
-    if header_end + separator_length > data_end {
+    let data_start = header_end + separator_length
+    // Start the search after the blank line that separates the headers from
+    // the payload. Searching from the header block would let the final CRLF
+    // of that separator combine with a payload that begins with the boundary
+    // spelling (`\r\n--boundary`) and mistake it for the next part.
+    let data_end = match
+      find_part_delimiter(
+        view, crlf_delimiter_view, lf_delimiter_view, crlf_delimiter_table, lf_delimiter_table,
+        data_start,
+      ) {
+      Some(index) => index
+      None => break
+    }
+    if data_start > data_end {
       break
     }
     let (
@@ -7996,7 +8001,7 @@ fn parse_multipart_uncached(
       tracked_content_type,
       content_type_matches,
     ) = parse_part_headers(view[pos:header_end])
-    let data = view[header_end + separator_length:data_end]
+    let data = view[data_start:data_end]
     let disposition = if disposition_matches == 1 {
       tracked_disposition
     } else if disposition_matches == 0 {

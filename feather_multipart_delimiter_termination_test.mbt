@@ -15,3 +15,21 @@ test "multipart does not end a part at a bare carriage return after the boundary
   assert_eq(parsed.length(), 1)
   assert_eq(parsed[0].data, "one\n--B\rstill data")
 }
+
+///|
+test "multipart payload may start with the boundary spelling" {
+  // The CRLF that ends the blank header/body separator must not combine with
+  // a payload that starts with the boundary spelling into a phantom part
+  // delimiter. Only a delimiter after the payload starts a new part.
+  let body = "--B\r\n" +
+    "Content-Disposition: form-data; name=\"data\"\r\n\r\n" +
+    "--B\r\nstill payload\r\n--B--\r\n"
+  let parts = @feather.parse_multipart(
+    body,
+    "multipart/form-data; boundary=B",
+  )
+  assert_true(parts is Some(_), msg="payload was rejected")
+  let parsed = parts.unwrap()
+  assert_eq(parsed.length(), 1)
+  assert_eq(parsed[0].data, "--B\r\nstill payload")
+}
