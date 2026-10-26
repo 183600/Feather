@@ -7119,6 +7119,28 @@ fn find_header_end(view : StringView, start : Int32) -> Int32? {
 ///|
 fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
   let length = view.length()
+  if after < length && view.unsafe_get(after) == ('-' : UInt16) {
+    if after + 1 >= length || view.unsafe_get(after + 1) != ('-' : UInt16) {
+      return false
+    }
+    let mut tail = after + 2
+    while tail < length &&
+          (
+            view.unsafe_get(tail) == (' ' : UInt16) ||
+            view.unsafe_get(tail) == ('\t' : UInt16)
+          ) {
+      tail = tail + 1
+    }
+    if tail >= length {
+      return true
+    }
+    let tail_code = view.unsafe_get(tail)
+    if tail_code == ('\r' : UInt16) {
+      return tail + 1 < length &&
+        view.unsafe_get(tail + 1) == ('\n' : UInt16)
+    }
+    return tail_code == ('\n' : UInt16)
+  }
   let mut index = after
   while index < length &&
         (
@@ -7140,32 +7162,7 @@ fn delimiter_is_terminated(view : StringView, after : Int32) -> Bool {
     // payload whose text merely starts with the boundary spelling.
     return index + 1 < length && view.unsafe_get(index + 1) == ('\n' : UInt16)
   }
-  if code == ('\n' : UInt16) {
-    return true
-  }
-  if code == ('-' : UInt16) {
-    if index + 1 >= length || view.unsafe_get(index + 1) != ('-' : UInt16) {
-      return false
-    }
-    let mut tail = index + 2
-    while tail < length &&
-          (
-            view.unsafe_get(tail) == (' ' : UInt16) ||
-            view.unsafe_get(tail) == ('\t' : UInt16)
-          ) {
-      tail = tail + 1
-    }
-    if tail >= length {
-      return true
-    }
-    let tail_code = view.unsafe_get(tail)
-    if tail_code == ('\r' : UInt16) {
-      return tail + 1 < length &&
-        view.unsafe_get(tail + 1) == ('\n' : UInt16)
-    }
-    return tail_code == ('\n' : UInt16)
-  }
-  false
+  code == ('\n' : UInt16)
 }
 
 ///|
