@@ -490,10 +490,10 @@ were the representation.
 ## Package layout
 
 The project currently uses a single MoonBit package at the repository root.
-Large features are split by file (`feather.mbt`, `server.mbt`, `sse.mbt`,
-`stream.mbt`, `compress.mbt`, `session.mbt`, `csrf.mbt`, …) and tests live next
-to the code as `*_test.mbt` / `*_wbtest.mbt`. [PLAN.md](PLAN.md) is the
-original design note; the implementation has since grown well beyond it.
+Large features are split by responsibility across same-package files (routing,
+context, middleware, static files, server connection handling, …) and tests
+live next to the code as `*_test.mbt` / `*_wbtest.mbt`. [PLAN.md](PLAN.md) is
+the original design note; the implementation has since grown well beyond it.
 
 ## Development
 
