@@ -124,6 +124,73 @@ test "preferred_type skips rejected offers" {
 }
 
 ///|
+test "format runs the handler for the most preferred media type" {
+  let ctx = accept_ctx("text/html;q=0.9, application/json;q=0.8")
+  ctx.format([
+    ("application/json", fn(ctx) { ctx.text(200, "json") }),
+    ("text/html", fn(ctx) { ctx.html(200, "html") }),
+  ])
+  assert_eq(ctx.response.status, 200)
+  assert_eq(ctx.response.body, "html")
+  assert_eq(ctx.response_header("Content-Type"), "text/html; charset=utf-8")
+  assert_eq(ctx.response_header("Vary"), "Accept")
+}
+
+///|
+test "format uses the first offer when the request states no preference" {
+  let ctx = accept_ctx("")
+  ctx.format([
+    ("application/json", fn(ctx) { ctx.text(200, "json") }),
+    ("text/html", fn(ctx) { ctx.text(200, "html") }),
+  ])
+  assert_eq(ctx.response.body, "json")
+}
+
+///|
+test "format skips rejected offers and answers 406 when none remain" {
+  let rejected = accept_ctx("application/json;q=0, text/html;q=0")
+  rejected.format([
+    ("application/json", fn(ctx) { ctx.text(200, "json") }),
+    ("text/html", fn(ctx) { ctx.text(200, "html") }),
+  ])
+  assert_eq(rejected.response.status, 406)
+  assert_true(rejected.response.body.contains("Not Acceptable"))
+  assert_eq(rejected.response_header("Vary"), "Accept")
+
+  let unsupported = accept_ctx("application/xml")
+  unsupported.format([("application/json", fn(ctx) { ctx.text(200, "json") })])
+  assert_eq(unsupported.response.status, 406)
+}
+
+///|
+test "format runs the fallback handler when no offer is acceptable" {
+  let ctx = accept_ctx("application/xml")
+  ctx.format([("application/json", fn(ctx) { ctx.text(200, "json") })], fallback=fn(
+    ctx,
+  ) {
+    ctx.text(200, "fallback")
+  })
+  assert_eq(ctx.response.status, 200)
+  assert_eq(ctx.response.body, "fallback")
+  assert_eq(ctx.response_header("Vary"), "Accept")
+}
+
+///|
+test "format does not duplicate an Accept entry in Vary" {
+  let ctx = accept_ctx("application/json")
+  ctx.format([
+    (
+      "application/json",
+      fn(ctx) {
+        ctx.vary("Accept")
+        ctx.text(200, "json")
+      },
+    ),
+  ])
+  assert_eq(ctx.response_header("Vary"), "Accept")
+}
+
+///|
 fn encoding_ctx(accept_encoding : String) -> @feather.Context {
   @feather.Context::new({
     method: "GET",

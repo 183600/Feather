@@ -544,6 +544,41 @@ pub fn Context::preferred_type(
 }
 
 ///|
+/// Run the handler for the media type the request prefers among `offers`.
+///
+/// `offers` is a list of `(media_type, handler)` pairs. The order expresses
+/// the server's preference when several media types receive the same quality,
+/// and the first pair for a selected media type wins. The response always
+/// carries `Vary: Accept`. When the request rejects every offer, `fallback`
+/// runs if supplied; otherwise the response is `406 Not Acceptable`.
+pub fn Context::format(
+  self : Context,
+  offers : Array[(String, Handler)],
+  fallback? : Handler,
+) -> Unit raise {
+  let media_types : Array[String] = Array(capacity=offers.length())
+  for offer in offers {
+    media_types.push(offer.0)
+  }
+  let selected = self.preferred_type(media_types)
+  self.vary("Accept")
+  match selected {
+    Some(media_type) =>
+      for offer in offers {
+        if offer.0 == media_type {
+          (offer.1)(self)
+          return
+        }
+      }
+    None => ()
+  }
+  match fallback {
+    Some(handler) => handler(self)
+    None => error_response(self, 406, "Not Acceptable")
+  }
+}
+
+///|
 /// One parsed `Accept-Encoding` entry: the coding token and its quality value
 /// (in thousandths), in header order.
 priv struct EncodingEntry {

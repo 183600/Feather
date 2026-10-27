@@ -342,6 +342,23 @@ ignore(app.get("/api/items/:id", fn(ctx) {
 }))
 ```
 
+Handlers that serve several representations can let the client choose with
+`Context::format`. Offers use the same `Accept` scoring as
+`Context::preferred_type`, and their order is the server's preference when
+quality values tie:
+
+```moonbit
+ignore(app.get("/items/:id", fn(ctx) {
+  ctx.format([
+    ("text/html", fn(ctx) { ctx.html(200, render_page(ctx.param("id"))) }),
+    ("application/json", fn(ctx) { ctx.json(200, { "id": ctx.param("id") }) }),
+  ])
+}))
+```
+
+Format responses carry `Vary: Accept`. A request that rejects every offer gets
+`406 Not Acceptable`; pass `fallback=` to render something else instead.
+
 `Context::redirect_back()` returns the browser to the request's `Referer` with
 `303 See Other` by default. It never redirects off-site: a same-host absolute
 referer contributes only its local path and query, while another host, a
