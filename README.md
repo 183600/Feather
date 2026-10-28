@@ -69,12 +69,12 @@ import {
 }
 ```
 
-Clone the repository next to your project and register both modules as
-workspace members:
+Clone the repository beside your application, then create or extend a
+workspace from the directory that contains both modules:
 
 ```bash
 git clone https://github.com/183600/Feather.git
-moon work init                # creates moon.work, skip if it exists
+moon work init                # creates moon.work; skip if it already exists
 moon work use ./Feather
 moon work use ./path/to/your-app
 ```
@@ -155,7 +155,8 @@ ignore(api.get("/health", fn(ctx) { ctx.json(200, { "ok": "true" }) }))
 ```
 
 Route matching prefers static segments over parameters, and parameters over
-wildcards. Named routes support URL generation:
+wildcards. Named routes support URL generation; `url_for` returns `String?`,
+or `None` when the name or a required parameter is missing:
 
 ```moonbit
 ignore(app.route_named("user", "GET", "/users/:id", handler))
@@ -165,10 +166,10 @@ let path = app.url_for("user", params={ "id": "42" })
 `Context::route_name()` reports that registered name from a handler or
 middleware, so logs and metrics can group requests by named route.
 
-`app.routes()` lists ordinary `(method, path)` routes. `app.endpoints()`
-returns the same routes plus WebSocket, SSE, streaming and static registrations
-(`EndpointKind`), including endpoints contributed by mounted applications, for
-startup logging or generated API documentation.
+`app.routes()` lists ordinary `(method, path)` routes, including routes
+contributed by mounted applications. `app.endpoints()` returns those routes
+plus WebSocket, SSE, streaming and static registrations, each tagged with an
+`EndpointKind`, for startup logging or generated API documentation.
 
 ## Middleware
 
@@ -291,14 +292,14 @@ ignore(app.post("/login", fn(ctx) {
 ```
 
 `middleware_csrf` exempts `GET`, `HEAD`, `OPTIONS` and `TRACE` by default.
-Pass `safe_methods` to replace that list, for example `safe_methods=[]` to
-protect every method or to exempt an extra verb while keeping the defaults
-explicit.
+Pass `safe_methods` to replace that list: use `safe_methods=[]` to protect
+every method, or list the default methods together with any additional verb to
+exempt.
 
 `middleware_csrf_cookie(secret)` provides the same protection without a
 session store, using a signed double-submit cookie. Safe requests receive a
 random token in a cookie whose value is HMAC-signed with `secret`, and unsafe
-requests must echo the token in `X-CSRF-Token`, an urlencoded form field, or a
+requests must echo the token in `X-CSRF-Token`, a URL-encoded form field, or a
 multipart field. Handlers read the token with
 `Context::csrf_cookie_token()` when rendering a form. Because the cookie is
 signed, a sibling subdomain or another cookie-injection path cannot forge a
@@ -375,11 +376,11 @@ only applies to `GET` and `HEAD`.
 A successful `GET` whose body is already buffered (text, JSON, bytes, or a
 response produced by middleware) also honors a single `Range` header, just like
 file responses: a satisfiable range becomes `206 Partial Content` with
-`Content-Range` and the sliced bytes, an unsatisfiable one becomes `416 Range
-Not Satisfiable`, and `If-Range` is checked against the response's `ETag` or
-`Last-Modified`. Malformed and multi-range requests are answered with the full
-representation, which RFC 9110 permits. `HEAD` and non-`GET` requests ignore
-`Range`.
+`Content-Range` and the sliced bytes, an unsatisfiable one becomes
+`416 Range Not Satisfiable`, and `If-Range` is checked against the response's
+`ETag` or `Last-Modified`. Malformed and multi-range requests are answered with
+the full representation, which RFC 9110 permits. `HEAD` and non-`GET` requests
+ignore `Range`.
 
 `cache_public` and `cache_private` accept `immutable=true`; `no_store` and
 `no_cache` cover the common non-storable and revalidate-first cases, while
@@ -509,9 +510,9 @@ toolchain is missing it exits non-zero.
 ./moon run examples/hello --target native
 ```
 
-CI (`.github/workflows/ci.yml`) runs `./moon check`, the default test suite,
-the native test suite, and a repository-hygiene check on every push and pull
-request.
+CI (`.github/workflows/ci.yml`) runs `./moon check` and
+`./moon check --target native`, the default and native test suites, and a
+repository-hygiene check on every push to `main` and every pull request.
 
 `moon.mod` is the single source of truth for module metadata; the old
 `moon.mod.json` duplicate has been removed.
