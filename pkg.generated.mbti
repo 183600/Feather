@@ -53,6 +53,8 @@ pub fn json_object(Map[String, String]) -> Json
 
 pub fn method_not_allowed(Context, Array[String]) -> Unit
 
+pub fn middleware_allowed_content_types(Array[String], allow_missing? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
 pub fn middleware_allowed_hosts(Array[String], allow_missing? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_basic_auth(Map[String, String], realm? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise

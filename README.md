@@ -257,6 +257,13 @@ HTTP/1.0 clients that omit it.
 handler runs, which is useful for allowing only small payloads on a specific
 route while `App::max_body_size` keeps the server-wide bound.
 
+`middleware_allowed_content_types` rejects a non-empty request body whose
+media type is not on the allowlist with `415` before the handler runs. Matching
+ignores parameters and case, accepts `type/*`, `*/*` and structured suffixes
+such as `application/*+json`, and leaves bodyless requests alone. Set
+`allow_missing=true` when a non-empty body without `Content-Type` should still
+be accepted.
+
 On a server that is exposed directly rather than behind a trusted reverse
 proxy, `middleware_strip_forwarded_headers()` removes `Forwarded`,
 `X-Forwarded-*` and `X-Real-IP` from the request, so a client cannot spoof
