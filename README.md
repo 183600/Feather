@@ -137,6 +137,10 @@ lookup counterparts. The multi-value maps and arrays are fresh copies, so a
 handler can mutate them without disturbing a later request that carries the
 same query or body.
 
+`Context::content_type_parameter("charset")` reads a parameter from the
+request's `Content-Type` header, unquoting values such as multipart boundaries
+and matching parameter names case-insensitively.
+
 ## Routing
 
 ```moonbit

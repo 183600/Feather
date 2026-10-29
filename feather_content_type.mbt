@@ -73,6 +73,22 @@ pub fn Context::is_form(self : Context) -> Bool {
 }
 
 ///|
+/// A parameter of the request's `Content-Type`, such as `charset` or
+/// `multipart/form-data`'s `boundary`. Parameter names are matched
+/// case-insensitively, quoted values are unescaped, and only a whole parameter
+/// name matches, so `xcharset` does not answer a lookup for `charset`.
+///
+/// Returns `None` when the request has no `Content-Type`, the parameter is
+/// missing, or the parameter has no `=`. When a parameter occurs more than
+/// once, the first occurrence wins.
+pub fn Context::content_type_parameter(
+  self : Context,
+  name : String,
+) -> String? {
+  header_parameter(self.header("Content-Type").view(), name)
+}
+
+///|
 /// Whether lower-cased `media_type` matches the lower-cased media type
 /// `pattern`. A pattern without wildcards is an exact match; `type/*`,
 /// `*/*` and `*` accept groups, while a subtype such as `*+json` accepts
