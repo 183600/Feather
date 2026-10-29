@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Feather SSE demo</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 48rem; }
+      #events { border: 1px solid #ccc; padding: 1rem; min-height: 12rem; }
+      #events p { margin: 0.25rem 0; font-family: ui-monospace, monospace; }
+    </style>
+  </head>
+  <body>
+    <h1>Feather SSE + rate limit + static files</h1>
+    <p>
+      This page is served by <code>static_files("/static", ...)</code>. The
+      stream below connects to <code>/events</code>, which is wrapped in a
+      per-client <code>middleware_rate_limit</code> (10 connections per minute).
+    </p>
+    <div id="events"><p>Connecting…</p></div>
+    <script>
+      const events = document.getElementById("events");
+      events.innerHTML = "";
+      const source = new EventSource("/events");
+      source.addEventListener("tick", (event) => {
+        const line = document.createElement("p");
+        line.textContent = `event ${event.lastEventId}: ${event.data}`;
+        events.appendChild(line);
+      });
+      source.onerror = () => {
+        const line = document.createElement("p");
+        line.textContent = "stream closed or rate limited; the browser will retry";
+        events.appendChild(line);
+      };
+    </script>
+  </body>
+</html>

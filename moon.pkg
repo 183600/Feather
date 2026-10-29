@@ -13,3 +13,5 @@ import {
   "moonbitlang/core/string",
   "moonbitlang/core/random",
 }
+
+supported_targets = "native+wasm"
