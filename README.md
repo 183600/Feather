@@ -499,6 +499,12 @@ app.serve(@socket.Addr::parse("0.0.0.0:8080"))
 app.serve_graceful_until(addr, stop=() => { /* resolve on SIGTERM */ })
 ```
 
+`request_timeout` is application-wide; `route_timeout("POST", "/slow", 5_000)`
+overrides it for one registered route (dynamic patterns such as `/items/:id`
+work too, and `0` restores the application default). Route timeouts cover body
+reads and ordinary handler responses; SSE, streaming and WebSocket endpoints
+remain exempt.
+
 The default body-size limit is deliberately tiny (`DEFAULT_MAX_BODY_SIZE` is
 1000 bytes; larger bodies are rejected with `413`), so real applications
 should raise it with `max_body_size` as shown above. A request body declaring

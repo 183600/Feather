@@ -120,6 +120,7 @@ pub struct RouteNode {
   mut pattern_kinds : Array[Int32]
   mut route_wildcard_name : String
   mut route_wildcard_key : String
+  mut timeout : Int32
   mut exact_cache : Map[String, RouteNode]?
 }
 

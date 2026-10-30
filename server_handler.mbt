@@ -409,6 +409,11 @@ async fn handle_request(
       None => ()
     }
   }
+  let route_timeout = app.router.timeout_for(
+    request_method_to_string(request.meth),
+    request.path,
+  )
+  let timeout = if route_timeout > 0 { route_timeout } else { app.timeout }
   let response_started = Ref(false)
   let send_dynamic = () => {
     let (response, file, auto_etag, compress, compress_min_size) =
@@ -441,8 +446,8 @@ async fn handle_request(
       }
     }
   }
-  if app.timeout > 0 {
-    @async.with_timeout(app.timeout, send_dynamic) catch {
+  if timeout > 0 {
+    @async.with_timeout(timeout, send_dynamic) catch {
       @async.TimeoutError =>
         if response_started.val {
           conn.close()

@@ -251,6 +251,26 @@ pub fn App::route_with(
 }
 
 ///|
+///|
+/// Set a timeout in milliseconds for one registered route, overriding
+/// `App::request_timeout` for that route.
+///
+/// A positive value applies while the request is being read and while the
+/// ordinary handler builds its response. `0` removes the override and restores
+/// the application-wide timeout. Re-registering the route also resets it. The
+/// call is a no-op when no route matches `meth path`, and asynchronous
+/// endpoints keep their documented exemption from request timeouts.
+pub fn App::route_timeout(
+  self : App,
+  meth : String,
+  path : String,
+  millis : Int32,
+) -> App {
+  ignore(self.router.set_route_timeout(meth, path, millis))
+  self
+}
+
+///|
 pub fn App::get(self : App, path : String, handler : Handler) -> App {
   self.route("GET", path, handler)
 }

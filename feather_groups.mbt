@@ -141,6 +141,22 @@ pub fn RouteGroup::route_with(
 }
 
 ///|
+///|
+/// Set a timeout for a route previously registered through this group. The
+/// path is joined with the group prefix exactly like `RouteGroup::route`.
+pub fn RouteGroup::route_timeout(
+  self : RouteGroup,
+  meth : String,
+  path : String,
+  millis : Int32,
+) -> RouteGroup {
+  ignore(
+    self.router.set_route_timeout(meth, join_paths(self.prefix, path), millis),
+  )
+  self
+}
+
+///|
 pub fn RouteGroup::route_named(
   self : RouteGroup,
   name : String,

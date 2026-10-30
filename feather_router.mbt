@@ -13,6 +13,7 @@ fn RouteNode::new() -> RouteNode {
     pattern_kinds: [],
     route_wildcard_name: "",
     route_wildcard_key: "",
+    timeout: 0,
     exact_cache: None,
   }
 }
@@ -566,6 +567,9 @@ fn Router::add_route_node(
   node.pattern_kinds = pattern_kinds
   node.route_wildcard_name = route_wildcard_name
   node.route_wildcard_key = route_wildcard_key
+  // A timeout belongs to the route registration, so replacing the handler
+  // must not leave a stale per-route limit behind.
+  node.timeout = 0
   if is_static {
     match root.exact_cache {
       Some(cache) => cache.set(clean_path, node)
@@ -707,6 +711,47 @@ fn find_route_node_by_identity(
     None => ()
   }
   None
+}
+
+///|
+/// Set a per-route timeout in milliseconds. Returns `false` when no route is
+/// registered for `meth path`.
+///
+/// A positive timeout overrides `App::request_timeout` for this route only;
+/// `0` restores the application-wide setting. Re-registering the route resets
+/// the timeout. Dynamic routes use their registered pattern (`/items/:id`),
+/// matching the spelling accepted by `Router::add_route`.
+pub fn Router::set_route_timeout(
+  self : Router,
+  meth : String,
+  path : String,
+  millis : Int32,
+) -> Bool {
+  let method = normalize_method(meth)
+  let clean_path = clean_route_path(path)
+  let root = match self.trees.get(method) {
+    Some(root) => root
+    None => return false
+  }
+  let node = match find_route_node_by_identity(
+    root,
+    route_pattern_identity(clean_path.view()),
+  ) {
+    Some(node) => node
+    None => return false
+  }
+  node.timeout = if millis < 0 { 0 } else { millis }
+  true
+}
+
+///|
+/// The configured timeout for the route that matches a concrete request path,
+/// or `0` when no route matches or it has no per-route override.
+pub fn Router::timeout_for(self : Router, meth : String, path : String) -> Int32 {
+  match self.match_dispatch(normalize_method(meth), clean_path_view(path)) {
+    DispatchFound(node, _, _) => node.timeout
+    _ => 0
+  }
 }
 
 ///|
