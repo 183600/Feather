@@ -10,7 +10,9 @@
 /// pass it explicitly to override the header. `utf-8` (the default) decodes the
 /// body as UTF-8 and replaces invalid sequences, `iso-8859-1` (also spelled
 /// `latin1`) maps every byte to the code point of the same value,
-/// `us-ascii` (also spelled `ascii`) replaces the bytes above `0x7f`, and
+/// `us-ascii` (also spelled `ascii`) replaces the bytes above `0x7f`,
+/// `windows-1252` (also spelled `cp1252` or `x-cp1252`) decodes the common
+/// Western European encoding used by legacy HTML forms, and
 /// `utf-16` / `utf-16le` / `utf-16be` decode UTF-16 with the declared byte
 /// order (`utf-16` follows a leading byte-order mark and defaults to
 /// big-endian without one). Unpaired surrogates and a trailing odd byte are
@@ -81,6 +83,12 @@ fn decode_body_charset(
     name.equal_ignore_ascii_case("ascii".view()) {
     return decode_ascii(bytes)
   }
+  if name.equal_ignore_ascii_case("windows-1252".view()) ||
+    name.equal_ignore_ascii_case("windows1252".view()) ||
+    name.equal_ignore_ascii_case("cp1252".view()) ||
+    name.equal_ignore_ascii_case("x-cp1252".view()) {
+    return decode_windows_1252(bytes)
+  }
   if name.equal_ignore_ascii_case("utf-16".view()) ||
     name.equal_ignore_ascii_case("utf16".view()) {
     return decode_utf16_auto(bytes)
@@ -103,6 +111,33 @@ fn decode_latin1(bytes : Bytes) -> String {
   let builder = StringBuilder(size_hint=bytes.length())
   for byte in bytes.iter() {
     builder.write_char(byte.to_int().unsafe_to_char())
+  }
+  builder.to_string()
+}
+
+///|
+/// Code points for the `0x80` to `0x9f` range of Windows-1252. The five bytes
+/// that the encoding leaves undefined keep their C1 control code point, as the
+/// WHATWG encoding standard specifies for web compatibility.
+let windows_1252_high : Array[Int] = [
+  0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+  0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+  0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+  0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+]
+
+///|
+/// Decode `bytes` as Windows-1252, the legacy Western European encoding.
+fn decode_windows_1252(bytes : Bytes) -> String {
+  let builder = StringBuilder(size_hint=bytes.length())
+  for byte in bytes.iter() {
+    let value = byte.to_int()
+    let code = if value >= 0x80 && value < 0xA0 {
+      windows_1252_high[value - 0x80]
+    } else {
+      value
+    }
+    builder.write_char(code.unsafe_to_char())
   }
   builder.to_string()
 }
