@@ -493,6 +493,7 @@ pub fn Feather::request_timeout(Self, Int32) -> Self
 pub fn Feather::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn Feather::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
 pub fn Feather::route_named_with(Self, String, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
+pub fn Feather::route_timeout(Self, String, String, Int32) -> Self
 pub fn Feather::route_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn Feather::routes(Self) -> Array[(String, String)]
 pub async fn Feather::serve(Self) -> Unit

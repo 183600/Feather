@@ -210,6 +210,19 @@ pub fn Feather::request_timeout(self : Feather, millis : Int32) -> Feather {
 }
 
 ///|
+/// Set a timeout for one registered route on the wrapped application. See
+/// `App::route_timeout`.
+pub fn Feather::route_timeout(
+  self : Feather,
+  meth : String,
+  path : String,
+  millis : Int32,
+) -> Feather {
+  ignore(self.app.route_timeout(meth, path, millis))
+  self
+}
+
+///|
 /// Declare how many proxies in front of the application may be trusted when
 /// the client address is derived from the forwarded headers. See
 /// `App::trust_proxy` for the details.

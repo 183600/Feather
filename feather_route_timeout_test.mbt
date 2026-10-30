@@ -36,6 +36,18 @@ test "route timeout through a group uses the prefixed path" {
 }
 
 ///|
+test "the feather facade forwards route timeouts" {
+  let feather = @feather.create_feather({
+    host: "127.0.0.1",
+    port: 0,
+    timeout: 0,
+  })
+  ignore(feather.get("/slow", fn(ctx) { ctx.text(200, "slow") }))
+  ignore(feather.route_timeout("GET", "/slow", 15))
+  assert_eq(feather.app.router.timeout_for("GET", "/slow"), 15)
+}
+
+///|
 test "mounted routes keep their per-route timeout" {
   let child = @feather.App::new()
     .get("/slow", fn(ctx) { ctx.text(200, "slow") })
