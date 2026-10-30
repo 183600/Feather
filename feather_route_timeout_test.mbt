@@ -36,6 +36,15 @@ test "route timeout through a group uses the prefixed path" {
 }
 
 ///|
+test "mounted routes keep their per-route timeout" {
+  let child = @feather.App::new()
+    .get("/slow", fn(ctx) { ctx.text(200, "slow") })
+    .route_timeout("GET", "/slow", 40)
+  let parent = @feather.App::new().mount("/api", child)
+  assert_eq(parent.router.timeout_for("GET", "/api/slow"), 40)
+}
+
+///|
 async test "a route timeout overrides the application timeout for body reads" {
   let app = @feather.App::new()
     .request_timeout(2000)
