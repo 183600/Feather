@@ -896,7 +896,7 @@ fn cached_header_spelling(
 
 ///|
 /// Whether `code` may appear in an HTTP field name (RFC 9110 §5.6.2 `token`).
-fn is_http_field_name_character(code : Int32) -> Bool {
+fn is_http_token_character(code : Int32) -> Bool {
   (code >= 48 && code <= 57) ||
   (code >= 65 && code <= 90) ||
   (code >= 97 && code <= 122) ||
@@ -918,14 +918,14 @@ fn is_http_field_name_character(code : Int32) -> Bool {
 }
 
 ///|
-/// Return `name` when it is a non-empty HTTP field name, or `""` when it could
+/// Return `name` when it is a non-empty HTTP token, or `""` when it could
 /// inject separators, whitespace or a whole extra header line.
 fn sanitize_response_header_name(name : String) -> String {
   if name.is_empty() {
     return ""
   }
   for i = 0; i < name.length(); i = i + 1 {
-    if !is_http_field_name_character(name[i].to_int()) {
+    if !is_http_token_character(name[i].to_int()) {
       return ""
     }
   }

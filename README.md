@@ -137,9 +137,16 @@ lookup counterparts. The multi-value maps and arrays are fresh copies, so a
 handler can mutate them without disturbing a later request that carries the
 same query or body.
 
-`Context::content_type_parameter("charset")` reads a parameter from the
-request's `Content-Type` header, unquoting values such as multipart boundaries
-and matching parameter names case-insensitively.
+`Context::content_type()` returns the request's lowercased media type without
+parameters, and `is_json` / `is_form` / `is_multipart` classify common body
+types. `Context::content_type_parameter("charset")` reads one parameter,
+unquoting values such as multipart boundaries and matching parameter names
+case-insensitively.
+
+`Context::set_content_type("text/plain", parameters=[("charset", "utf-8")])`
+sets a response media type and appends parameters in order, quoting values that
+are not bare tokens. It only sets the header, so call it after a body helper
+when a custom representation type is wanted.
 
 ## Routing
 

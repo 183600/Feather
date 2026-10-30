@@ -59,6 +59,114 @@ pub fn Context::content_type(self : Context) -> String {
 }
 
 ///|
+/// Whether `value` is a non-empty HTTP token, and so can be written as a media
+/// type parameter name or an unquoted parameter value.
+fn is_content_type_token(value : StringView) -> Bool {
+  if value.is_empty() {
+    return false
+  }
+  for i = 0; i < value.length(); i = i + 1 {
+    if !is_http_token_character(value.unsafe_get(i).to_int()) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// Format a media type parameter value, quoting it when it is not a bare token.
+///
+/// Quoted values escape `"` and `\` as required by RFC 7231 and drop control
+/// characters, so a caller-controlled value cannot terminate the quoted string
+/// or inject another header line.
+fn content_type_parameter_value(value : String) -> String {
+  if is_content_type_token(value.view()) {
+    return value
+  }
+  let buf = StringBuilder(size_hint=value.length() + 2)
+  buf.write_char('"')
+  for i = 0; i < value.length(); i = i + 1 {
+    let code = value.unsafe_get(i)
+    let code_value = code.to_int()
+    if code_value < 0x20 || code_value == 0x7F {
+      continue
+    }
+    if code == '"' || code == '\\' {
+      buf.write_char('\\')
+    }
+    buf.write_char(code.unsafe_to_char())
+  }
+  buf.write_char('"')
+  buf.to_string()
+}
+
+///|
+/// Trim surrounding whitespace and any trailing `;` separators from a media
+/// type, so appending parameters cannot produce an empty or repeated separator.
+fn normalize_content_type_media_type(media_type : String) -> String {
+  let cleaned = strip_control_characters(
+    trim_ascii_space(media_type.view()).to_owned(),
+  )
+  let view = cleaned.view()
+  let mut end = view.length()
+  while end > 0 {
+    let code = view.unsafe_get(end - 1)
+    if code == (';' : UInt16) ||
+      code == (' ' : UInt16) ||
+      code == ('\t' : UInt16) {
+      end = end - 1
+    } else {
+      break
+    }
+  }
+  view[:end].to_owned()
+}
+
+///|
+/// Set the response media type and append any parameters.
+///
+/// The media type is trimmed and any trailing `;` removed; each parameter with
+/// a valid HTTP token name is appended in array order. Values that are not bare
+/// tokens (including the empty string) are quoted and escaped. Invalid
+/// parameter names are skipped, and control characters are removed from all
+/// parts, so untrusted values cannot forge header content.
+///
+/// This only sets the header; the body helpers (`text`, `html`, `json`,
+/// `bytes`, ...) set their own `Content-Type`. Call this after the body helper
+/// when a custom representation type is wanted, or pass `content_type` to
+/// `Context::bytes`.
+pub fn Context::set_content_type(
+  self : Context,
+  media_type : String,
+  parameters~ : Array[(String, String)] = [],
+) -> Unit {
+  let normalized = normalize_content_type_media_type(media_type)
+  if normalized == "" {
+    return
+  }
+  let buf = StringBuilder(
+    size_hint=normalized.length() + parameters.length() * 16,
+  )
+  buf.write_string(normalized)
+  for entry in parameters {
+    let (name, value) = entry
+    let trimmed_name = trim_ascii_space(name.view())
+    if !is_content_type_token(trimmed_name) {
+      continue
+    }
+    buf.write_string("; ")
+    buf.write_view(trimmed_name)
+    buf.write_char('=')
+    buf.write_string(content_type_parameter_value(value))
+  }
+  set_header_ignore_case(
+    self.response.headers,
+    "Content-Type",
+    buf.to_string(),
+  )
+}
+
+///|
 /// Whether the request body is JSON, including `+json` structured suffixes
 /// such as `application/problem+json`.
 pub fn Context::is_json(self : Context) -> Bool {

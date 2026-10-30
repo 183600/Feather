@@ -427,6 +427,7 @@ pub fn Context::session_set(Self, String, String) -> Bool
 pub fn Context::session_set_json(Self, String, Json) -> Bool
 pub fn Context::session_touch(Self) -> Bool
 pub fn Context::set(Self, String, String) -> Unit
+pub fn Context::set_content_type(Self, String, parameters? : Array[(String, String)]) -> Unit
 pub fn Context::set_cookie(Self, String, String, path? : String, max_age? : Int64, expires? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool, partitioned? : Bool) -> Unit
 pub fn Context::set_header(Self, String, String) -> Unit
 pub fn Context::set_header_if_absent(Self, String, String) -> Bool
