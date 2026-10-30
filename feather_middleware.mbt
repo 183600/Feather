@@ -137,10 +137,12 @@ pub fn middleware_logger(
           raise err
         }
       }
-      // Static files are written after the middleware chain returns, so their
-      // real status (200/206/304/404/...) is not known yet. Defer the record
-      // until request cleanup, after `handle_static` has filled it in.
-      if ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) {
+      // Static files and asynchronous endpoints are written after the
+      // middleware chain returns, so their real status (200/206/304/404/... or
+      // a stream status chosen by the handler) is not known yet. Defer the
+      // record until request cleanup, after the server has filled it in.
+      if ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) ||
+        ctx.state.get(ASYNC_CHAIN_PASS_KEY) is Some(_) {
         ctx.defer_cleanup(fn() {
           logger_record(log, ctx, started, with_duration)
         })

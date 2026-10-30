@@ -63,6 +63,7 @@ async fn handle_websocket(
     return
   }
   let socket = @websocket.from_http_server(request, conn) catch { _ => return }
+  ctx.response.status = 101
   defer conn.close()
   defer socket.close()
   handler(ctx, socket) catch {
@@ -136,6 +137,7 @@ async fn handle_sse(
     return
   }
   let headers = sse_response_headers(ctx)
+  ctx.response.status = 200
   send_with_date(conn, 200, "OK", headers, cookies=ctx.response.cookies)
   if head {
     conn.end_response()
@@ -200,6 +202,7 @@ async fn handle_stream(
       status=ctx.response.status,
       headers=stream_seed_headers(ctx.response),
       cookies=ctx.response.cookies,
+      context=ctx,
     )
     stream.close() catch {
       _ => conn.close()
@@ -211,6 +214,7 @@ async fn handle_stream(
     status=ctx.response.status,
     headers=stream_seed_headers(ctx.response),
     cookies=ctx.response.cookies,
+    context=ctx,
   )
   let mut failed = false
   handler(ctx, stream) catch {
@@ -218,6 +222,7 @@ async fn handle_stream(
   }
   if failed && !stream.is_started() {
     stream.abort()
+    ctx.response.status = 500
     send_simple(conn, 500, "500 Internal Server Error", false) catch {
       _ => conn.close()
     }

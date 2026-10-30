@@ -16,6 +16,7 @@ pub struct Stream {
   mut status : Int32
   headers : Map[String, String]
   priv cookies : Array[@http.Cookie]
+  priv context : Context?
 }
 
 ///|
@@ -24,8 +25,17 @@ fn Stream::new(
   status~ : Int32 = 200,
   headers~ : Map[String, String] = Map([]),
   cookies~ : Array[@http.Cookie] = [],
+  context? : Context,
 ) -> Stream {
-  { conn, closed: false, started: false, status, headers, cookies, }
+  {
+    conn,
+    closed: false,
+    started: false,
+    status,
+    headers,
+    cookies,
+    context,
+  }
 }
 
 ///|
@@ -44,9 +54,16 @@ pub fn Stream::is_started(self : Stream) -> Bool {
 
 ///|
 /// Set the status code of the response. Ignored after the header was sent.
+///
+/// The request context is updated too, so middleware cleanups and loggers that
+/// run after the streaming handler returns observe the status that was sent.
 pub fn Stream::set_status(self : Stream, status : Int32) -> Unit {
   if !self.started {
     self.status = status
+    match self.context {
+      Some(ctx) => ctx.response.status = status
+      None => ()
+    }
   }
 }
 
