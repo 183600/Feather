@@ -224,9 +224,11 @@ to require the registered claims, with `aud` accepting either a string or an
 array of strings. Invalid, expired, not-yet-valid or wrongly scoped tokens
 receive a `401` with a `WWW-Authenticate: Bearer realm="..."` challenge
 before the handler runs. Handlers read the verified claims with
-`Context::jwt_claims`, `Context::jwt_claim`, or `Context::jwt_subject`, while
-outer logging middleware can read the stable failure category from
-`Context::jwt_error` after the middleware returns:
+`Context::jwt_claims`, `Context::jwt_claim`, or `Context::jwt_subject`; the
+protected header (for example its `kid`) is available through
+`Context::jwt_header` and `Context::jwt_header_parameter`, while outer logging
+middleware can read the stable failure category from `Context::jwt_error`
+after the middleware returns:
 
 ```moonbit
 let app = @feather.App::new()
@@ -237,10 +239,10 @@ let app = @feather.App::new()
 ```
 
 Use `@feather.verify_jwt_hs256` directly when a handler needs the full
-`Jwt` value, including its protected header. The verifier accepts a `now=`
-override for tests and `require_exp=false` for issuers that use another expiry
-mechanism. The secret is UTF-8 encoded as-is; use a high-entropy value and keep
-it out of source control.
+`Jwt` value without middleware. The verifier accepts a `now=` override for
+tests and `require_exp=false` for issuers that use another expiry mechanism.
+The secret is UTF-8 encoded as-is; use a high-entropy value and keep it out of
+source control.
 
 `middleware_secure_headers` installs `nosniff`, frame and referrer policies by
 default. It also accepts `hsts`, `content_security_policy`,

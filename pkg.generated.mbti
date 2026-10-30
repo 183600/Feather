@@ -364,6 +364,8 @@ pub fn Context::json_value(Self, Int32, Json) -> Unit
 pub fn Context::jwt_claim(Self, String) -> Json?
 pub fn Context::jwt_claims(Self) -> Json?
 pub fn Context::jwt_error(Self) -> String
+pub fn Context::jwt_header(Self) -> Json?
+pub fn Context::jwt_header_parameter(Self, String) -> Json?
 pub fn Context::jwt_subject(Self) -> String
 pub fn Context::multipart(Self) -> Array[MultipartPart]
 pub fn Context::multipart_file(Self, String) -> MultipartPart?

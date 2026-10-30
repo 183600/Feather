@@ -79,6 +79,11 @@ pub fn Jwt::subject(self : Jwt) -> String {
 }
 
 ///|
+/// Request-state key holding the protected header installed by
+/// `middleware_jwt_hs256`.
+const JWT_HEADER_STATE_KEY : String = "__feather_jwt_header"
+
+///|
 /// Request-state key holding the claims installed by `middleware_jwt_hs256`.
 const JWT_CLAIMS_STATE_KEY : String = "__feather_jwt_claims"
 
@@ -301,6 +306,28 @@ pub fn verify_jwt_hs256(
 }
 
 ///|
+/// The protected header installed by `middleware_jwt_hs256`, or `None` when
+/// this request did not carry a verified token or the middleware is not
+/// installed.
+///
+/// The header is an object containing at least `alg`; applications can read
+/// parameters such as `kid` to select a key or record the token type.
+pub fn Context::jwt_header(self : Context) -> Json? {
+  self.json_state.get(JWT_HEADER_STATE_KEY)
+}
+
+///|
+/// Look up one protected-header parameter installed by
+/// `middleware_jwt_hs256`. Returns `None` for an absent parameter or a request
+/// without a verified token.
+pub fn Context::jwt_header_parameter(self : Context, name : String) -> Json? {
+  match self.jwt_header() {
+    Some(Json::Object(header)) => header.get(name)
+    _ => None
+  }
+}
+
+///|
 /// The claims installed by `middleware_jwt_hs256`, or `None` when this request
 /// did not carry a verified token or the middleware is not installed.
 ///
@@ -364,8 +391,9 @@ fn jwt_error_code(error : JwtError) -> String {
 ///
 /// The token is read from `Authorization: Bearer <token>` and verified with
 /// `verify_jwt_hs256`; on success the claims are stored for
-/// `Context::jwt_claims` / `Context::jwt_claim` / `Context::jwt_subject` and
-/// the request continues. A missing, malformed, expired, not-yet-valid or
+/// `Context::jwt_claims` / `Context::jwt_claim` / `Context::jwt_subject`, and
+/// its protected header is available through `Context::jwt_header` /
+/// `Context::jwt_header_parameter`. A missing, malformed, expired, not-yet-valid or
 /// incorrectly signed token is answered with `401 Unauthorized` and a
 /// `WWW-Authenticate: Bearer realm="..."` challenge before the handler runs,
 /// including tokens that use an algorithm other than `HS256`.
@@ -410,11 +438,14 @@ pub fn middleware_jwt_hs256(
       }
       match verified {
         Some(jwt) => {
+          ctx.json_state.set(JWT_HEADER_STATE_KEY, jwt.header)
           ctx.json_state.set(JWT_CLAIMS_STATE_KEY, jwt.claims)
           ignore(ctx.state.remove(JWT_ERROR_STATE_KEY))
           next(ctx)
         }
         None => {
+          ignore(ctx.json_state.remove(JWT_HEADER_STATE_KEY))
+          ignore(ctx.json_state.remove(JWT_CLAIMS_STATE_KEY))
           ctx.file = None
           ctx.response.status = 401
           clear_replaced_body_headers(ctx.response.headers)

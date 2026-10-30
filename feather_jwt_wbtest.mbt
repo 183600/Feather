@@ -481,3 +481,38 @@ test "jwt middleware enforces configured issuer and audience" {
   assert_eq(rejected.status, 401)
   assert_eq(rejected.body, "401 Unauthorized")
 }
+
+///|
+test "jwt middleware exposes the protected header and its parameters" {
+  let now = @async.now() / 1000L
+  let app = App::new()
+    .use(middleware_jwt_hs256("secret"))
+    .get("/me", fn(ctx) {
+      let alg = match ctx.jwt_header_parameter("alg") {
+        Some(Json::String(value)) => value
+        _ => ""
+      }
+      let kid = match ctx.jwt_header_parameter("kid") {
+        Some(Json::String(value)) => value
+        _ => ""
+      }
+      let object_header = match ctx.jwt_header() {
+        Some(Json::Object(_)) => true
+        _ => false
+      }
+      let missing = ctx.jwt_header_parameter("missing") is None
+      ctx.text(200, "\{alg}:\{kid}:\{object_header}:\{missing}")
+    })
+  let token = jwt_token_with_header(
+    Json::object({
+      "alg": Json::string("HS256"),
+      "typ": Json::string("JWT"),
+      "kid": Json::string("key-1"),
+    }),
+    jwt_claims(now + 60L, "alice"),
+    "secret",
+  )
+  let response = app.respond(jwt_request(token))
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "HS256:key-1:true:true")
+}
