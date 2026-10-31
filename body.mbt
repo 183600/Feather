@@ -10,6 +10,7 @@
 /// pass it explicitly to override the header. `utf-8` (the default) decodes the
 /// body as UTF-8 and replaces invalid sequences, `iso-8859-1` (also spelled
 /// `latin1`) maps every byte to the code point of the same value,
+/// `iso-8859-15` (also spelled `latin9` or `l9`) is its euro-aware variant,
 /// `us-ascii` (also spelled `ascii`) replaces the bytes above `0x7f`,
 /// `windows-1252` (also spelled `cp1252` or `x-cp1252`) decodes the common
 /// Western European encoding used by legacy HTML forms, and
@@ -79,6 +80,15 @@ fn decode_body_charset(
     name.equal_ignore_ascii_case("latin1".view()) {
     return decode_latin1(bytes)
   }
+  if name.equal_ignore_ascii_case("iso-8859-15".view()) ||
+    name.equal_ignore_ascii_case("iso8859-15".view()) ||
+    name.equal_ignore_ascii_case("iso885915".view()) ||
+    name.equal_ignore_ascii_case("iso_8859-15".view()) ||
+    name.equal_ignore_ascii_case("csisolatin9".view()) ||
+    name.equal_ignore_ascii_case("latin9".view()) ||
+    name.equal_ignore_ascii_case("l9".view()) {
+    return decode_iso_8859_15(bytes)
+  }
   if name.equal_ignore_ascii_case("us-ascii".view()) ||
     name.equal_ignore_ascii_case("ascii".view()) {
     return decode_ascii(bytes)
@@ -111,6 +121,49 @@ fn decode_latin1(bytes : Bytes) -> String {
   let builder = StringBuilder(size_hint=bytes.length())
   for byte in bytes.iter() {
     builder.write_char(byte.to_int().unsafe_to_char())
+  }
+  builder.to_string()
+}
+
+///|
+/// Code point for one of the eight ISO-8859-15 positions that differ from
+/// ISO-8859-1, or `-1` when the byte is shared with the older encoding.
+fn iso_8859_15_override(value : Int) -> Int {
+  if value == 0xA4 {
+    0x20AC
+  } else if value == 0xA6 {
+    0x0160
+  } else if value == 0xA8 {
+    0x0161
+  } else if value == 0xB4 {
+    0x017D
+  } else if value == 0xB8 {
+    0x017E
+  } else if value == 0xBC {
+    0x0152
+  } else if value == 0xBD {
+    0x0153
+  } else if value == 0xBE {
+    0x0178
+  } else {
+    -1
+  }
+}
+
+///|
+/// Decode `bytes` as ISO-8859-15, the euro-aware revision of ISO-8859-1. The
+/// two encodings agree except at eight positions, where the newer one carries
+/// the euro sign, `Š`, `š`, `Ž`, `ž`, `Œ`, `œ` and `Ÿ`.
+fn decode_iso_8859_15(bytes : Bytes) -> String {
+  let builder = StringBuilder(size_hint=bytes.length())
+  for byte in bytes.iter() {
+    let value = byte.to_int()
+    let replacement = iso_8859_15_override(value)
+    if replacement >= 0 {
+      builder.write_char(replacement.unsafe_to_char())
+    } else {
+      builder.write_char(value.unsafe_to_char())
+    }
   }
   builder.to_string()
 }
