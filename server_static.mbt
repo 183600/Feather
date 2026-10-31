@@ -4,6 +4,13 @@
 const ASYNC_CHAIN_PASS_KEY : String = "__feather_async_pass"
 
 ///|
+/// Context state key marking that the current request is being handled by an
+/// asynchronous endpoint. Unlike `ASYNC_CHAIN_PASS_KEY`, it is set before the
+/// middleware chain runs, so middleware that short-circuits can still tell that
+/// the endpoint's response will be finalized after the chain returns.
+const ASYNC_ENDPOINT_KEY : String = "__feather_async_endpoint"
+
+///|
 /// Apply the ordinary dynamic-response pipeline (preconditions, compression,
 /// generated ETags) to a context produced by a handler or middleware chain.
 ///
@@ -159,6 +166,7 @@ fn App::run_async_middleware(
   ctx : Context,
   route_chain : Handler,
 ) -> Bool {
+  ctx.state.set(ASYNC_ENDPOINT_KEY, "1")
   if !run_async_middleware_chain(self.async_middleware_chain(), ctx) {
     return false
   }

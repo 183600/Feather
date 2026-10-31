@@ -197,6 +197,7 @@ pub fn middleware_logger(
       // a stream status chosen by the handler) is not known yet. Defer the
       // record until request cleanup, after the server has filled it in.
       if ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) ||
+        ctx.state.get(ASYNC_ENDPOINT_KEY) is Some(_) ||
         ctx.state.get(ASYNC_CHAIN_PASS_KEY) is Some(_) {
         ctx.defer_cleanup(fn() {
           logger_emit(log, ctx, started, with_duration, format)
