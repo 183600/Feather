@@ -53,6 +53,40 @@ pub fn middleware_recover(log? : (String) -> Unit) -> Middleware {
 }
 
 ///|
+/// Middleware that catches errors escaping the handler chain and delegates the
+/// response to `handler`.
+///
+/// Unlike [`middleware_recover`], which always renders the framework's default
+/// body, this hook can produce an HTML error page, translate a domain error, or
+/// attach telemetry fields. The callback receives the original error, so it can
+/// match `HttpError`, `HttpErrorPayload`, `HttpProblem`, or an application
+/// error type; [`error_status`] returns the status carried by framework errors
+/// when a generic mapping is enough. It owns the response, and an error raised
+/// from the callback propagates to the surrounding application layer.
+pub fn middleware_recover_with(
+  handler~ : (Context, Error) -> Unit raise,
+) -> Middleware {
+  fn(next) {
+    fn(ctx) raise {
+      next(ctx) catch {
+        err => handler(ctx, err)
+      }
+    }
+  }
+}
+
+///|
+/// HTTP status carried by a framework error, or `500` for any other error.
+pub fn error_status(err : Error) -> Int32 {
+  match err {
+    HttpError(status, _) => status
+    HttpErrorPayload(status, _, _) => status
+    HttpProblem(status, _, _, _, _) => status
+    _ => 500
+  }
+}
+
+///|
 pub fn middleware_error_handler() -> Middleware {
   fn(next) {
     fn(ctx) {

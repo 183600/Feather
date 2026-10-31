@@ -201,6 +201,14 @@ let app = @feather.App::new()
 predicate to omit health checks and other noisy requests (the handler still
 runs).
 
+`middleware_recover()` converts errors into the framework's default responses.
+Use `middleware_recover_with(handler=...)` instead when the application needs
+custom rendering, domain-error translation, or extra telemetry: the callback
+receives the original error (so it can match `HttpError`,
+`HttpErrorPayload`, `HttpProblem`, or its own error type) and owns the
+response. `error_status(err)` returns the status carried by framework errors
+and `500` otherwise. Request cleanups still run after a custom recovery.
+
 CORS can be limited to a fixed set of origins with
 `middleware_cors_allowlist`, or decided per request with
 `middleware_cors_with`. Both echo the accepted `Origin` and add `Vary: Origin`,

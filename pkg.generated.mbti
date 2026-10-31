@@ -43,6 +43,8 @@ pub fn error_response(Context, Int32, String) -> Unit
 
 pub fn error_response_with_payload(Context, Int32, String, Json) -> Unit
 
+pub fn error_status(Error) -> Int32
+
 pub fn format_http_date(Int64) -> String
 
 pub fn hmac_sha256(Bytes, Bytes) -> Bytes
@@ -104,6 +106,8 @@ pub fn middleware_no_store() -> ((Context) -> Unit raise) -> (Context) -> Unit r
 pub fn middleware_rate_limit(RateLimiter, key? : (Context) -> String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_recover(log? : (String) -> Unit) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_recover_with(handler~ : (Context, Error) -> Unit raise) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_request_id(header? : String, generate? : () -> String, max_length? : Int32, trust_incoming? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
