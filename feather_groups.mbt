@@ -49,6 +49,8 @@ pub struct RouteGroup {
   prefix : String
   middlewares : Array[Middleware]
   app : App?
+  mut timeout : Int32
+  mut body_limit : Int32
 }
 
 ///|
@@ -58,6 +60,8 @@ pub fn Router::group(self : Router, prefix : String) -> RouteGroup {
     prefix: normalize_prefix(prefix),
     middlewares: [],
     app: None,
+    timeout: 0,
+    body_limit: 0,
   }
 }
 
@@ -68,6 +72,8 @@ pub fn RouteGroup::group(self : RouteGroup, prefix : String) -> RouteGroup {
     prefix: normalize_prefix(join_paths(self.prefix, prefix)),
     middlewares: self.middlewares.copy(),
     app: self.app,
+    timeout: self.timeout,
+    body_limit: self.body_limit,
   }
 }
 
@@ -101,6 +107,55 @@ pub fn RouteGroup::use(
 }
 
 ///|
+/// Set a default timeout for routes registered through this group afterwards.
+///
+/// A positive value applies to each ordinary route added after this call, as
+/// if `RouteGroup::route_timeout` had been called for it, and nested groups
+/// inherit the default. `0` removes the default; routes already registered are
+/// unchanged. `RouteGroup::route_timeout` can still override an individual
+/// route, including resetting it to the application-wide timeout with `0`.
+pub fn RouteGroup::timeout(
+  self : RouteGroup,
+  millis : Int32,
+) -> RouteGroup {
+  self.timeout = if millis < 0 { 0 } else { millis }
+  self
+}
+
+///|
+/// Set a default request-body limit for routes registered through this group
+/// afterwards.
+///
+/// A positive value applies to each ordinary route added after this call, as
+/// if `RouteGroup::route_body_limit` had been called for it, and nested groups
+/// inherit the default. `0` removes the default; routes already registered are
+/// unchanged. `RouteGroup::route_body_limit` can still override an individual
+/// route, including resetting it to the application-wide limit with `0`.
+pub fn RouteGroup::body_limit(
+  self : RouteGroup,
+  limit : Int32,
+) -> RouteGroup {
+  self.body_limit = if limit < 0 { 0 } else { limit }
+  self
+}
+
+///|
+/// Apply this group's default timeout and body limit to a route that was just
+/// registered under its joined path.
+fn RouteGroup::apply_route_limits(
+  self : RouteGroup,
+  meth : String,
+  path : String,
+) -> Unit {
+  if self.timeout > 0 {
+    ignore(self.router.set_route_timeout(meth, path, self.timeout))
+  }
+  if self.body_limit > 0 {
+    ignore(self.router.set_route_body_limit(meth, path, self.body_limit))
+  }
+}
+
+///|
 fn RouteGroup::wrap(self : RouteGroup, handler : Handler) -> Handler {
   if self.middlewares.length() == 0 {
     handler
@@ -116,7 +171,9 @@ pub fn RouteGroup::route(
   path : String,
   handler : Handler,
 ) -> RouteGroup {
-  self.router.add_route(meth, join_paths(self.prefix, path), self.wrap(handler))
+  let path = join_paths(self.prefix, path)
+  self.router.add_route(meth, path, self.wrap(handler))
+  self.apply_route_limits(meth, path)
   self
 }
 
@@ -132,11 +189,13 @@ pub fn RouteGroup::route_with(
   middlewares : Array[Middleware],
   handler : Handler,
 ) -> RouteGroup {
+  let path = join_paths(self.prefix, path)
   self.router.add_route(
     meth,
-    join_paths(self.prefix, path),
+    path,
     self.wrap(apply_middleware(middlewares, handler)),
   )
+  self.apply_route_limits(meth, path)
   self
 }
 
@@ -180,12 +239,14 @@ pub fn RouteGroup::route_named(
   path : String,
   handler : Handler,
 ) -> RouteGroup {
+  let path = join_paths(self.prefix, path)
   self.router.add_named_route(
     name,
     meth,
-    join_paths(self.prefix, path),
+    path,
     self.wrap(handler),
   )
+  self.apply_route_limits(meth, path)
   self
 }
 
@@ -200,12 +261,14 @@ pub fn RouteGroup::route_named_with(
   middlewares : Array[Middleware],
   handler : Handler,
 ) -> RouteGroup {
+  let path = join_paths(self.prefix, path)
   self.router.add_named_route(
     name,
     meth,
-    join_paths(self.prefix, path),
+    path,
     self.wrap(apply_middleware(middlewares, handler)),
   )
+  self.apply_route_limits(meth, path)
   self
 }
 

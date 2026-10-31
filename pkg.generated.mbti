@@ -616,8 +616,11 @@ pub struct RouteGroup {
   prefix : String
   middlewares : Array[((Context) -> Unit raise) -> (Context) -> Unit raise]
   app : App?
+  mut timeout : Int32
+  mut body_limit : Int32
 }
 pub fn RouteGroup::all(Self, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::body_limit(Self, Int32) -> Self
 pub fn RouteGroup::connect(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::delete(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::get(Self, String, (Context) -> Unit raise) -> Self
@@ -641,6 +644,7 @@ pub fn RouteGroup::static_files(Self, String, String, index? : String, max_age? 
 pub fn RouteGroup::static_files_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], index? : String, max_age? : Int32, precompressed? : Bool, cache_control? : String) -> Self
 pub fn RouteGroup::stream(Self, String, async (Context, Stream) -> Unit) -> Self
 pub fn RouteGroup::stream_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Stream) -> Unit) -> Self
+pub fn RouteGroup::timeout(Self, Int32) -> Self
 pub fn RouteGroup::trace(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn RouteGroup::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self

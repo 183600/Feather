@@ -166,6 +166,16 @@ let api = app.group("/api")
 ignore(api.get("/health", fn(ctx) { ctx.json(200, { "ok": "true" }) }))
 ```
 
+A group can install per-route defaults before registering routes. `timeout`
+and `body_limit` apply to every ordinary route added afterwards under the
+group prefix, nested groups inherit them, and `route_timeout` /
+`route_body_limit` still override an individual route:
+
+```moonbit
+let uploads = app.group("/api/uploads").timeout(5_000).body_limit(4_096)
+ignore(uploads.post("/image", handler))
+```
+
 Route matching prefers static segments over parameters, and parameters over
 wildcards. Named routes support URL generation; `url_for` returns `String?`,
 or `None` when the name or a required parameter is missing:

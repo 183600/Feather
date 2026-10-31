@@ -355,6 +355,8 @@ pub fn App::group(self : App, prefix : String) -> RouteGroup {
     prefix: normalize_prefix(prefix),
     middlewares: [],
     app: Some(self),
+    timeout: 0,
+    body_limit: 0,
   }
 }
 
