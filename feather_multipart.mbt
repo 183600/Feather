@@ -146,9 +146,10 @@ pub(all) struct MultipartPart {
   filename : String
   content_type : String
   headers : Map[String, String]
+  /// The part's payload as text, decoded with the charset declared by its
+  /// `Content-Type` and lossily as UTF-8 when no charset is declared.
   data : String
-  /// The part's payload as bytes, exactly as it arrived. `data` is the lossy
-  /// text view of the same bytes.
+  /// The part's payload as bytes, exactly as it arrived.
   data_bytes : Bytes
 }
 
@@ -232,26 +233,33 @@ fn decode_utf8_lossless(bytes : Bytes) -> String {
 /// Recover a part's exact bytes and its well-formed text.
 ///
 /// `raw_data` is the lossless slice from the raw body (supplementary code
-/// units intact, invalid bytes escaped), so `data_bytes` returns the payload
-/// byte for byte while `data` is the lossy text handlers already expect. A
-/// part parsed from `Request::body` (no raw body available) falls back to
-/// re-encoding its text.
-/// Preserve a part's exact bytes together with its well-formed text.
-///
-/// `raw_data` is the lossless slice from the raw body (supplementary code
-/// units intact, invalid bytes escaped), so the bytes come back byte for byte
-/// while the text is the lossy view handlers already expect. A part parsed
-/// without a raw body falls back to re-encoding its text.
-fn resolve_part_bytes(data : String, raw_data : String?) -> (Bytes, String) {
-  match raw_data {
-    Some(raw) => {
-      let bytes = encode_utf8_lossless(raw)
-      (bytes, @utf8.decode_lossy(bytes))
-    }
-    None => {
-      let bytes = encode_utf8_lossy(data.view())
-      (bytes, @utf8.decode_lossy(bytes))
-    }
+/// units intact, invalid bytes escaped), so the bytes come back byte for byte.
+/// `data` is decoded with the charset the part's `Content-Type` declares,
+/// falling back to lossy UTF-8 when the part names none. A part parsed without
+/// a raw body falls back to re-encoding its text.
+fn resolve_part_bytes(
+  data : String,
+  raw_data : String?,
+  content_type~ : String = "",
+) -> (Bytes, String) {
+  let bytes = match raw_data {
+    Some(raw) => encode_utf8_lossless(raw)
+    None => encode_utf8_lossy(data.view())
+  }
+  (bytes, decode_multipart_part_text(bytes, content_type))
+}
+
+///|
+/// Decode a part's payload as text using its declared charset. Multipart
+/// parsers cannot return a per-part error, so an unsupported charset falls back
+/// to the lossy UTF-8 view instead of failing the entire form.
+fn decode_multipart_part_text(bytes : Bytes, content_type : String) -> String {
+  match header_parameter(content_type.view(), "charset") {
+    Some(charset) =>
+      decode_body_charset(bytes, charset) catch {
+        _ => @utf8.decode_lossy(bytes)
+      }
+    None => @utf8.decode_lossy(bytes)
   }
 }
 
@@ -1267,6 +1275,7 @@ fn parse_multipart_uncached(
       } else {
         None
       },
+      content_type=part_content_type,
     )
     parts.push({
       name,

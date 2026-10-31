@@ -143,7 +143,9 @@ The form helpers (`form`, `form_default`, `form_values`, `form_map`,
 `application/x-www-form-urlencoded` and `multipart/form-data` bodies. Multipart
 file parts are skipped, so a field and an upload can share a name without the
 upload leaking into the text accessors; use `multipart_file` / `multipart_files`
-for the file itself.
+for the file itself. A part's text is decoded with the charset declared by its
+`Content-Type` (falling back to lossy UTF-8 for unsupported charsets), while
+`MultipartPart::data_bytes` keeps the payload's exact bytes.
 
 `Context::content_type()` returns the request's lowercased media type without
 parameters, and `is_json` / `is_form` / `is_multipart` classify common body
