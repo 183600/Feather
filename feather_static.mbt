@@ -85,7 +85,7 @@ pub fn App::static_files_with(
 fn collect_route_nodes(
   node : RouteNode,
   method : String,
-  out : Array[(String, String, Handler, String, Int32)],
+  out : Array[(String, String, Handler, String, Int32, Int32)],
 ) -> Unit {
   match node.handler {
     Some(handler) =>
@@ -95,6 +95,7 @@ fn collect_route_nodes(
         handler,
         node.route_name,
         node.timeout,
+        node.body_limit,
       ))
     None => ()
   }
@@ -257,8 +258,8 @@ fn mounted_static_middlewares(
 ///
 /// The mounted application's fallback, application-wide request timeout, body
 /// limit and compression settings are not carried over; the parent application
-/// governs those. Per-route timeouts travel with their routes. Returns the
-/// parent so calls can be chained.
+/// governs those. Per-route timeouts and body limits travel with their routes.
+/// Returns the parent so calls can be chained.
 pub fn App::mount(self : App, prefix : String, child : App) -> App {
   self.mount_with(prefix, child, [])
 }
@@ -280,18 +281,19 @@ pub fn App::mount_with(
   let outer = middlewares.copy()
   let base = normalize_prefix(prefix)
   let child_middlewares = mounted_child_middlewares(child, base)
-  let routes : Array[(String, String, Handler, String, Int32)] = []
+  let routes : Array[(String, String, Handler, String, Int32, Int32)] = []
   for method, root in child.router.trees {
     collect_route_nodes(root, method, routes)
   }
   for route in routes {
-    let (method, path, handler, route_name, timeout) = route
+    let (method, path, handler, route_name, timeout, body_limit) = route
     let wrapped = mounted_route_chain(outer, child_middlewares, handler)
     let mounted_path = join_paths(base, path)
     self.router.forget_route_names(method, mounted_path)
     let node = self.router.add_route_node(method, mounted_path, wrapped)
     node.route_name = route_name
     node.timeout = timeout
+    node.body_limit = body_limit
   }
   for name, named in child.router.named {
     // Mounting a child whose name collides with a parent route makes the

@@ -236,6 +236,7 @@ pub fn App::resolve_websocket(Self, String) -> (async (Context, @websocket.Conn)
 pub fn App::respond(Self, Request) -> Response
 pub async fn App::respond_async(Self, Request) -> Response
 pub fn App::route(Self, String, String, (Context) -> Unit raise) -> Self
+pub fn App::route_body_limit(Self, String, String, Int32) -> Self
 pub fn App::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
 pub fn App::route_named_with(Self, String, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn App::route_timeout(Self, String, String, Int32) -> Self
@@ -491,6 +492,7 @@ pub fn Feather::remove_json_state(Self, String) -> Self
 pub fn Feather::remove_state(Self, String) -> Self
 pub fn Feather::request_timeout(Self, Int32) -> Self
 pub fn Feather::route(Self, String, String, (Context) -> Unit raise) -> Self
+pub fn Feather::route_body_limit(Self, String, String, Int32) -> Self
 pub fn Feather::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
 pub fn Feather::route_named_with(Self, String, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn Feather::route_timeout(Self, String, String, Int32) -> Self
@@ -624,6 +626,7 @@ pub fn RouteGroup::patch(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::post(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::put(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::route(Self, String, String, (Context) -> Unit raise) -> Self
+pub fn RouteGroup::route_body_limit(Self, String, String, Int32) -> Self
 pub fn RouteGroup::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::route_named_with(Self, String, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn RouteGroup::route_timeout(Self, String, String, Int32) -> Self
@@ -654,6 +657,7 @@ pub struct RouteNode {
   mut route_wildcard_name : String
   mut route_wildcard_key : String
   mut timeout : Int32
+  mut body_limit : Int32
   mut exact_cache : Map[String, RouteNode]?
 }
 
@@ -676,6 +680,7 @@ pub fn Router::add_named_route(Self, String, String, String, (Context) -> Unit r
 pub fn Router::add_named_route_with(Self, String, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Unit
 pub fn Router::add_route(Self, String, String, (Context) -> Unit raise) -> Unit
 pub fn Router::add_route_with(Self, String, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Unit
+pub fn Router::body_limit_for(Self, String, String) -> Int32
 pub fn Router::dispatch(Self, Context) -> Unit raise
 pub fn Router::dispatch_with(Self, Context, ((Context) -> Unit raise)?) -> Unit raise
 pub fn Router::group(Self, String) -> RouteGroup
@@ -683,6 +688,7 @@ pub fn Router::matching(Self, String, String) -> Route?
 pub fn Router::route(Self, String, String) -> RouteOutcome
 pub fn Router::route_name(Self, String) -> NamedRoute?
 pub fn Router::routes(Self) -> Array[(String, String)]
+pub fn Router::set_route_body_limit(Self, String, String, Int32) -> Bool
 pub fn Router::set_route_timeout(Self, String, String, Int32) -> Bool
 pub fn Router::timeout_for(Self, String, String) -> Int32
 pub fn Router::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?

@@ -14,6 +14,7 @@ fn RouteNode::new() -> RouteNode {
     route_wildcard_name: "",
     route_wildcard_key: "",
     timeout: 0,
+    body_limit: 0,
     exact_cache: None,
   }
 }
@@ -567,9 +568,10 @@ fn Router::add_route_node(
   node.pattern_kinds = pattern_kinds
   node.route_wildcard_name = route_wildcard_name
   node.route_wildcard_key = route_wildcard_key
-  // A timeout belongs to the route registration, so replacing the handler
-  // must not leave a stale per-route limit behind.
+  // Per-route limits belong to the registration, so replacing the handler
+  // must not leave a stale timeout or body limit behind.
   node.timeout = 0
+  node.body_limit = 0
   if is_static {
     match root.exact_cache {
       Some(cache) => cache.set(clean_path, node)
@@ -750,6 +752,51 @@ pub fn Router::set_route_timeout(
 pub fn Router::timeout_for(self : Router, meth : String, path : String) -> Int32 {
   match self.match_dispatch(normalize_method(meth), clean_path_view(path)) {
     DispatchFound(node, _, _) => node.timeout
+    _ => 0
+  }
+}
+
+///|
+/// Set a per-route request-body limit in bytes. Returns `false` when no route
+/// is registered for `meth path`.
+///
+/// A positive limit overrides `App::max_body_size` for this route only; `0`
+/// restores the application-wide limit. Re-registering the route resets the
+/// limit. Dynamic routes use their registered pattern (`/items/:id`), matching
+/// the spelling accepted by `Router::add_route`.
+pub fn Router::set_route_body_limit(
+  self : Router,
+  meth : String,
+  path : String,
+  limit : Int32,
+) -> Bool {
+  let method = normalize_method(meth)
+  let clean_path = clean_route_path(path)
+  let root = match self.trees.get(method) {
+    Some(root) => root
+    None => return false
+  }
+  let node = match find_route_node_by_identity(
+    root,
+    route_pattern_identity(clean_path.view()),
+  ) {
+    Some(node) => node
+    None => return false
+  }
+  node.body_limit = if limit < 0 { 0 } else { limit }
+  true
+}
+
+///|
+/// The configured body limit for the route that matches a concrete request
+/// path, or `0` when no route matches or it has no per-route override.
+pub fn Router::body_limit_for(
+  self : Router,
+  meth : String,
+  path : String,
+) -> Int32 {
+  match self.match_dispatch(normalize_method(meth), clean_path_view(path)) {
+    DispatchFound(node, _, _) => node.body_limit
     _ => 0
   }
 }

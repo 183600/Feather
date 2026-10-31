@@ -42,8 +42,9 @@ long-term design notes are in [PLAN.md](PLAN.md).
   `redirect_back` handling.
 - **Async endpoints** – server-sent events (`sse`), streaming responses
   (`stream`), and WebSocket handlers (`websocket`).
-- **Server** – keep-alive HTTP/1.1 connections, request timeouts, body-size
-  limits, trusted-proxy handling, graceful shutdown/drain, configurable
+- **Server** – keep-alive HTTP/1.1 connections, per-route and application-wide
+  request timeouts and body-size limits, trusted-proxy handling, graceful
+  shutdown/drain, configurable
   connection limits, absolute-form request-target normalization, server-wide
   `OPTIONS *` responses, `HEAD` framing that drops the body while keeping the
   `Content-Length` the matching `GET` would send, `Expect: 100-continue`
@@ -504,6 +505,12 @@ overrides it for one registered route (dynamic patterns such as `/items/:id`
 work too, and `0` restores the application default). Route timeouts cover body
 reads and ordinary handler responses; SSE, streaming and WebSocket endpoints
 remain exempt.
+
+Likewise, `max_body_size` is application-wide and
+`route_body_limit("POST", "/upload", 4_096)` overrides it for one registered
+route. The override also bounds the decoded representation of a gzip-coded
+body, and `0` restores the application default. Asynchronous endpoints keep
+using the application-wide limit.
 
 The default body-size limit is deliberately tiny (`DEFAULT_MAX_BODY_SIZE` is
 1000 bytes; larger bodies are rejected with `413`), so real applications

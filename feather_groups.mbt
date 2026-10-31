@@ -157,6 +157,22 @@ pub fn RouteGroup::route_timeout(
 }
 
 ///|
+/// Set a request-body limit for a route previously registered through this
+/// group. The path is joined with the group prefix exactly like
+/// `RouteGroup::route`.
+pub fn RouteGroup::route_body_limit(
+  self : RouteGroup,
+  meth : String,
+  path : String,
+  limit : Int32,
+) -> RouteGroup {
+  ignore(
+    self.router.set_route_body_limit(meth, join_paths(self.prefix, path), limit),
+  )
+  self
+}
+
+///|
 pub fn RouteGroup::route_named(
   self : RouteGroup,
   name : String,

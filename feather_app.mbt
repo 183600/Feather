@@ -271,6 +271,24 @@ pub fn App::route_timeout(
 }
 
 ///|
+/// Set a request-body limit in bytes for one registered route, overriding
+/// `App::max_body_size` for that route.
+///
+/// A positive value bounds the bytes read for the request body, including the
+/// decoded size of a gzip-coded body. `0` removes the override and restores
+/// the application-wide limit. Re-registering the route also resets it. The
+/// call is a no-op when no route matches `meth path`.
+pub fn App::route_body_limit(
+  self : App,
+  meth : String,
+  path : String,
+  limit : Int32,
+) -> App {
+  ignore(self.router.set_route_body_limit(meth, path, limit))
+  self
+}
+
+///|
 pub fn App::get(self : App, path : String, handler : Handler) -> App {
   self.route("GET", path, handler)
 }

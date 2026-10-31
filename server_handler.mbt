@@ -4,8 +4,9 @@ async fn build_response(
   request : @http.Request,
   body : &@io.Reader,
   conn : @http.ServerConnection,
+  max_body_size : Int32,
 ) -> (Response, FileResponse?, Bool, Bool, Int32) {
-  let (req, raw_body) = request_from_http(request, body, app.max_body_size)
+  let (req, raw_body) = request_from_http(request, body, max_body_size)
   let ctx = app.context_for_request(req)
   attach_raw_body(ctx, raw_body)
   ctx.state.set("remote_addr", socket_addr_host(conn.client_addr()))
@@ -241,6 +242,32 @@ async fn handle_stream(
 }
 
 ///|
+/// The request-body limit that applies to `request`: the matching route's
+/// override when one is set, otherwise the application-wide limit.
+///
+/// Asynchronous endpoints keep using the application-wide limit because their
+/// body is read before a route timeout (and its matching route node) governs
+/// the long-lived handler.
+fn body_limit_for_request(app : App, request : @http.Request) -> Int32 {
+  let async_endpoint = (request.meth is @http.Get || request.meth is @http.Head) &&
+    (app.has_websocket(request.path) ||
+      app.has_sse(request.path) ||
+      app.has_stream(request.path))
+  if async_endpoint {
+    return app.max_body_size
+  }
+  let limit = app.router.body_limit_for(
+    request_method_to_string(request.meth),
+    request.path,
+  )
+  if limit > 0 {
+    limit
+  } else {
+    app.max_body_size
+  }
+}
+
+///|
 async fn handle_request(
   app : App,
   request : @http.Request,
@@ -299,9 +326,10 @@ async fn handle_request(
   // the first read, so a client that never uploads cannot pin the connection.
   // For a gzip-coded body the declared length describes the compressed input,
   // which is allowed to exceed the decoded limit by the codec overhead.
+  let body_limit = body_limit_for_request(app, request)
   let declared_limit = match request_coding {
-    RequestBodyGzip => gzip_body_read_limit(app.max_body_size)
-    _ => app.max_body_size
+    RequestBodyGzip => gzip_body_read_limit(body_limit)
+    _ => body_limit
   }
   if declared_body_exceeds_limit(request, declared_limit) {
     send_oversized_and_close(conn, head)
@@ -417,7 +445,7 @@ async fn handle_request(
   let response_started = Ref(false)
   let send_dynamic = () => {
     let (response, file, auto_etag, compress, compress_min_size) =
-      build_response(app, request, body, conn)
+      build_response(app, request, body, conn, body_limit)
     // From here on the response header may be written. A timeout racing with
     // the first write must close the connection instead of sending a second
     // response on a connection that already started framing a body.
@@ -485,7 +513,7 @@ async fn handle_request(
     }
   } else {
     let (response, file, auto_etag, compress, compress_min_size) =
-      build_response(app, request, body, conn) catch {
+      build_response(app, request, body, conn, body_limit) catch {
         PayloadTooLarge => {
           send_error_and_close(conn, 413, "413 Payload Too Large", head)
           return

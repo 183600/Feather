@@ -223,6 +223,19 @@ pub fn Feather::route_timeout(
 }
 
 ///|
+/// Set a request-body limit for one registered route on the wrapped
+/// application. See `App::route_body_limit`.
+pub fn Feather::route_body_limit(
+  self : Feather,
+  meth : String,
+  path : String,
+  limit : Int32,
+) -> Feather {
+  ignore(self.app.route_body_limit(meth, path, limit))
+  self
+}
+
+///|
 /// Declare how many proxies in front of the application may be trusted when
 /// the client address is derived from the forwarded headers. See
 /// `App::trust_proxy` for the details.
