@@ -95,7 +95,7 @@ pub fn middleware_https_redirect(permanent? : Bool, host? : String) -> ((Context
 
 pub fn middleware_jwt_hs256(String, realm? : String, leeway? : Int32, require_exp? : Bool, issuer? : String, audience? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
-pub fn middleware_logger(log? : (String) -> Unit, with_duration? : Bool, skip? : (Context) -> Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+pub fn middleware_logger(log? : (String) -> Unit, with_duration? : Bool, skip? : (Context) -> Bool, format? : (Context, Int64) -> String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_method_override(field? : String, header? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 

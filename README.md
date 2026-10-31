@@ -209,7 +209,9 @@ let app = @feather.App::new()
 `middleware_logger` writes one line when the response is known; pass
 `with_duration=true` to include elapsed milliseconds, or `skip` with a
 predicate to omit health checks and other noisy requests (the handler still
-runs).
+runs). Pass `format` to replace the default line with structured output; its
+callback receives the context and elapsed milliseconds, so it can include the
+final status, route name, request id, or fields from request state.
 
 `middleware_recover()` converts errors into the framework's default responses.
 Use `middleware_recover_with(handler=...)` instead when the application needs

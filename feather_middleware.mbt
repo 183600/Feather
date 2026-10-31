@@ -126,17 +126,37 @@ fn logger_record(
 }
 
 ///|
+/// Emit one log line, using a custom formatter when one was supplied.
+fn logger_emit(
+  log : (String) -> Unit,
+  ctx : Context,
+  started : Int64,
+  with_duration : Bool,
+  format : ((Context, Int64) -> String)?,
+) -> Unit {
+  match format {
+    Some(format) => log(format(ctx, @async.now() - started))
+    None => logger_record(log, ctx, started, with_duration)
+  }
+}
+
+///|
 /// Middleware that logs one line per request after the response is known.
 ///
 /// The default line is `[status] METHOD request-target`; pass
-/// `with_duration=true` to append the elapsed milliseconds. `skip` is evaluated
-/// before the handler, so it can silence health checks or static noise based on
-/// the request, including state established by earlier middleware. Skipped
-/// requests still run normally; only the log line is omitted.
+/// `with_duration=true` to append the elapsed milliseconds. Pass `format` to
+/// replace that line, for example to emit structured JSON or to include fields
+/// from request state; the callback receives the context and the elapsed
+/// milliseconds, and takes precedence over `with_duration`. `skip` is
+/// evaluated before the handler, so it can silence health checks or static
+/// noise based on the request, including state established by earlier
+/// middleware. Skipped requests still run normally; only the log line is
+/// omitted.
 pub fn middleware_logger(
   log~ : (String) -> Unit = println,
   with_duration~ : Bool = false,
   skip? : (Context) -> Bool,
+  format? : (Context, Int64) -> String,
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
@@ -148,26 +168,27 @@ pub fn middleware_logger(
           }
         None => ()
       }
-      let started = if with_duration { @async.now() } else { 0L }
+      let timed = with_duration || format is Some(_)
+      let started = if timed { @async.now() } else { 0L }
       next(ctx) catch {
         HttpError(status, message) => {
           ctx.response.status = status
-          logger_record(log, ctx, started, with_duration)
+          logger_emit(log, ctx, started, with_duration, format)
           raise HttpError(status, message)
         }
         HttpErrorPayload(status, message, payload) => {
           ctx.response.status = status
-          logger_record(log, ctx, started, with_duration)
+          logger_emit(log, ctx, started, with_duration, format)
           raise HttpErrorPayload(status, message, payload)
         }
         HttpProblem(status, type_name, title, detail, instance) => {
           ctx.response.status = status
-          logger_record(log, ctx, started, with_duration)
+          logger_emit(log, ctx, started, with_duration, format)
           raise HttpProblem(status, type_name, title, detail, instance)
         }
         err => {
           ctx.response.status = 500
-          logger_record(log, ctx, started, with_duration)
+          logger_emit(log, ctx, started, with_duration, format)
           raise err
         }
       }
@@ -178,10 +199,10 @@ pub fn middleware_logger(
       if ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) ||
         ctx.state.get(ASYNC_CHAIN_PASS_KEY) is Some(_) {
         ctx.defer_cleanup(fn() {
-          logger_record(log, ctx, started, with_duration)
+          logger_emit(log, ctx, started, with_duration, format)
         })
       } else {
-        logger_record(log, ctx, started, with_duration)
+        logger_emit(log, ctx, started, with_duration, format)
       }
     }
   }
