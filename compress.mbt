@@ -475,15 +475,19 @@ fn negotiate_existing_encoding(
 /// `accept_encoding` is the `Accept-Encoding` header of the request, or
 /// `None` when the request carries none. The body is left alone when the
 /// response is not compressible, when the client does not accept gzip, or
-/// when the compressed body would not be smaller than the original one. If the
-/// client explicitly rejects identity the response is encoded even below
-/// `min_size` (or when gzip would not shrink it), because the identity
-/// representation is not acceptable. If no acceptable coding can be produced
-/// the response becomes `406 Not Acceptable`.
+/// when the compressed body would not be smaller than the original one. A
+/// request that carries a `Range` field (`range=true`) keeps the identity
+/// representation so the range can be applied to the bytes the client asked
+/// about. If the client explicitly rejects identity the response is encoded
+/// even below `min_size` (or when gzip would not shrink it), because the
+/// identity representation is not acceptable; a ranged request has no such
+/// fallback and becomes `406 Not Acceptable`. If no acceptable coding can be
+/// produced the response becomes `406 Not Acceptable`.
 async fn compress_response(
   accept_encoding : String?,
   response : Response,
   min_size : Int32,
+  range~ : Bool = false,
 ) -> Unit {
   if response.status == 304 {
     // A handler-generated 304 selects the same negotiable representation a
@@ -511,9 +515,12 @@ async fn compress_response(
     None => false
   }
   // A ranged representation cannot be re-encoded as a range of the encoded
-  // representation without rewriting `Content-Range`. When identity is
-  // explicitly refused there is therefore no acceptable representation.
-  if response.status == 206 ||
+  // representation without rewriting `Content-Range`. A request that carries
+  // `Range` is therefore answered with the identity representation, which the
+  // range stage slices after this function returns. When identity is
+  // explicitly refused there is no acceptable representation.
+  if range ||
+    response.status == 206 ||
     get_header_ignore_case(response.headers, "Content-Range") is Some(_) {
     // The same resource answers 406 when identity is refused, so the selected
     // representation depends on `Accept-Encoding` even for this identity 206.

@@ -416,7 +416,16 @@ pub async fn App::respond_async(
         if !negotiate_existing_encoding(accept_encoding, ctx.response) {
           let (compress, min_size) = compression_settings(self, ctx)
           if compress {
-            compress_response(accept_encoding, ctx.response, min_size)
+            let has_range = get_header_ignore_case(
+              ctx.request.headers,
+              "Range",
+            ) is Some(_)
+            compress_response(
+              accept_encoding,
+              ctx.response,
+              min_size,
+              range=has_range,
+            )
           } else {
             reject_unacceptable_identity(accept_encoding, ctx.response)
           }

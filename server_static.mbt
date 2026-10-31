@@ -34,7 +34,12 @@ async fn finalize_dynamic_response(
       if !negotiate_existing_encoding(accept_encoding, ctx.response) {
         let (compress, min_size) = compression_settings(app, ctx)
         if compress {
-          compress_response(accept_encoding, ctx.response, min_size)
+          compress_response(
+            accept_encoding,
+            ctx.response,
+            min_size,
+            range=request.headers.get(header_range) is Some(_),
+          )
         } else {
           reject_unacceptable_identity(accept_encoding, ctx.response)
         }
@@ -1456,7 +1461,12 @@ async fn handle_static(
           if !negotiate_existing_encoding(accept_encoding, ctx.response) {
             let (compress, min_size) = compression_settings(app, ctx)
             if compress {
-              compress_response(accept_encoding, ctx.response, min_size)
+              compress_response(
+                accept_encoding,
+                ctx.response,
+                min_size,
+                range=request.headers.get(header_range) is Some(_),
+              )
             } else {
               reject_unacceptable_identity(accept_encoding, ctx.response)
             }
