@@ -330,44 +330,51 @@ pub fn Context::query_default(
 }
 
 ///|
-pub fn Context::form(self : Context, name : String) -> String {
-  if !self.is_form() {
-    return ""
-  }
-  if name_needs_raw(name.view()) {
-    query_param(self.request.body.view(), name)
-  } else {
-    match form_map_lookup(self.request.body).get(name) {
-      Some(value) => value
-      None => ""
+/// The value of form field `name`, or `None` when the request body is not a
+/// form or does not carry the field.
+///
+/// Both `application/x-www-form-urlencoded` and `multipart/form-data` bodies
+/// are supported. A repeated field resolves to its last value, matching the
+/// urlencoded parser and `Context::form_map`; use `Context::form_values` when
+/// every occurrence is needed.
+fn Context::form_value(self : Context, name : String) -> String? {
+  if self.is_form() {
+    if name_needs_raw(name.view()) {
+      query_param_opt(self.request.body.view(), name)
+    } else {
+      form_map_lookup(self.request.body).get(name)
     }
+  } else if self.is_multipart() {
+    self.multipart_form_value(name)
+  } else {
+    None
   }
 }
 
 ///|
-/// Look up the url-encoded form field `name`, returning `default` when the
-/// request body is not a form or does not carry the field. Name matching
-/// follows `Context::form`, so names containing `%` or `+` also match the raw
-/// key spelling. A field that is present with an empty value is returned as-is
-/// instead of being replaced by `default`.
+/// Look up a form field from an urlencoded or multipart body. Returns `""`
+/// when the body is not a form or does not carry the field.
+pub fn Context::form(self : Context, name : String) -> String {
+  match self.form_value(name) {
+    Some(value) => value
+    None => ""
+  }
+}
+
+///|
+/// Look up form field `name`, returning `default` when the request body is not
+/// a form or does not carry the field. Name matching follows `Context::form`,
+/// so names containing `%` or `+` also match the raw urlencoded key spelling.
+/// A field that is present with an empty value is returned as-is instead of
+/// being replaced by `default`.
 pub fn Context::form_default(
   self : Context,
   name : String,
   default : String,
 ) -> String {
-  if !self.is_form() {
-    return default
-  }
-  if name_needs_raw(name.view()) {
-    match query_param_opt(self.request.body.view(), name) {
-      Some(value) => value
-      None => default
-    }
-  } else {
-    match form_map_lookup(self.request.body).get(name) {
-      Some(value) => value
-      None => default
-    }
+  match self.form_value(name) {
+    Some(value) => value
+    None => default
   }
 }
 
@@ -477,68 +484,86 @@ pub fn Context::query_values(self : Context, name : String) -> Array[String] {
 }
 
 ///|
-/// Collect every value of a possibly repeated url-encoded form field, in the
-/// order they appear in the request body.
+/// Collect every value of a possibly repeated form field, in body order.
 ///
-/// Returns an empty array when the body is not
-/// `application/x-www-form-urlencoded`. The result is a fresh array, so
+/// Both `application/x-www-form-urlencoded` and `multipart/form-data` bodies
+/// are supported; file parts are skipped. Returns an empty array when the body
+/// is not a form or carries no such field. The result is a fresh array, so
 /// mutating it cannot disturb a later request that carries the same body.
 pub fn Context::form_values(self : Context, name : String) -> Array[String] {
-  if !self.is_form() {
-    return []
-  }
-  if name_needs_raw(name.view()) {
-    collect_values(self.request.body.view(), name)
-  } else {
-    match form_values_lookup(self.request.body).get(name) {
-      Some(values) => values.copy()
-      None => []
+  if self.is_form() {
+    if name_needs_raw(name.view()) {
+      collect_values(self.request.body.view(), name)
+    } else {
+      match form_values_lookup(self.request.body).get(name) {
+        Some(values) => values.copy()
+        None => []
+      }
     }
+  } else if self.is_multipart() {
+    self.multipart_form_values(name)
+  } else {
+    []
   }
 }
 
 ///|
-/// The parsed url-encoded form body, keyed by name. The result is a fresh
-/// copy, so mutating it cannot disturb a later request that carries the same
-/// body.
+/// The parsed form body, keyed by name. The result is a fresh copy, so
+/// mutating it cannot disturb a later request that carries the same body.
+/// Multipart file parts are not included; use `Context::multipart_files` for
+/// uploads.
 pub fn Context::form_map(self : Context) -> Map[String, String] {
-  if !self.is_form() {
-    return Map([])
+  if self.is_form() {
+    form_map_lookup(self.request.body).copy()
+  } else if self.is_multipart() {
+    self.multipart_form_map()
+  } else {
+    Map([])
   }
-  form_map_lookup(self.request.body).copy()
 }
 
 ///|
-/// All url-encoded form fields, keyed by name, with every repeated value
-/// preserved in appearance order. Returns an empty map when the body is not
-/// `application/x-www-form-urlencoded`.
+/// All form fields, keyed by name, with every repeated value preserved in
+/// appearance order. Both urlencoded and multipart bodies are supported and
+/// multipart file parts are skipped. Returns an empty map when the body is not
+/// a form.
 ///
 /// Both the map and its arrays are fresh copies, so mutating the result cannot
 /// disturb a later request that carries the same body.
 pub fn Context::form_all(
   self : Context,
 ) -> Map[String, Array[String]] {
-  if !self.is_form() {
-    return Map([])
+  if self.is_form() {
+    copy_values_map(form_values_lookup(self.request.body))
+  } else if self.is_multipart() {
+    self.multipart_form_all()
+  } else {
+    Map([])
   }
-  copy_values_map(form_values_lookup(self.request.body))
 }
 
 ///|
-/// Whether the url-encoded form body carries `name`, matching the same decoded
-/// and raw spellings as `Context::form`. Returns `false` for another content
-/// type, just like the other form accessors.
+/// Whether the form body carries `name`, matching the same decoded and raw
+/// spellings as `Context::form` for urlencoded bodies and exact names for
+/// multipart bodies. Returns `false` for another content type, just like the
+/// other form accessors.
 ///
 /// Unlike `Context::form`, this distinguishes an absent field from one that is
 /// present with an empty value (`flag` or `flag=`).
 pub fn Context::has_form(self : Context, name : String) -> Bool {
-  if name == "" || !self.is_form() {
+  if name == "" {
     return false
   }
-  if name_needs_raw(name.view()) {
-    query_param_opt(self.request.body.view(), name) is Some(_)
+  if self.is_form() {
+    if name_needs_raw(name.view()) {
+      query_param_opt(self.request.body.view(), name) is Some(_)
+    } else {
+      form_map_lookup(self.request.body).contains(name)
+    }
+  } else if self.is_multipart() {
+    self.multipart_form_value(name) is Some(_)
   } else {
-    form_map_lookup(self.request.body).contains(name)
+    false
   }
 }
 

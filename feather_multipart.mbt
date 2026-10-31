@@ -1386,6 +1386,86 @@ pub fn Context::multipart_values(
 }
 
 ///|
+/// Last text field named `name`, or `None` when the body is not multipart or
+/// carries no such field. The `form` helpers use this spelling so a repeated
+/// field resolves to its last value, exactly like an urlencoded form.
+fn Context::multipart_form_value(
+  self : Context,
+  name : String,
+) -> String? {
+  match self.multipart_entries() {
+    Some(parts) => {
+      let mut value : String? = None
+      for part in parts {
+        if !multipart_part_is_file(part) && part.name == name {
+          value = Some(part.data)
+        }
+      }
+      value
+    }
+    None => None
+  }
+}
+
+///|
+/// Every text field named `name`, in body order, skipping file parts.
+fn Context::multipart_form_values(
+  self : Context,
+  name : String,
+) -> Array[String] {
+  let values : Array[String] = []
+  match self.multipart_entries() {
+    Some(parts) =>
+      for part in parts {
+        if !multipart_part_is_file(part) && part.name == name {
+          values.push(part.data)
+        }
+      }
+    None => ()
+  }
+  values
+}
+
+///|
+/// Multipart text fields keyed by name, with the last value of a repeated field
+/// winning like `Context::form_map`.
+fn Context::multipart_form_map(self : Context) -> Map[String, String] {
+  let result : Map[String, String] = Map([], capacity=8)
+  match self.multipart_entries() {
+    Some(parts) =>
+      for part in parts {
+        if !multipart_part_is_file(part) {
+          result.set(part.name, part.data)
+        }
+      }
+    None => ()
+  }
+  result
+}
+
+///|
+/// Multipart text fields keyed by name, preserving every repeated value in body
+/// order like `Context::form_all`.
+fn Context::multipart_form_all(
+  self : Context,
+) -> Map[String, Array[String]] {
+  let result : Map[String, Array[String]] = Map([], capacity=8)
+  match self.multipart_entries() {
+    Some(parts) =>
+      for part in parts {
+        if !multipart_part_is_file(part) {
+          match result.get(part.name) {
+            Some(values) => values.push(part.data)
+            None => result.set(part.name, [part.data])
+          }
+        }
+      }
+    None => ()
+  }
+  result
+}
+
+///|
 /// Every uploaded file named `name`, in the order the parts appear in the body.
 /// Each returned part owns a copy of its header map, so callers may mutate the
 /// result without disturbing the parse cache. A part with an empty `filename`

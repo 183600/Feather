@@ -261,30 +261,32 @@ pub fn Context::header_float(self : Context, name : String) -> Double? {
 }
 
 ///|
-/// The url-encoded form field `name` parsed as an integer. Returns `None`
-/// when the request body is not a form, the field is absent, or the value is
-/// not a valid 32-bit integer.
+/// The form field `name` parsed as an integer. Both urlencoded and multipart
+/// bodies are supported. Returns `None` when the request body is not a form,
+/// the field is absent, or the value is not a valid 32-bit integer.
 pub fn Context::form_int(self : Context, name : String) -> Int32? {
   parse_int_value(self.form(name).view())
 }
 
 ///|
-/// The url-encoded form field `name` parsed as a signed 64-bit integer.
-/// Returns `None` when the request body is not a form, the field is absent, or
-/// the value does not fit in `Int64`.
+/// The form field `name` parsed as a signed 64-bit integer. Both urlencoded
+/// and multipart bodies are supported. Returns `None` when the request body is
+/// not a form, the field is absent, or the value does not fit in `Int64`.
 pub fn Context::form_int64(self : Context, name : String) -> Int64? {
   parse_int64_value(self.form(name).view())
 }
 
 ///|
-/// The url-encoded form field `name` parsed as a boolean. Accepts the same
-/// spellings as `Context::query_bool` (`true`/`false` and `1`/`0`).
+/// The form field `name` parsed as a boolean. Both urlencoded and multipart
+/// bodies are supported. Accepts the same spellings as `Context::query_bool`
+/// (`true`/`false` and `1`/`0`).
 pub fn Context::form_bool(self : Context, name : String) -> Bool? {
   parse_bool_value(self.form(name).view())
 }
 
 ///|
-/// The url-encoded form field `name` parsed as a finite floating-point number.
+/// The form field `name` parsed as a finite floating-point number. Both
+/// urlencoded and multipart bodies are supported.
 pub fn Context::form_float(self : Context, name : String) -> Double? {
   parse_float_value(self.form(name).view())
 }

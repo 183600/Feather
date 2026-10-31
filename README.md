@@ -138,6 +138,13 @@ lookup counterparts. The multi-value maps and arrays are fresh copies, so a
 handler can mutate them without disturbing a later request that carries the
 same query or body.
 
+The form helpers (`form`, `form_default`, `form_values`, `form_map`,
+`form_all`, `has_form`, and the typed `form_*` accessors) read both
+`application/x-www-form-urlencoded` and `multipart/form-data` bodies. Multipart
+file parts are skipped, so a field and an upload can share a name without the
+upload leaking into the text accessors; use `multipart_file` / `multipart_files`
+for the file itself.
+
 `Context::content_type()` returns the request's lowercased media type without
 parameters, and `is_json` / `is_form` / `is_multipart` classify common body
 types. `Context::content_type_parameter("charset")` reads one parameter,
