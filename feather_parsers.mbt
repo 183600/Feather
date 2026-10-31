@@ -230,6 +230,37 @@ pub fn Context::query_float(self : Context, name : String) -> Double? {
 }
 
 ///|
+/// The request header `name` parsed as a signed 32-bit integer.
+///
+/// Surrounding optional whitespace is ignored, matching the way header values
+/// arrive on the wire. Returns `None` when the header is absent, malformed, or
+/// outside the `Int32` range.
+pub fn Context::header_int(self : Context, name : String) -> Int32? {
+  parse_int_value(trim_ascii_space(self.header(name).view()))
+}
+
+///|
+/// The request header `name` parsed as a signed 64-bit integer. Returns `None`
+/// when the header is absent, malformed, or does not fit in `Int64`.
+pub fn Context::header_int64(self : Context, name : String) -> Int64? {
+  parse_int64_value(trim_ascii_space(self.header(name).view()))
+}
+
+///|
+/// The request header `name` parsed as a boolean. Accepts the same spellings
+/// as `Context::query_bool` (`true`/`false` and `1`/`0`).
+pub fn Context::header_bool(self : Context, name : String) -> Bool? {
+  parse_bool_value(trim_ascii_space(self.header(name).view()))
+}
+
+///|
+/// The request header `name` parsed as a finite floating-point number.
+/// Returns `None` when the header is absent, malformed, or names `nan`/`inf`.
+pub fn Context::header_float(self : Context, name : String) -> Double? {
+  parse_float_value(trim_ascii_space(self.header(name).view()))
+}
+
+///|
 /// The url-encoded form field `name` parsed as an integer. Returns `None`
 /// when the request body is not a form, the field is absent, or the value is
 /// not a valid 32-bit integer.

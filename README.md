@@ -144,6 +144,10 @@ types. `Context::content_type_parameter("charset")` reads one parameter,
 unquoting values such as multipart boundaries and matching parameter names
 case-insensitively.
 
+Request headers can be parsed with `Context::header_int`, `header_int64`,
+`header_bool` and `header_float`, which use the same strict parsers as the
+query/param/form helpers and ignore surrounding whitespace.
+
 `Context::set_content_type("text/plain", parameters=[("charset", "utf-8")])`
 sets a response media type and appends parameters in order, quoting values that
 are not bare tokens. It only sets the header, so call it after a body helper
