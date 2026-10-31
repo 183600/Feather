@@ -11,6 +11,67 @@ pub fn Context::cookies(self : Context) -> Map[String, String] {
 }
 
 ///|
+/// All cookies, keyed by name, with every repeated value preserved in header
+/// order. Unlike `Context::cookies`, which keeps the first value of a repeated
+/// cookie, this lets a caller enumerate all values.
+///
+/// Both the map and its arrays are fresh copies, so mutating the result cannot
+/// disturb a later request that carries the same header.
+pub fn Context::cookies_all(
+  self : Context,
+) -> Map[String, Array[String]] {
+  let header = self.header("Cookie")
+  if header == "" {
+    return Map([])
+  }
+  copy_values_map(cookie_multi_lookup(header))
+}
+
+///|
+/// Every value of cookie `name`, in header order. Returns an empty array when
+/// the header is absent, the name is invalid, or the cookie is not present.
+/// The result is a fresh array, so mutating it cannot disturb a later request.
+pub fn Context::cookie_values(
+  self : Context,
+  name : String,
+) -> Array[String] {
+  if name == "" {
+    return []
+  }
+  let lookup = sanitize_cookie_token(name, true)
+  if lookup == "" {
+    return []
+  }
+  let header = self.header("Cookie")
+  if header == "" {
+    return []
+  }
+  match cookie_multi_lookup(header).get(lookup) {
+    Some(values) => values.copy()
+    None => []
+  }
+}
+
+///|
+/// Whether the `Cookie` header carries `name`. Unlike `Context::cookie`, this
+/// distinguishes an absent cookie from one that is present with an empty value
+/// (`name=`).
+pub fn Context::has_cookie(self : Context, name : String) -> Bool {
+  if name == "" {
+    return false
+  }
+  let lookup = sanitize_cookie_token(name, true)
+  if lookup == "" {
+    return false
+  }
+  let header = self.header("Cookie")
+  if header == "" {
+    return false
+  }
+  cookie_map_lookup(header).contains(lookup)
+}
+
+///|
 pub fn Context::cookie(self : Context, name : String) -> String? {
   if name == "" {
     return None

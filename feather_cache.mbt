@@ -82,6 +82,79 @@ fn parse_cookie_map(header : StringView) -> Map[String, String] {
 }
 
 ///|
+/// Parse a `Cookie` request header into every value of each name, preserving
+/// header order. Invalid names are ignored just like `parse_cookie_map`.
+fn parse_cookie_multi(
+  header : StringView,
+) -> Map[String, Array[String]] {
+  let cookies : Map[String, Array[String]] = Map([], capacity=8)
+  let length = header.length()
+  let mut pos = 0
+  while pos <= length {
+    let mut end = pos
+    while end < length && header.unsafe_get(end) != (';' : UInt16) {
+      end = end + 1
+    }
+    let mut start = pos
+    while start < end && is_cookie_whitespace(header.unsafe_get(start)) {
+      start = start + 1
+    }
+    let mut stop = end
+    while stop > start && is_cookie_whitespace(header.unsafe_get(stop - 1)) {
+      stop = stop - 1
+    }
+    if start < stop {
+      let mut eq = start
+      while eq < stop && header.unsafe_get(eq) != ('=' : UInt16) {
+        eq = eq + 1
+      }
+      if eq < stop {
+        let mut name_end = eq
+        while name_end > start &&
+              is_cookie_whitespace(header.unsafe_get(name_end - 1)) {
+          name_end = name_end - 1
+        }
+        if name_end > start {
+          let name = header[start:name_end].to_owned()
+          let mut valid_name = true
+          let mut name_index = start
+          while name_index < name_end {
+            if !is_cookie_name_character(header.unsafe_get(name_index)) {
+              valid_name = false
+              break
+            }
+            name_index = name_index + 1
+          }
+          let mut raw_start = eq + 1
+          while raw_start < stop &&
+                is_cookie_whitespace(header.unsafe_get(raw_start)) {
+            raw_start = raw_start + 1
+          }
+          let value = if stop - raw_start >= 2 &&
+            header.unsafe_get(raw_start) == ('"' : UInt16) &&
+            header.unsafe_get(stop - 1) == ('"' : UInt16) {
+            header[raw_start + 1:stop - 1].to_owned()
+          } else {
+            header[raw_start:stop].to_owned()
+          }
+          if valid_name {
+            match cookies.get(name) {
+              Some(values) => values.push(value)
+              None => cookies.set(name, [value])
+            }
+          }
+        }
+      }
+    }
+    if end >= length {
+      break
+    }
+    pos = end + 1
+  }
+  cookies
+}
+
+///|
 /// Deep-copy a map of multi-value parameters, so callers cannot mutate the
 /// arrays held by the parse cache.
 fn copy_values_map(
@@ -252,6 +325,56 @@ fn cookie_map_lookup(header : String) -> Map[String, String] {
   }
   last_cookie_header.val = Some(header)
   last_cookie_map.val = Some(parsed)
+  parsed
+}
+
+///|
+/// Last parsed `Cookie` header with every value of each name.
+let cookies_multi_cache : Map[String, Map[String, Array[String]]] = Map([])
+
+///|
+/// Recency ticks for `cookies_multi_cache`.
+let cookies_multi_cache_ages : Map[String, Int32] = Map([])
+
+///|
+/// Most recently resolved `Cookie` header and its multi-value map.
+let last_cookie_multi_header : Ref[String?] = Ref(None)
+
+///|
+let last_cookie_multi_map : Ref[Map[String, Array[String]]?] = Ref(None)
+
+///|
+fn cookie_multi_lookup(header : String) -> Map[String, Array[String]] {
+  match last_cookie_multi_header.val {
+    Some(cached_header) =>
+      if physical_equal(cached_header, header) {
+        match last_cookie_multi_map.val {
+          Some(cached_map) => return cached_map
+          None => ()
+        }
+      }
+    None => ()
+  }
+  let parsed = match cookies_multi_cache.get(header) {
+    Some(cached) => {
+      cache_touch(cookies_multi_cache_ages, header)
+      cached
+    }
+    None => {
+      let parsed = parse_cookie_multi(header.view())
+      if header.length() <= PARSE_CACHE_MAX_KEY {
+        parse_cache_set(
+          cookies_multi_cache,
+          cookies_multi_cache_ages,
+          header,
+          parsed,
+        )
+      }
+      parsed
+    }
+  }
+  last_cookie_multi_header.val = Some(header)
+  last_cookie_multi_map.val = Some(parsed)
   parsed
 }
 

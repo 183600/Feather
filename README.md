@@ -452,7 +452,9 @@ handler that forwards client input cannot inject an extra response header.
 `append_header` joins list-valued fields such as `Vary` and `Link` with a
 comma, while `set_header_if_absent` installs a default without clobbering a
 handler's value. Cookie helpers accept `max_age` and an absolute `expires`
-timestamp in Unix seconds.
+timestamp in Unix seconds. Reading a request uses `cookies` / `cookie`;
+`cookies_all` and `cookie_values` expose every value of a repeated cookie, and
+`has_cookie` distinguishes an absent cookie from one with an empty value.
 
 `app.compress(min_size=1024)` enables gzip compression for eligible responses,
 including static files and `Context::file` downloads with a compressible media
