@@ -7,6 +7,21 @@ pub fn Context::header(self : Context, key : String) -> String {
 }
 
 ///|
+/// Look up request header `key`, returning `default` when the header is absent.
+/// Matching is case-insensitive like `Context::header`. A header present with
+/// an empty value is returned as-is instead of being replaced by `default`.
+pub fn Context::header_default(
+  self : Context,
+  key : String,
+  default : String,
+) -> String {
+  match get_header_ignore_case(self.request.headers, key) {
+    Some(value) => value
+    None => default
+  }
+}
+
+///|
 /// Whether the request carries `key`, matched case-insensitively. Unlike
 /// `Context::header`, this distinguishes a header with an empty value from an
 /// absent header.

@@ -443,8 +443,9 @@ middleware (`middleware_cache_control`, `middleware_no_store`,
 applies a policy after the handler returns and keeps a handler-supplied value
 unless `overwrite=true`; combine it with `App::use_prefix` to cache only one
 part of an application. Header
-helpers (`has_header`, `response_header`, `has_response_header`,
-`remove_response_header`, `append_header`, `set_header_if_absent`) match names
+helpers (`header_default`, `has_header`, `response_header`,
+`has_response_header`, `remove_response_header`, `append_header`,
+`set_header_if_absent`) match names
 case-insensitively; the response helpers are useful in middleware that
 inspects or rewrites headers after calling through. Response writer helpers
 accept only token header names and strip control characters from values, so a
@@ -453,8 +454,9 @@ handler that forwards client input cannot inject an extra response header.
 comma, while `set_header_if_absent` installs a default without clobbering a
 handler's value. Cookie helpers accept `max_age` and an absolute `expires`
 timestamp in Unix seconds. Reading a request uses `cookies` / `cookie`;
-`cookies_all` and `cookie_values` expose every value of a repeated cookie, and
-`has_cookie` distinguishes an absent cookie from one with an empty value.
+`cookie_default` supplies a fallback, `cookies_all` and `cookie_values` expose
+every value of a repeated cookie, and `has_cookie` distinguishes an absent
+cookie from one with an empty value.
 
 `app.compress(min_size=1024)` enables gzip compression for eligible responses,
 including static files and `Context::file` downloads with a compressible media

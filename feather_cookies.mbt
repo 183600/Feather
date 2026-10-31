@@ -72,6 +72,22 @@ pub fn Context::has_cookie(self : Context, name : String) -> Bool {
 }
 
 ///|
+/// Look up cookie `name`, returning `default` when the cookie is absent. Name
+/// matching follows `Context::cookie`, so the sanitized spelling used by
+/// `set_cookie` is accepted too. A cookie present with an empty value is
+/// returned as-is instead of being replaced by `default`.
+pub fn Context::cookie_default(
+  self : Context,
+  name : String,
+  default : String,
+) -> String {
+  match self.cookie(name) {
+    Some(value) => value
+    None => default
+  }
+}
+
+///|
 pub fn Context::cookie(self : Context, name : String) -> String? {
   if name == "" {
     return None
