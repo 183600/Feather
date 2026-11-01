@@ -107,6 +107,57 @@ pub fn RouteGroup::use(
 }
 
 ///|
+/// Install middleware that runs only when `predicate` accepts the request.
+///
+/// The predicate runs in the group middleware position where this method was
+/// called, after the group middleware installed earlier and before the
+/// middleware installed later, so it can inspect request state those earlier
+/// middleware established. When it returns `false` the request continues down
+/// the chain unchanged. See `App::use_when` for the application-wide form.
+pub fn RouteGroup::use_when(
+  self : RouteGroup,
+  predicate : (Context) -> Bool,
+  middleware : Middleware,
+) -> RouteGroup {
+  self.use(scoped_middleware(predicate, middleware))
+}
+
+///|
+/// Install middleware for `prefix` relative to this group's prefix.
+///
+/// For `app.group("/api").use_prefix("/admin", middleware)` the middleware
+/// covers `/api/admin` and everything below it, but not `/api/items`. Matching
+/// is segment-aware and case-sensitive, exactly like `App::use_prefix`, and the
+/// query string is ignored. The prefix may contain parameters or a trailing
+/// wildcard when the group prefix does, so a group registered under
+/// `/tenant/:id` can scope middleware to `/tenant/<id>/admin`.
+///
+/// Like `RouteGroup::use`, the middleware applies only to routes, mounts and
+/// asynchronous endpoints registered through this group afterwards. An empty
+/// prefix or `"/"` installs it for the whole group.
+pub fn RouteGroup::use_prefix(
+  self : RouteGroup,
+  prefix : String,
+  middleware : Middleware,
+) -> RouteGroup {
+  let scope = normalize_prefix(prefix)
+  let group_prefix = self.prefix
+  self.use_when(
+    fn(ctx) {
+      // Scope relative to the group prefix rather than to the whole request
+      // path: the group prefix itself may contain parameters or a wildcard.
+      let path = scoped_request_path(ctx)
+      match match_mount_prefix(path, group_prefix.view()) {
+        Some(matched) =>
+          path_is_within_prefix(path[matched.relative_start:], scope.view())
+        None => false
+      }
+    },
+    middleware,
+  )
+}
+
+///|
 /// Set a default timeout for routes registered through this group afterwards.
 ///
 /// A positive value applies to each ordinary route added after this call, as

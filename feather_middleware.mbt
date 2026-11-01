@@ -1,4 +1,27 @@
 ///|
+/// Wrap `middleware` so it only runs when `predicate` accepts the request.
+///
+/// The predicate runs in the chain position where the scoped middleware was
+/// installed, after earlier middleware and before the scoped middleware
+/// itself. When it returns `false` the request continues down the chain
+/// unchanged. The middleware is composed once, not once per request.
+fn scoped_middleware(
+  predicate : (Context) -> Bool,
+  middleware : Middleware,
+) -> Middleware {
+  fn(next) {
+    let scoped = middleware(next)
+    fn(ctx) raise {
+      if predicate(ctx) {
+        scoped(ctx)
+      } else {
+        next(ctx)
+      }
+    }
+  }
+}
+
+///|
 /// Middleware that rejects request bodies larger than `max_bytes` with
 /// `413 Payload Too Large` before the handler runs.
 ///

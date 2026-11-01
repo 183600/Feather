@@ -657,6 +657,8 @@ pub fn RouteGroup::timeout(Self, Int32) -> Self
 pub fn RouteGroup::trace(Self, String, (Context) -> Unit raise) -> Self
 pub fn RouteGroup::url_for(Self, String, params? : Map[String, String], query? : Map[String, String]) -> String?
 pub fn RouteGroup::use(Self, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
+pub fn RouteGroup::use_prefix(Self, String, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
+pub fn RouteGroup::use_when(Self, (Context) -> Bool, ((Context) -> Unit raise) -> (Context) -> Unit raise) -> Self
 pub fn RouteGroup::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
 pub fn RouteGroup::websocket_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, @websocket.Conn) -> Unit) -> Self
 

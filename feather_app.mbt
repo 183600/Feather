@@ -180,16 +180,7 @@ pub fn App::use_when(
   predicate : (Context) -> Bool,
   middleware : Middleware,
 ) -> App {
-  self.use(fn(next) {
-    let scoped = middleware(next)
-    fn(ctx) raise {
-      if predicate(ctx) {
-        scoped(ctx)
-      } else {
-        next(ctx)
-      }
-    }
-  })
+  self.use(scoped_middleware(predicate, middleware))
 }
 
 ///|

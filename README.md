@@ -329,6 +329,12 @@ child at a different parent prefix does not require rewriting its middleware.
 `App::use_when(predicate, middleware)` is the general form when the decision
 depends on request state or another header rather than the path.
 
+`RouteGroup` exposes the same scoped helpers. `RouteGroup::use_when` keeps its
+position among the group middleware, while `RouteGroup::use_prefix` is relative
+to the group prefix and segment-aware, so
+`app.group("/api").use_prefix("/admin", middleware)` covers `/api/admin` but not
+`/api/adminish` or `/api/items`.
+
 Sessions and CSRF are available as middleware plus `Context` helpers
 (`session_get`, `session_set`, `session_has`, `session_keys`, `session_remove`,
 `session_clear`, `session_destroy`, and JSON/flash variants):
