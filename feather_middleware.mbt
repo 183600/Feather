@@ -1289,6 +1289,16 @@ fn cors_middleware(
               "true",
             )
           }
+          // For actual CORS responses (including non-preflight OPTIONS), include
+          // the grant when the origin is allowed so browsers can verify the
+          // response for private network access.
+          if !preflight && allow_private_network {
+            set_header_ignore_case(
+              ctx.response.headers,
+              "Access-Control-Allow-Private-Network",
+              "true",
+            )
+          }
         }
       } else {
         if expose_headers != "" && allowed_origin != "" {
@@ -1296,6 +1306,13 @@ fn cors_middleware(
             ctx.response.headers,
             "Access-Control-Expose-Headers",
             expose_headers,
+          )
+        }
+        if allow_private_network && allowed_origin != "" {
+          set_header_ignore_case(
+            ctx.response.headers,
+            "Access-Control-Allow-Private-Network",
+            "true",
           )
         }
         next(ctx)

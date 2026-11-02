@@ -124,7 +124,7 @@ test "cors private network grant is withheld from rejected origins" {
 }
 
 ///|
-test "cors private network grant is not emitted for ordinary requests" {
+test "cors private network grant is emitted for ordinary requests" {
   let app = @feather.App::new()
     .use(
       @feather.middleware_cors(
@@ -145,8 +145,10 @@ test "cors private network grant is not emitted for ordinary requests" {
   assert_eq(response.status, 200)
   assert_eq(
     response.headers.get("Access-Control-Allow-Private-Network"),
-    None,
+    Some("true"),
   )
+  // Non-preflight OPTIONS (no Access-Control-Request-Method) are actual CORS
+  // requests and should also receive the private network grant.
   let plain_options = app.respond({
     method: "OPTIONS",
     path: "/me",
@@ -158,6 +160,6 @@ test "cors private network grant is not emitted for ordinary requests" {
   })
   assert_eq(
     plain_options.headers.get("Access-Control-Allow-Private-Network"),
-    None,
+    Some("true"),
   )
 }
