@@ -48,6 +48,34 @@ test "App all covers every standard HTTP method" {
 }
 
 ///|
+test "all route 405 lists every standard method for an unregistered verb" {
+  let app = @feather.App::new().all("/all", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "PROPFIND",
+    path: "/all",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 405)
+  let allow = response.headers.get("Allow").unwrap_or("")
+  // RFC 9110 §9.3.2: a 405 response must list the allowed methods, and HEAD is
+  // implicit whenever GET is allowed.
+  for method in [
+    "GET",
+    "HEAD",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS",
+    "CONNECT",
+    "TRACE",
+  ] {
+    assert_true(allow.contains(method), msg=allow)
+  }
+}
+
+///|
 test "group and facade all include CONNECT and TRACE" {
   let app = @feather.App::new()
   ignore(
