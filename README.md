@@ -1,13 +1,15 @@
 # Feather
 
 Feather is a Gin/Express-style web framework for MoonBit built on
-`moonbitlang/async/http`. It offers routing, middleware, a rich request
+`moonbitlang/async/http`. It provides routing, middleware, a rich request
 context, static files, caching, sessions, server-sent events, streaming, and
-WebSocket endpoints.
+WebSocket endpoints, with a built-in HTTP/1.1 server.
 
-The core HTTP server and routing are implemented and tested. The original
-design brief is in [PLAN.md](PLAN.md); the implementation has grown beyond it,
-and the current architecture is described below.
+The library compiles for the default MoonBit target, but the HTTP server
+itself requires the **native** target. The core server and routing are
+implemented and tested. The original design brief is in
+[PLAN.md](PLAN.md); the implementation has grown beyond it, and the current
+architecture is described below.
 
 - Module: `183600/feather`
 - Repository: <https://github.com/183600/Feather>

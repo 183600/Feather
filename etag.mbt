@@ -311,10 +311,10 @@ fn precondition_input_http(
 /// `App::respond` path) once, together with whether the method allows a
 /// `304 Not Modified` answer.
 fn precondition_input_facade(request : Request) -> (PreconditionInput, Bool) {
-  let method = normalize_method(request.method)
+  let meth = normalize_method(request.method)
   (
     precondition_input_from_map(request.headers),
-    method == "GET" || method == "HEAD",
+    meth == "GET" || meth == "HEAD",
   )
 }
 
