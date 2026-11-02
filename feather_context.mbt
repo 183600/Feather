@@ -168,6 +168,23 @@ pub fn Context::param_decoded(self : Context, name : String) -> String {
 }
 
 ///|
+/// Like `Context::param_default`, but percent-decodes the captured segment and
+/// falls back to `default` when the route did not capture `name`.
+pub fn Context::param_default_decoded(
+  self : Context,
+  name : String,
+  default : String,
+) -> String {
+  if self.state.is_empty() {
+    return default
+  }
+  match self.state.get(param_state_key(name)) {
+    Some(value) => decode_url_path(value.view())
+    None => default
+  }
+}
+
+///|
 pub fn Context::params(self : Context) -> Map[String, String] {
   let result : Map[String, String] = Map([], capacity=4)
   let prefix_length = PARAM_PREFIX.length()

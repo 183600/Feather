@@ -407,6 +407,7 @@ pub fn Context::param_bool(Self, String) -> Bool?
 pub fn Context::param_bool_default(Self, String, Bool) -> Bool
 pub fn Context::param_decoded(Self, String) -> String
 pub fn Context::param_default(Self, String, String) -> String
+pub fn Context::param_default_decoded(Self, String, String) -> String
 pub fn Context::param_float(Self, String) -> Double?
 pub fn Context::param_float_default(Self, String, Double) -> Double
 pub fn Context::param_int(Self, String) -> Int32?

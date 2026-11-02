@@ -70,3 +70,24 @@ test "typed param accessors decode percent escapes" {
   assert_eq(param_decode_response(app, "/bool/%74rue").body, "true")
   assert_eq(param_decode_response(app, "/float/%31%2E%35").body, "1.5")
 }
+
+///|
+test "param_default_decoded decodes and falls back" {
+  let app = @feather.App::new().get("/items/:id", fn(ctx) {
+    let id = ctx.param_default_decoded("id", "none")
+    let missing = ctx.param_default_decoded("missing", "fallback")
+    let empty = ctx.param_default_decoded("id", "default")
+    ctx.text(200, id + "|" + missing)
+  })
+  assert_eq(param_decode_response(app, "/items/%41%42").body, "AB|fallback")
+  assert_eq(param_decode_response(app, "/items/123").body, "123|fallback")
+}
+
+///|
+test "param_default_decoded returns empty string for captured empty value" {
+  let app = @feather.App::new().get("/*path", fn(ctx) {
+    ctx.text(200, "|" + ctx.param_default_decoded("path", "default") + "|")
+  })
+  assert_eq(param_decode_response(app, "/").body, "||")
+  assert_eq(param_decode_response(app, "/a%20b").body, "|a b|")
+}
