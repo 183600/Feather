@@ -440,6 +440,9 @@ async fn handle_request(
               response_started~,
             )
           }
+          conn.skip_request_body() catch {
+            _ => ()
+          }
           return
         }
       }
@@ -487,24 +490,36 @@ async fn handle_request(
     @async.with_timeout(timeout, send_dynamic) catch {
       @async.TimeoutError =>
         if response_started.val {
+          conn.skip_request_body() catch {
+            _ => ()
+          }
           conn.close()
         } else {
           send_error_and_close(conn, 504, "504 Gateway Timeout", head)
         }
       PayloadTooLarge =>
         if response_started.val {
+          conn.skip_request_body() catch {
+            _ => ()
+          }
           conn.close()
         } else {
           send_error_and_close(conn, 413, "413 Payload Too Large", head)
         }
       MalformedRequestBody =>
         if response_started.val {
+          conn.skip_request_body() catch {
+            _ => ()
+          }
           conn.close()
         } else {
           send_simple(conn, 400, "400 Bad Request", head)
         }
       UnsupportedRequestBodyCoding =>
         if response_started.val {
+          conn.skip_request_body() catch {
+            _ => ()
+          }
           conn.close()
         } else {
           send_error_and_close(
@@ -514,11 +529,17 @@ async fn handle_request(
       err => {
         ignore(err)
         if response_started.val {
+          conn.skip_request_body() catch {
+            _ => ()
+          }
           conn.close()
         } else {
           send_error_and_close(conn, 500, "500 Internal Server Error", head)
         }
       }
+    }
+    conn.skip_request_body() catch {
+      _ => ()
     }
   } else {
     let (response, file, auto_etag, compress, compress_min_size) =
@@ -563,6 +584,9 @@ async fn handle_request(
           connect=request.meth is @http.Connect,
         )
       }
+    }
+    conn.skip_request_body() catch {
+      _ => ()
     }
   }
 }

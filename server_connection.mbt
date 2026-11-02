@@ -1491,7 +1491,7 @@ async fn send_oversized_and_close(
   send_simple(conn, 413, "413 Payload Too Large", head) catch {
     _ => ()
   }
-  @async.with_timeout(50, () => conn.skip_request_body()) catch {
+  @async.with_timeout(2000, () => conn.skip_request_body()) catch {
     _ => ()
   }
   conn.close()
