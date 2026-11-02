@@ -330,3 +330,191 @@ pub fn Context::defer_cleanup(
   self.cleanups.push(cleanup)
 }
 
+///|
+/// The route parameter `name` parsed as a signed 32-bit integer, or `default`
+/// when the parameter is absent or out of range. See `Context::param_int`.
+pub fn Context::param_int_default(
+  self : Context,
+  name : String,
+  default : Int32,
+) -> Int32 {
+  self.param_int(name).unwrap_or(default)
+}
+
+///|
+/// The route parameter `name` parsed as a signed 64-bit integer, or `default`
+/// when the parameter is absent or does not fit in `Int64`. See
+/// `Context::param_int64`.
+pub fn Context::param_int64_default(
+  self : Context,
+  name : String,
+  default : Int64,
+) -> Int64 {
+  self.param_int64(name).unwrap_or(default)
+}
+
+///|
+/// The route parameter `name` parsed as a boolean, or `default` when the
+/// parameter is absent or not a recognized spelling. See
+/// `Context::param_bool`.
+pub fn Context::param_bool_default(
+  self : Context,
+  name : String,
+  default : Bool,
+) -> Bool {
+  self.param_bool(name).unwrap_or(default)
+}
+
+///|
+/// The route parameter `name` parsed as a finite floating-point number, or
+/// `default` when the parameter is absent or malformed. See
+/// `Context::param_float`.
+pub fn Context::param_float_default(
+  self : Context,
+  name : String,
+  default : Double,
+) -> Double {
+  self.param_float(name).unwrap_or(default)
+}
+
+///|
+/// The query parameter `name` parsed as a signed 32-bit integer, or `default`
+/// when the parameter is absent or out of range. See `Context::query_int`.
+pub fn Context::query_int_default(
+  self : Context,
+  name : String,
+  default : Int32,
+) -> Int32 {
+  self.query_int(name).unwrap_or(default)
+}
+
+///|
+/// The query parameter `name` parsed as a signed 64-bit integer, or `default`
+/// when the parameter is absent or does not fit in `Int64`. See
+/// `Context::query_int64`.
+pub fn Context::query_int64_default(
+  self : Context,
+  name : String,
+  default : Int64,
+) -> Int64 {
+  self.query_int64(name).unwrap_or(default)
+}
+
+///|
+/// The query parameter `name` parsed as a boolean, or `default` when the
+/// parameter is absent or not a recognized spelling. See `Context::query_bool`.
+pub fn Context::query_bool_default(
+  self : Context,
+  name : String,
+  default : Bool,
+) -> Bool {
+  self.query_bool(name).unwrap_or(default)
+}
+
+///|
+/// The query parameter `name` parsed as a finite floating-point number, or
+/// `default` when the parameter is absent or malformed. See
+/// `Context::query_float`.
+pub fn Context::query_float_default(
+  self : Context,
+  name : String,
+  default : Double,
+) -> Double {
+  self.query_float(name).unwrap_or(default)
+}
+
+///|
+/// The request header `name` parsed as a signed 32-bit integer, or `default`
+/// when the header is absent, malformed, or outside the `Int32` range. See
+/// `Context::header_int`.
+pub fn Context::header_int_default(
+  self : Context,
+  name : String,
+  default : Int32,
+) -> Int32 {
+  self.header_int(name).unwrap_or(default)
+}
+
+///|
+/// The request header `name` parsed as a signed 64-bit integer, or `default`
+/// when the header is absent, malformed, or does not fit in `Int64`. See
+/// `Context::header_int64`.
+pub fn Context::header_int64_default(
+  self : Context,
+  name : String,
+  default : Int64,
+) -> Int64 {
+  self.header_int64(name).unwrap_or(default)
+}
+
+///|
+/// The request header `name` parsed as a boolean, or `default` when the header
+/// is absent or not a recognized spelling. See `Context::header_bool`.
+pub fn Context::header_bool_default(
+  self : Context,
+  name : String,
+  default : Bool,
+) -> Bool {
+  self.header_bool(name).unwrap_or(default)
+}
+
+///|
+/// The request header `name` parsed as a finite floating-point number, or
+/// `default` when the header is absent, malformed, or names `nan`/`inf`. See
+/// `Context::header_float`.
+pub fn Context::header_float_default(
+  self : Context,
+  name : String,
+  default : Double,
+) -> Double {
+  self.header_float(name).unwrap_or(default)
+}
+
+///|
+/// The form field `name` parsed as a 32-bit integer, or `default` when the
+/// request body is not a form, the field is absent, or the value is not a valid
+/// integer. See `Context::form_int`.
+pub fn Context::form_int_default(
+  self : Context,
+  name : String,
+  default : Int32,
+) -> Int32 {
+  self.form_int(name).unwrap_or(default)
+}
+
+///|
+/// The form field `name` parsed as a 64-bit integer, or `default` when the
+/// request body is not a form, the field is absent, or the value does not fit
+/// in `Int64`. See `Context::form_int64`.
+pub fn Context::form_int64_default(
+  self : Context,
+  name : String,
+  default : Int64,
+) -> Int64 {
+  self.form_int64(name).unwrap_or(default)
+}
+
+///|
+/// The form field `name` parsed as a boolean, or `default` when the request
+/// body is not a form, the field is absent, or the value is not a recognized
+/// spelling. See `Context::form_bool`.
+pub fn Context::form_bool_default(
+  self : Context,
+  name : String,
+  default : Bool,
+) -> Bool {
+  self.form_bool(name).unwrap_or(default)
+}
+
+///|
+/// The form field `name` parsed as a finite floating-point number, or `default`
+/// when the request body is not a form, the field is absent, or the value is
+/// malformed. See `Context::form_float`.
+pub fn Context::form_float_default(
+  self : Context,
+  name : String,
+  default : Double,
+) -> Double {
+  self.form_float(name).unwrap_or(default)
+}
+
