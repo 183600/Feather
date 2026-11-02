@@ -69,3 +69,40 @@ test "request id still bounds generated ids when incoming values are ignored" {
   assert_eq(response.headers.get("X-Request-Id"), Some("feather-1"))
   assert_eq(response.body, "feather-1")
 }
+
+///|
+test "request id generates UUID-like ids with custom generator" {
+  let calls = Ref(0)
+  let app = id_trust_app(
+    @feather.middleware_request_id(
+      trust_incoming=false,
+      generate=fn() {
+        calls.val = calls.val + 1
+        "uuid-" + calls.val.to_string() + "-" + calls.val.to_string()
+      },
+      max_length=32,
+    ),
+  )
+  let response = id_trust_response(app, "client-value")
+  assert_eq(response.headers.get("X-Request-Id"), Some("uuid-1-1"))
+  assert_eq(response.body, "uuid-1-1")
+  assert_eq(calls.val, 1)
+}
+
+///|
+test "request id generates ulid-like ids with custom generator" {
+  let calls = Ref(0)
+  let app = id_trust_app(
+    @feather.middleware_request_id(
+      trust_incoming=false,
+      generate=fn() {
+        calls.val = calls.val + 1
+        "ulid-" + calls.val.to_string() + "-" + calls.val.to_string() + "-" + calls.val.to_string()
+      },
+    ),
+  )
+  let response = id_trust_response(app, "client-value")
+  assert_eq(response.headers.get("X-Request-Id"), Some("ulid-1-1-1"))
+  assert_eq(response.body, "ulid-1-1-1")
+  assert_eq(calls.val, 1)
+}
