@@ -478,3 +478,21 @@ pub fn Context::forwarded_ip(self : Context) -> String {
   self.ip()
 }
 
+///|
+/// The request's `Content-Length` header parsed as a 32-bit integer.
+///
+/// Returns `None` when the header is absent, malformed, or outside the `Int32`
+/// range. Surrounding whitespace is ignored.
+pub fn Context::content_length(self : Context) -> Int32? {
+  self.header_int("Content-Length")
+}
+
+///|
+/// The request's `Content-Length` header parsed as a 64-bit integer.
+///
+/// Returns `None` when the header is absent, malformed, or outside the `Int64`
+/// range. Surrounding whitespace is ignored.
+pub fn Context::content_length64(self : Context) -> Int64? {
+  self.header_int64("Content-Length")
+}
+

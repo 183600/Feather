@@ -64,3 +64,49 @@ test "header boolean and float accessors use the shared typed parsers" {
   assert_eq(ctx.header_float("X-Float-Bad"), None)
   assert_eq(ctx.header_float("X-Missing"), None)
 }
+
+///|
+test "content_length and content_length64 parse the Content-Length header" {
+  let ctx = @feather.Context::new({
+    method: "POST",
+    path: "/",
+    headers: Map([
+      ("Content-Length", " 123 "),
+      ("Content-Length-Dup", "456"),
+    ]),
+    body: "",
+  })
+  assert_eq(ctx.content_length(), Some(123))
+  assert_eq(ctx.content_length64(), Some(123L))
+  let missing = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(missing.content_length(), None)
+  assert_eq(missing.content_length64(), None)
+  let bad = @feather.Context::new({
+    method: "POST",
+    path: "/",
+    headers: Map([("Content-Length", "abc")]),
+    body: "",
+  })
+  assert_eq(bad.content_length(), None)
+  assert_eq(bad.content_length64(), None)
+  let overflow = @feather.Context::new({
+    method: "POST",
+    path: "/",
+    headers: Map([("Content-Length", "2147483648")]),
+    body: "",
+  })
+  assert_eq(overflow.content_length(), None)
+  assert_eq(overflow.content_length64(), Some(2147483648L))
+  let int64_overflow = @feather.Context::new({
+    method: "POST",
+    path: "/",
+    headers: Map([("Content-Length", "9223372036854775808")]),
+    body: "",
+  })
+  assert_eq(int64_overflow.content_length64(), None)
+}
