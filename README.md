@@ -6,7 +6,9 @@ context, static files, caching, sessions, SSE, streaming, and WebSocket
 endpoints.
 
 The core and HTTP server are implemented and covered by the test suite. The
-long-term design notes are in [PLAN.md](PLAN.md).
+original design brief is in [PLAN.md](PLAN.md); the implementation has since
+grown beyond it, and the current architecture and package layout are described
+below.
 
 - Module: `183600/feather`
 - Repository: <https://github.com/183600/Feather>

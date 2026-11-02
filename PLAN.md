@@ -1,10 +1,10 @@
 # Feather 原始设计说明
 
-> **Status note (2026-10):** this file is the original design brief kept for
-> historical reference. The implementation has since grown well beyond it
-> (sessions, CSRF, signed cookies, flash, rate limiting, SSE, streaming,
-> static files, compression, ETag, and content negotiation are all live and
-> tested). For the current architecture and package layout see the README.
+> **Status note:** this file is the original design brief, kept for historical
+> reference. The implementation has since grown well beyond it (sessions, CSRF,
+> signed cookies, flash, rate limiting, SSE, streaming, static files,
+> compression, ETag, and content negotiation are all live and tested). For the
+> current architecture and package layout see the README.
 
 下面给你一套**“可以落地实现”的 MoonBit 后端 Web 框架方案**（偏 Gin/Express 风格），
 底层严格基于 `moonbitlang/async/http` 的 **`@http.run_server` +

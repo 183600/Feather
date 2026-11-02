@@ -451,16 +451,21 @@ pub fn App::resolve_sse(
 }
 
 ///|
-fn App::resolve_sse_full(
-  self : App,
+/// Resolve an async endpoint (`sse`, `websocket` or `stream`) registered for
+/// `GET path`. Returns the handler, its captured parameters, the route's
+/// middleware chain (or the empty terminal chain), and the matched route path.
+fn[T] resolve_async_full(
   path : String,
-) -> (SseHandler, Map[String, String], Handler, String)? {
-  if self.sse_handlers.is_empty() {
+  router : Router,
+  handlers : Map[String, T],
+  middlewares : Map[String, Handler],
+) -> (T, Map[String, String], Handler, String)? {
+  if handlers.is_empty() {
     return None
   }
-  match self.sse_router.match_dispatch("GET", clean_path_view(path)) {
+  match router.match_dispatch("GET", clean_path_view(path)) {
     DispatchFound(node, params, _) =>
-      match self.sse_handlers.get(node.route_path) {
+      match handlers.get(node.route_path) {
         Some(handler) =>
           Some(
             (
@@ -469,7 +474,7 @@ fn App::resolve_sse_full(
                 Some(params) => params.copy()
                 None => Map([], capacity=0)
               },
-              match self.sse_middlewares.get(node.route_path) {
+              match middlewares.get(node.route_path) {
                 Some(chain) => chain
                 None => async_chain_terminal
               },
@@ -480,6 +485,19 @@ fn App::resolve_sse_full(
       }
     _ => None
   }
+}
+
+///|
+fn App::resolve_sse_full(
+  self : App,
+  path : String,
+) -> (SseHandler, Map[String, String], Handler, String)? {
+  resolve_async_full(
+    path,
+    self.sse_router,
+    self.sse_handlers,
+    self.sse_middlewares,
+  )
 }
 
 ///|
@@ -498,31 +516,12 @@ fn App::resolve_websocket_full(
   self : App,
   path : String,
 ) -> (WebSocketHandler, Map[String, String], Handler, String)? {
-  if self.ws_handlers.is_empty() {
-    return None
-  }
-  match self.ws_router.match_dispatch("GET", clean_path_view(path)) {
-    DispatchFound(node, params, _) =>
-      match self.ws_handlers.get(node.route_path) {
-        Some(handler) =>
-          Some(
-            (
-              handler,
-              match params {
-                Some(params) => params.copy()
-                None => Map([], capacity=0)
-              },
-              match self.ws_middlewares.get(node.route_path) {
-                Some(chain) => chain
-                None => async_chain_terminal
-              },
-              node.route_path,
-            ),
-          )
-        None => None
-      }
-    _ => None
-  }
+  resolve_async_full(
+    path,
+    self.ws_router,
+    self.ws_handlers,
+    self.ws_middlewares,
+  )
 }
 
 ///|
@@ -593,31 +592,12 @@ fn App::resolve_stream_full(
   self : App,
   path : String,
 ) -> (StreamHandler, Map[String, String], Handler, String)? {
-  if self.stream_handlers.is_empty() {
-    return None
-  }
-  match self.stream_router.match_dispatch("GET", clean_path_view(path)) {
-    DispatchFound(node, params, _) =>
-      match self.stream_handlers.get(node.route_path) {
-        Some(handler) =>
-          Some(
-            (
-              handler,
-              match params {
-                Some(params) => params.copy()
-                None => Map([], capacity=0)
-              },
-              match self.stream_middlewares.get(node.route_path) {
-                Some(chain) => chain
-                None => async_chain_terminal
-              },
-              node.route_path,
-            ),
-          )
-        None => None
-      }
-    _ => None
-  }
+  resolve_async_full(
+    path,
+    self.stream_router,
+    self.stream_handlers,
+    self.stream_middlewares,
+  )
 }
 
 ///|
