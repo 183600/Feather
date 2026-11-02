@@ -1,10 +1,10 @@
 # Feather 原始设计说明
 
 > **Status note:** this file is the original design brief, kept for historical
-> reference. The implementation has since grown well beyond it (sessions, CSRF,
-> signed cookies, flash, rate limiting, SSE, streaming, static files,
-> compression, ETag, and content negotiation are all live and tested). For the
-> current architecture and package layout see the README.
+> reference. The implementation has grown beyond it and now includes sessions,
+> CSRF, signed cookies, flash, rate limiting, SSE, streaming, static files,
+> compression, ETag, and content negotiation. For the current architecture see
+> the README.
 
 下面给你一套**“可以落地实现”的 MoonBit 后端 Web 框架方案**（偏 Gin/Express 风格），
 底层严格基于 `moonbitlang/async/http` 的 **`@http.run_server` +
@@ -13,9 +13,9 @@ Context + 统一响应封装 + 可靠的连接内请求循环**。
 
 ---
 
-## 0. 你要依赖的底层能力（框架“地基”）
+## 0. 底层能力
 
-从官方的 HTTP 文件服务器示例可以确认，`moonbitlang/async/http` 至少提供这些关键 API：
+`moonbitlang/async/http` 提供的关键 API：
 
 - `@http.run_server(addr, fn(conn, peer_addr) { ... })`：监听并为每个连接启动处理逻辑（并发处理连接）。
 - `@http.ServerConnection`：

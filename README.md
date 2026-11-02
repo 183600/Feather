@@ -1,14 +1,13 @@
 # Feather
 
-Feather is a Gin/Express-style web framework for MoonBit, built on
-`moonbitlang/async/http`. It provides routing, middleware, a rich request
-context, static files, caching, sessions, SSE, streaming, and WebSocket
-endpoints.
+Feather is a Gin/Express-style web framework for MoonBit built on
+`moonbitlang/async/http`. It offers routing, middleware, a rich request
+context, static files, caching, sessions, server-sent events, streaming, and
+WebSocket endpoints.
 
-The core and HTTP server are implemented and covered by the test suite. The
-original design brief is in [PLAN.md](PLAN.md); the implementation has since
-grown beyond it, and the current architecture and package layout are described
-below.
+The core HTTP server and routing are implemented and tested. The original
+design brief is in [PLAN.md](PLAN.md); the implementation has grown beyond it,
+and the current architecture is described below.
 
 - Module: `183600/feather`
 - Repository: <https://github.com/183600/Feather>
@@ -95,7 +94,6 @@ import {
 ## Quick start
 
 ```moonbit
-///|
 async fn main {
   let app = @feather.App::new()
     .use(@feather.middleware_recover())

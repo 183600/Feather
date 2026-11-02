@@ -451,15 +451,16 @@ pub fn middleware_cache_private(
 }
 
 ///|
-pub fn Context::text(self : Context, status : Int32, body : String) -> Unit {
+fn Context::prepare_body_response(self : Context, status : Int32, content_type : String) -> Unit {
   self.file = None
   self.response.status = status
   clear_replaced_body_headers(self.response.headers)
-  set_header_ignore_case(
-    self.response.headers,
-    "Content-Type",
-    "text/plain; charset=utf-8",
-  )
+  set_header_ignore_case(self.response.headers, "Content-Type", content_type)
+}
+
+///|
+pub fn Context::text(self : Context, status : Int32, body : String) -> Unit {
+  self.prepare_body_response(status, "text/plain; charset=utf-8")
   self.response.data = None
   self.response.body = body
 }
@@ -471,24 +472,14 @@ pub fn Context::bytes(
   data : Bytes,
   content_type~ : String = "application/octet-stream",
 ) -> Unit {
-  self.file = None
-  self.response.status = status
-  clear_replaced_body_headers(self.response.headers)
-  set_header_ignore_case(self.response.headers, "Content-Type", content_type)
+  self.prepare_body_response(status, content_type)
   self.response.body = ""
   self.response.data = Some(data)
 }
 
 ///|
 pub fn Context::html(self : Context, status : Int32, body : String) -> Unit {
-  self.file = None
-  self.response.status = status
-  clear_replaced_body_headers(self.response.headers)
-  set_header_ignore_case(
-    self.response.headers,
-    "Content-Type",
-    "text/html; charset=utf-8",
-  )
+  self.prepare_body_response(status, "text/html; charset=utf-8")
   self.response.data = None
   self.response.body = body
 }
@@ -570,14 +561,7 @@ fn json_object_text(data : Map[String, String]) -> String {
 
 ///|
 pub fn Context::json_value(self : Context, status : Int32, data : Json) -> Unit {
-  self.file = None
-  self.response.status = status
-  clear_replaced_body_headers(self.response.headers)
-  set_header_ignore_case(
-    self.response.headers,
-    "Content-Type",
-    "application/json; charset=utf-8",
-  )
+  self.prepare_body_response(status, "application/json; charset=utf-8")
   self.response.data = None
   self.response.body = match data {
     Json::Object(members) if members.is_empty() => "{}"
@@ -592,14 +576,7 @@ pub fn Context::json(
   status : Int32,
   data : Map[String, String],
 ) -> Unit {
-  self.file = None
-  self.response.status = status
-  clear_replaced_body_headers(self.response.headers)
-  set_header_ignore_case(
-    self.response.headers,
-    "Content-Type",
-    "application/json; charset=utf-8",
-  )
+  self.prepare_body_response(status, "application/json; charset=utf-8")
   self.response.data = None
   self.response.body = json_object_text(data)
 }
