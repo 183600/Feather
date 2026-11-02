@@ -249,6 +249,43 @@ test "Context multipart_files_all returns empty when no files are present" {
 }
 
 ///|
+test "Context multipart_form_all returns multipart text fields" {
+  let ctx = @feather.Context::new({
+    method: "POST",
+    path: "/upload",
+    headers: { "Content-Type": "multipart/form-data; boundary=form" },
+    body: "--form\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nfeather\r\n--form\r\nContent-Disposition: form-data; name=\"tag\"\r\n\r\none\r\n--form\r\nContent-Disposition: form-data; name=\"tag\"\r\n\r\ntwo\r\n--form\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"a.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n\u{0}\u{1}\r\n--form--\r\n",
+  })
+  let form = ctx.multipart_form_all()
+  assert_eq(form.get("name"), Some(["feather"]))
+  assert_eq(form.get("tag"), Some(["one", "two"]))
+  assert_false(form.contains("avatar"))
+  assert_eq(form.get("missing"), None)
+}
+
+///|
+test "Context multipart_form_all returns empty for non-multipart requests" {
+  let ctx = @feather.Context::new({
+    method: "POST",
+    path: "/upload",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  })
+  assert_eq(ctx.multipart_form_all().length(), 0)
+}
+
+///|
+test "Context multipart_form_all returns empty when no text fields are present" {
+  let ctx = @feather.Context::new({
+    method: "POST",
+    path: "/upload",
+    headers: { "Content-Type": "multipart/form-data; boundary=onlyfile" },
+    body: "--onlyfile\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"a.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n\u{0}\u{1}\r\n--onlyfile--\r\n",
+  })
+  assert_eq(ctx.multipart_form_all().length(), 0)
+}
+
+///|
 test "Context queries exposes all query parameters" {
   let ctx = @feather.Context::new({
     method: "GET",

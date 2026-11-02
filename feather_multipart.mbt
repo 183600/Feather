@@ -1454,8 +1454,10 @@ fn Context::multipart_form_map(self : Context) -> Map[String, String] {
 
 ///|
 /// Multipart text fields keyed by name, preserving every repeated value in body
-/// order like `Context::form_all`.
-fn Context::multipart_form_all(
+/// order like `Context::form_all`. Only `multipart/form-data` parts are
+/// included; urlencoded form fields are not. Use `Context::form_all` when you
+/// need both.
+pub fn Context::multipart_form_all(
   self : Context,
 ) -> Map[String, Array[String]] {
   let result : Map[String, Array[String]] = Map([], capacity=8)
