@@ -757,9 +757,12 @@ fn App::static_lookup(
         None => None
       }
       // Paths that match no mount at all are dynamic routes, so they are not
-      // cached as static misses.
+      // cached as static misses. Exclude paths with query strings or fragments
+      // from caching because `clean_path_view` strips them, which would cause
+      // cache collisions between different query parameter values.
       if clean.length() <= PARSE_CACHE_MAX_KEY &&
-        (result is Some(_) || mount is Some(_)) {
+        (result is Some(_) || mount is Some(_)) &&
+        (!path.contains("?") && !path.contains("#")) {
         self.static_lookup_remember(clean, result)
       }
       last_static_cache.val = Some(self.static_lookup_cache)

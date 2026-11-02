@@ -590,6 +590,7 @@ fn Router::add_route_node(
   last_route_valid.val = false
   last_route_hit.val = None
   last_route_miss.val = None
+  last_route_trees.val = None
   node
 }
 
