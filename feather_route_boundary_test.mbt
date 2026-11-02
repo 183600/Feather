@@ -138,3 +138,92 @@ test "has_param reports a wildcard capture even when it is empty" {
   assert_eq(response.status, 200)
   assert_eq(response.body, "true")
 }
+
+test "has_param reports parameter capture even when empty string value" {
+  let app = @feather.App::new()
+    .get("/:id", fn(ctx) {
+      ctx.text(200, ctx.has_param("id").to_string())
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 404)
+}
+
+test "has_param distinguishes absent from empty capture for parameter" {
+  let app = @feather.App::new()
+    .get("/:id", fn(ctx) {
+      ctx.text(200, ctx.has_param("id").to_string() + ":" + ctx.param("id"))
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/something",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "true:something")
+}
+
+
+test "multiple parameters in sequence are captured correctly" {
+  let app = @feather.App::new()
+    .get("/:a/:b", fn(ctx) {
+      ctx.text(200, ctx.param("a") + ":" + ctx.param("b"))
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/foo/bar",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "foo:bar")
+}
+
+test "multiple parameters with wildcard combo: /:id/*path" {
+  let app = @feather.App::new()
+    .get("/:id/*path", fn(ctx) {
+      ctx.text(200, ctx.param("id") + ":" + ctx.param("path"))
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/users/42/files/a/b.txt",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "users:42/files/a/b.txt")
+}
+
+test "parameter wins over wildcard when both could match single segment" {
+  let app = @feather.App::new()
+    .get("/:id/*rest", fn(ctx) {
+      ctx.text(200, "param:" + ctx.param("id") + ":" + ctx.param("rest"))
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/users",
+    headers: Map([]),
+    body: "",
+    })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "param:users:")
+}
+
+test "wildcard captures empty remainder at root with param pattern" {
+  let app = @feather.App::new()
+    .get("/:id/*rest", fn(ctx) {
+      ctx.text(200, ctx.param("id") + ":" + ctx.param("rest"))
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 404)
+}
