@@ -1453,7 +1453,10 @@ fn Router::match_dispatch(
         None => {
           let allowed = if meth == "HEAD" {
             match self.find_node_raw("GET", clean_path) {
-              Some(hit) => return DispatchFound(hit.0, hit.1, hit.2)
+              Some(hit) => {
+                self.remember_last_hit(meth, clean_path, (hit.0, hit.1, hit.2))
+                return DispatchFound(hit.0, hit.1, hit.2)
+              }
               None => self.allowed_methods(clean_path)
             }
           } else {
