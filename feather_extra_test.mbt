@@ -207,6 +207,48 @@ test "Context multipart collection helpers keep repeated fields in order" {
 }
 
 ///|
+test "Context multipart_files_all returns all uploaded files" {
+  let ctx = @feather.Context::new({
+    method: "POST",
+    path: "/upload",
+    headers: { "Content-Type": "multipart/form-data; boundary=all" },
+    body: "--all\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nfeather\r\n--all\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"a.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n\u{0}\u{1}\r\n--all\r\nContent-Disposition: form-data; name=\"doc\"; filename=\"b.txt\"\r\nContent-Type: text/plain\r\n\r\nbeta\r\n--all--\r\n",
+  })
+  let files = ctx.multipart_files_all()
+  assert_eq(files.length(), 2)
+  assert_eq(files[0].name, "avatar")
+  assert_eq(files[0].filename, "a.bin")
+  assert_eq(files[0].content_type, "application/octet-stream")
+  assert_eq(files[0].data, "\u{0}\u{1}")
+  assert_eq(files[1].name, "doc")
+  assert_eq(files[1].filename, "b.txt")
+  assert_eq(files[1].content_type, "text/plain")
+  assert_eq(files[1].data, "beta")
+}
+
+///|
+test "Context multipart_files_all returns empty for non-multipart requests" {
+  let ctx = @feather.Context::new({
+    method: "POST",
+    path: "/upload",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  })
+  assert_eq(ctx.multipart_files_all().length(), 0)
+}
+
+///|
+test "Context multipart_files_all returns empty when no files are present" {
+  let ctx = @feather.Context::new({
+    method: "POST",
+    path: "/upload",
+    headers: { "Content-Type": "multipart/form-data; boundary=nofile" },
+    body: "--nofile\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nfeather\r\n--nofile--\r\n",
+  })
+  assert_eq(ctx.multipart_files_all().length(), 0)
+}
+
+///|
 test "Context queries exposes all query parameters" {
   let ctx = @feather.Context::new({
     method: "GET",

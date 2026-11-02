@@ -1497,3 +1497,23 @@ pub fn Context::multipart_files(
   files
 }
 
+///|
+/// Every uploaded file part in the request, in the order the parts appear in
+/// the body. Each returned part owns a copy of its header map, so callers may
+/// mutate the result without disturbing the parse cache. A part with an empty
+/// `filename` parameter is still a file part. Returns an empty array when the
+/// request is not multipart or carries no files.
+pub fn Context::multipart_files_all(self : Context) -> Array[MultipartPart] {
+  let files : Array[MultipartPart] = []
+  match self.multipart_entries() {
+    Some(parts) =>
+      for part in parts {
+        if multipart_part_is_file(part) {
+          files.push(copy_multipart_part(part))
+        }
+      }
+    None => ()
+  }
+  files
+}
+
