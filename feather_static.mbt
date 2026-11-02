@@ -420,7 +420,7 @@ pub fn App::routes(self : App) -> Array[(String, String)] {
 
 ///|
 /// The kind of endpoint reported by `App::endpoints`.
-pub(all) enum EndpointKind {
+pub enum EndpointKind {
   /// An ordinary handler registered with `get`/`post`/`route`/...
   EndpointRoute
   /// A WebSocket upgrade registered with `websocket`.
@@ -435,10 +435,14 @@ pub(all) enum EndpointKind {
 
 ///|
 /// One registered endpoint, as reported by `App::endpoints`.
-pub(all) struct Endpoint {
-  method : String
-  path : String
-  kind : EndpointKind
+///
+/// The fields are public so consumers of `App::endpoints` (for example startup
+/// logging or generated API documentation) can read the method, path and kind
+/// of every registered endpoint without pattern-matching restrictions.
+pub struct Endpoint {
+  pub method : String
+  pub path : String
+  pub kind : EndpointKind
 }
 
 ///|

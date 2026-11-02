@@ -473,13 +473,13 @@ pub fn Context::vary(Self, String) -> Unit
 pub fn Context::wants_json(Self) -> Bool
 pub fn Context::wants_problem_details(Self) -> Bool
 
-pub(all) struct Endpoint {
+pub struct Endpoint {
   method : String
   path : String
   kind : EndpointKind
 }
 
-pub(all) enum EndpointKind {
+pub enum EndpointKind {
   EndpointRoute
   EndpointWebSocket
   EndpointSse
