@@ -168,7 +168,16 @@ async fn Stream::start(self : Stream) -> Unit {
     )
   }
   if self.cookies.length() > 0 {
-    headers.remove(header_set_cookie)
+    // The header only repeats a pending cookie when it was written by
+    // `Context::set_cookie`; a header that was written by hand describes a
+    // different cookie and must survive.
+    match headers.get(header_set_cookie) {
+      Some(value) =>
+        if set_cookie_header_repeats_cookie(self.cookies, value) {
+          headers.remove(header_set_cookie)
+        }
+      None => ()
+    }
   }
   send_with_date(
     self.conn,

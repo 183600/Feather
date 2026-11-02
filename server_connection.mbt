@@ -1409,7 +1409,17 @@ async fn send_response(
     headers.remove(header_content_length)
   }
   if response.cookies.length() > 0 {
-    headers.remove(header_set_cookie)
+    // `Context::set_cookie` records the rendered cookie both as a header and
+    // as a pending cookie, so sending the header as well would send the
+    // cookie twice. A header that was written by hand does not repeat a
+    // pending cookie and has to survive.
+    match headers.get(header_set_cookie) {
+      Some(value) =>
+        if set_cookie_header_repeats_cookie(response.cookies, value) {
+          headers.remove(header_set_cookie)
+        }
+      None => ()
+    }
   }
   send_with_date(
     conn,

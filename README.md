@@ -477,6 +477,11 @@ same rules apply to `Context::set_cookie`, `Context::add_cookie`,
 `Context::clear_cookie`, the signed-cookie helpers, `Stream::add_cookie` and
 the session and CSRF cookie middlewares.
 
+A `Set-Cookie` header that a handler writes itself is sent as it is, even when
+the response also carries cookies queued with `Context::add_cookie`; only a
+header that merely repeats one of those queued cookies is dropped, so a cookie
+written through the helpers never travels twice.
+
 `app.compress(min_size=1024)` enables gzip compression for eligible responses,
 including static files and `Context::file` downloads with a compressible media
 type. Handlers can override this per response with `ctx.compress(min_size=0)` to
