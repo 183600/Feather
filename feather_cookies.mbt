@@ -390,8 +390,29 @@ fn canonical_same_site(value : String) -> String? {
 }
 
 ///|
+/// Cookie name prefix that asks for a secure-only cookie (RFC 6265bis
+/// §4.1.3.1).
+const SECURE_COOKIE_PREFIX : String = "__Secure-"
+
+///|
+/// Cookie name prefix that asks for a host-only cookie bound to the root path
+/// (RFC 6265bis §4.1.3.2).
+const HOST_COOKIE_PREFIX : String = "__Host-"
+
+///|
+/// The `SameSite` token that user agents only accept together with the
+/// `Secure` attribute.
+const SAME_SITE_NONE : String = "None"
+
+///|
 /// Build a cookie with every name, value and attribute sanitized, so caller
 /// input cannot forge additional `Set-Cookie` attributes or header bytes.
+///
+/// The attributes that user agents require for a requested cookie shape are
+/// repaired here, because a user agent that rejects the cookie does so
+/// silently: a `SameSite=None` cookie without `Secure`, a `__Secure-` cookie
+/// without `Secure` and a `__Host-` cookie without `Secure`, `Path=/` or
+/// without a host-only scope are all dropped by the browser without a word.
 fn build_cookie(
   name : String,
   value : String,
@@ -404,9 +425,27 @@ fn build_cookie(
   secure : Bool,
   partitioned : Bool,
 ) -> @http.Cookie {
-  let clean_path = match path {
+  let clean_name = sanitize_cookie_token(name, true)
+  let same_site_token = match same_site {
+    Some(value) => canonical_same_site(value)
+    None => None
+  }
+  let same_site_none = match same_site_token {
+    Some(token) => token == SAME_SITE_NONE
+    None => false
+  }
+  // The prefixes are case-sensitive: `__secure-` is an ordinary cookie name.
+  let host_prefixed = clean_name.has_prefix(HOST_COOKIE_PREFIX)
+  let secure_prefixed = host_prefixed ||
+    clean_name.has_prefix(SECURE_COOKIE_PREFIX)
+  let effective_secure = secure || same_site_none || secure_prefixed
+  let mut clean_path = match path {
     Some(value) => Some(sanitize_cookie_attribute(value))
     None => None
+  }
+  if host_prefixed {
+    // A `__Host-` cookie is bound to the root path of its host.
+    clean_path = Some("/")
   }
   let expires_raw = match expires {
     Some(seconds) => Some(format_http_date(seconds))
@@ -419,7 +458,7 @@ fn build_cookie(
     Some(seconds) => Some(if seconds < 0L { 0L } else { seconds })
     None => None
   }
-  let clean_domain = match domain {
+  let mut clean_domain = match domain {
     Some(value) => {
       let cleaned = sanitize_cookie_domain(value)
       if cleaned == "" {
@@ -430,32 +469,40 @@ fn build_cookie(
     }
     None => None
   }
+  if host_prefixed {
+    // A `__Host-` cookie is host-only, so it must not name a `Domain`.
+    clean_domain = None
+  }
   let extensions : Array[String] = []
-  match same_site {
-    Some(value) =>
-      match canonical_same_site(value) {
-        Some(token) => extensions.push("SameSite=" + token)
-        None => ()
-      }
+  match same_site_token {
+    Some(token) => extensions.push("SameSite=" + token)
     None => ()
   }
   if partitioned {
     extensions.push("Partitioned")
   }
   @http.Cookie(
-    sanitize_cookie_token(name, true),
+    clean_name,
     sanitize_cookie_token(value, false),
     path?=clean_path,
     expires_raw?,
     max_age?=clean_max_age,
     domain?=clean_domain,
     http_only~,
-    secure~,
+    secure=effective_secure,
     extensions~,
   )
 }
 
 ///|
+/// Add a cookie to the response without touching the `Set-Cookie` header.
+///
+/// The cookie is sent as its own `Set-Cookie` line, so several cookies can
+/// travel in one response. A `SameSite=None` cookie and a cookie whose name
+/// starts with `__Secure-` or `__Host-` are marked `Secure` automatically,
+/// because user agents drop a cookie that does not meet the requirements of
+/// the requested attributes; a `__Host-` cookie is additionally sent with
+/// `Path=/` and without a `Domain` attribute.
 pub fn Context::add_cookie(
   self : Context,
   name : String,
@@ -537,6 +584,16 @@ fn render_cookie(cookie : @http.Cookie) -> String {
 }
 
 ///|
+/// Set a cookie and record it in the `Set-Cookie` response header.
+///
+/// The header keeps the most recent cookie for inspection by middleware and
+/// by the offline `App::respond` facade; on the wire the cookie travels as its
+/// own `Set-Cookie` line, so several cookies can travel in one response. A
+/// `SameSite=None` cookie and a cookie whose name starts with `__Secure-` or
+/// `__Host-` are marked `Secure` automatically, because user agents drop a
+/// cookie that does not meet the requirements of the requested attributes; a
+/// `__Host-` cookie is additionally sent with `Path=/` and without a `Domain`
+/// attribute.
 pub fn Context::set_cookie(
   self : Context,
   name : String,
@@ -574,6 +631,32 @@ pub fn Context::set_cookie(
 }
 
 ///|
+/// Whether a raw `Set-Cookie` header value repeats one of the cookies that are
+/// already queued for the response.
+///
+/// `Context::set_cookie` records the rendered cookie both as a header and as a
+/// pending cookie, so the server has to drop the header before it sends the
+/// pending cookies; otherwise the cookie would travel twice. A header that was
+/// written by hand does not repeat a pending cookie and must survive.
+fn set_cookie_header_repeats_cookie(
+  cookies : Array[@http.Cookie],
+  value : String,
+) -> Bool {
+  for cookie in cookies {
+    if render_cookie(cookie) == value {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// Expire a cookie, removing it from the client.
+///
+/// The attributes that are part of a cookie's storage key are kept, most
+/// notably `Path`, `Domain` and `Partitioned` for CHIPS cookies, so the
+/// browser removes the same cookie that was set earlier. The same automatic
+/// `Secure`, `Path=/` and host-only repairs as for `Context::set_cookie` apply.
 pub fn Context::clear_cookie(
   self : Context,
   name : String,

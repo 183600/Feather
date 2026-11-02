@@ -466,6 +466,17 @@ timestamp in Unix seconds. Reading a request uses `cookies` / `cookie`;
 every value of a repeated cookie, and `has_cookie` distinguishes an absent
 cookie from one with an empty value.
 
+Cookies that ask for attributes a browser enforces are repaired instead of
+being dropped silently: a `same_site="None"` cookie is marked `Secure`, a
+cookie named `__Secure-…` is marked `Secure`, and a cookie named `__Host-…` is
+marked `Secure`, sent with `Path=/` and sent without a `Domain` attribute.
+User agents reject a cookie that does not meet the requirements of the
+requested attributes, so without the repair the browser would discard the
+cookie without a word. The name prefixes are matched case-sensitively, and the
+same rules apply to `Context::set_cookie`, `Context::add_cookie`,
+`Context::clear_cookie`, the signed-cookie helpers, `Stream::add_cookie` and
+the session and CSRF cookie middlewares.
+
 `app.compress(min_size=1024)` enables gzip compression for eligible responses,
 including static files and `Context::file` downloads with a compressible media
 type. Handlers can override this per response with `ctx.compress(min_size=0)` to
