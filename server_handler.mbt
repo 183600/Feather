@@ -541,54 +541,58 @@ async fn handle_request(
     conn.skip_request_body() catch {
       _ => ()
     }
-  } else {
-    let (response, file, auto_etag, compress, compress_min_size) =
-      build_response(app, request, body, conn, body_limit) catch {
-        PayloadTooLarge => {
-          send_error_and_close(conn, 413, "413 Payload Too Large", head)
-          return
-        }
-        MalformedRequestBody => {
-          send_simple(conn, 400, "400 Bad Request", head)
-          return
-        }
-        UnsupportedRequestBodyCoding => {
-          send_error_and_close(conn, 415, "415 Unsupported Media Type", head)
-          return
-        }
-        err => {
-          ignore(err)
-          send_error_and_close(conn, 500, "500 Internal Server Error", head)
-          return
-        }
-      }
-    match file {
-      Some(file) =>
-        send_file_response(
-          conn,
-          response,
-          file,
-          head,
-          request,
-          connect=request.meth is @http.Connect,
-          auto_etag~,
-          compress_enabled=compress,
-          compress_min_size~,
-        )
-      None => {
-        apply_buffered_range_http(request, response, head)
-        send_response(
-          conn,
-          response,
-          head,
-          connect=request.meth is @http.Connect,
-        )
-      }
-    }
-    conn.skip_request_body() catch {
-      _ => ()
-    }
-  }
+} else {
+     let (response, file, auto_etag, compress, compress_min_size) =
+       build_response(app, request, body, conn, body_limit) catch {
+         PayloadTooLarge => {
+           send_error_and_close(conn, 413, "413 Payload Too Large", head)
+           return
+         }
+         MalformedRequestBody => {
+           send_simple(conn, 400, "400 Bad Request", head)
+           return
+         }
+         UnsupportedRequestBodyCoding => {
+           send_error_and_close(conn, 415, "415 Unsupported Media Type", head)
+           return
+         }
+         err => {
+           ignore(err)
+           send_error_and_close(conn, 500, "500 Internal Server Error", head)
+           return
+         }
+       }
+     try {
+       match file {
+         Some(file) =>
+           send_file_response(
+             conn,
+             response,
+             file,
+             head,
+             request,
+             connect=request.meth is @http.Connect,
+             auto_etag~,
+             compress_enabled=compress,
+             compress_min_size~,
+           )
+         None => {
+           apply_buffered_range_http(request, response, head)
+           send_response(
+             conn,
+             response,
+             head,
+             connect=request.meth is @http.Connect,
+           )
+         }
+       }
+       conn.skip_request_body() catch {
+         _ => ()
+       }
+     } catch {
+       _ => ()
+     }
+   }
 }
 
 ///|
