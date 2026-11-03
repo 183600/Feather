@@ -313,15 +313,6 @@ async fn read_body_bytes(
 }
 
 ///|
-async fn read_body(
-  reader : &@io.Reader,
-  limit : Int32,
-  size_hint~ : Int32 = 0,
-) -> String {
-  @utf8.decode_lossy(read_body_bytes(reader, limit, size_hint~))
-}
-
-///|
 /// Decode a gzip-compressed request body.
 ///
 /// The decompressed size is bounded by `limit` so a small compressed payload

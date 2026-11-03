@@ -375,13 +375,6 @@ let base64url_lookup : FixedArray[Int32] = {
 }
 
 ///|
-/// Decode URL-safe base64 text with optional padding. Returns `None` for
-/// malformed input.
-fn base64url_decode(text : String) -> Bytes? {
-  base64url_decode_view(text.view())
-}
-
-///|
 /// `base64url_decode` for a `StringView`.
 fn base64url_decode_view(view : StringView) -> Bytes? {
   base64_decode_core(view, base64url_lookup)

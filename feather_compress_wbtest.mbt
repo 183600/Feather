@@ -73,6 +73,22 @@ test "compressible content types require the exact registered media type" {
 }
 
 ///|
+fn accept_encoding_allows_gzip(header : StringView) -> Bool {
+  if trim_ascii_space(header).is_empty() {
+    return false
+  }
+  encoding_entries_prefer_gzip(parse_encoding_entries(header))
+}
+
+///|
+fn contains_ignore_ascii_case(
+  haystack : StringView,
+  needle : StringView,
+) -> Bool {
+  find_view_ignore_ascii_case(haystack, needle, 0) is Some(_)
+}
+
+///|
 test "contains ignore ascii case" {
   assert_true(
     contains_ignore_ascii_case("Accept-Encoding".view(), "encoding".view()),
@@ -81,6 +97,30 @@ test "contains ignore ascii case" {
   assert_true(contains_ignore_ascii_case("".view(), "".view()))
   assert_false(contains_ignore_ascii_case("origin".view(), "encoding".view()))
   assert_false(contains_ignore_ascii_case("or".view(), "origin".view()))
+}
+
+///|
+test "accept encoding gzip negotiation (moved from compress.mbt)" {
+  assert_true(accept_encoding_allows_gzip("gzip".view()))
+  assert_true(accept_encoding_allows_gzip("gzip, deflate, br".view()))
+  assert_true(accept_encoding_allows_gzip("deflate, gzip;q=1.0".view()))
+  assert_true(accept_encoding_allows_gzip("*".view()))
+  assert_true(accept_encoding_allows_gzip("GZIP".view()))
+  assert_true(accept_encoding_allows_gzip("identity;q=0, *;q=0.5".view()))
+  assert_true(accept_encoding_allows_gzip("gzip;q=0.5".view()))
+  assert_true(accept_encoding_allows_gzip("gzip;q=1, identity;q=0.1".view()))
+  assert_true(accept_encoding_allows_gzip("*;q=0.5".view()))
+  assert_false(accept_encoding_allows_gzip("gzip;q=0.1, identity;q=1".view()))
+  assert_false(
+    accept_encoding_allows_gzip("gzip;q=0.1, identity;q=1, br;q=1".view()),
+  )
+  assert_false(accept_encoding_allows_gzip("".view()))
+  assert_false(accept_encoding_allows_gzip("deflate".view()))
+  assert_false(accept_encoding_allows_gzip("identity".view()))
+  assert_false(accept_encoding_allows_gzip("gzip;q=0".view()))
+  assert_false(accept_encoding_allows_gzip("gzip;q=0.0".view()))
+  assert_false(accept_encoding_allows_gzip("gzip;q=0, *;q=1".view()))
+  assert_false(accept_encoding_allows_gzip("gzip ; q = 0".view()))
 }
 
 ///|

@@ -1,4 +1,9 @@
 ///|
+fn base64url_decode(text : String) -> Bytes? {
+  base64url_decode_view(text.view())
+}
+
+///|
 fn test_hex(data : Bytes) -> String {
   let digits = "0123456789abcdef"
   let builder = StringBuilder(size_hint=data.length() * 2)

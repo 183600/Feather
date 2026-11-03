@@ -173,19 +173,6 @@ fn encoding_entries_prefer_gzip(entries : Array[EncodingEntry]) -> Bool {
 }
 
 ///|
-/// Check whether `Accept-Encoding` allows and prefers the `gzip` coding.
-///
-/// A coding is allowed when its quality value is positive, or when it is not
-/// mentioned but `*` has a positive quality value. An empty header allows
-/// nothing, matching the caller which only consults a present header.
-fn accept_encoding_allows_gzip(header : StringView) -> Bool {
-  if trim_ascii_space(header).is_empty() {
-    return false
-  }
-  encoding_entries_prefer_gzip(parse_encoding_entries(header))
-}
-
-///|
 /// Same check as `accept_encoding_allows_gzip` for a header string.
 fn accept_encoding_allows_gzip_cached(header : String) -> Bool {
   if trim_ascii_space(header.view()).is_empty() {
@@ -264,14 +251,6 @@ let header_accept_encoding : @http.CaseInsensitiveString = @http.CaseInsensitive
 /// request carries none.
 fn accept_encoding_of(request : @http.Request) -> String? {
   request.headers.get(header_accept_encoding)
-}
-
-///|
-fn contains_ignore_ascii_case(
-  haystack : StringView,
-  needle : StringView,
-) -> Bool {
-  find_view_ignore_ascii_case(haystack, needle, 0) is Some(_)
 }
 
 ///|

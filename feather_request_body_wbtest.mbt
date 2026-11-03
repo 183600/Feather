@@ -1,4 +1,13 @@
 ///|
+async fn read_body(
+  reader : &@io.Reader,
+  limit : Int32,
+  size_hint~ : Int32 = 0,
+) -> String {
+  @utf8.decode_lossy(read_body_bytes(reader, limit, size_hint~))
+}
+
+///|
 async test "read_body utf8 split across chunks" {
   @async.with_task_group(group => {
     let (r, w) = @io.pipe()

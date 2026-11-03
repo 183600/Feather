@@ -2,7 +2,6 @@ import {
   "183600/feather",
   "moonbitlang/async",
   "moonbitlang/async/socket",
-  "moonbitlang/async/websocket",
 }
 
 supported_targets = "+native"
