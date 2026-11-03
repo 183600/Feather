@@ -44,7 +44,7 @@ fn join_paths(prefix : String, path : String) -> String {
 }
 
 ///|
-pub struct RouteGroup {
+pub(all) struct RouteGroup {
   router : Router
   prefix : String
   middlewares : Array[Middleware]

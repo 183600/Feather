@@ -174,7 +174,7 @@ pub(all) suberror JwtError {
 pub suberror PayloadTooLarge
 
 // Types and methods
-pub struct App {
+pub(all) struct App {
   router : Router
   middlewares : Array[((Context) -> Unit raise) -> (Context) -> Unit raise]
   state : Map[String, String]
@@ -482,13 +482,13 @@ pub fn Context::vary(Self, String) -> Unit
 pub fn Context::wants_json(Self) -> Bool
 pub fn Context::wants_problem_details(Self) -> Bool
 
-pub struct Endpoint {
+pub(all) struct Endpoint {
   method : String
   path : String
   kind : EndpointKind
 }
 
-pub enum EndpointKind {
+pub(all) enum EndpointKind {
   EndpointRoute
   EndpointWebSocket
   EndpointSse
@@ -606,7 +606,7 @@ pub(all) struct NamedRoute {
 
 type RateBucket
 
-pub struct RateLimiter {
+pub(all) struct RateLimiter {
   max : Int32
   window : Int64
   buckets : Map[String, RateBucket]
@@ -649,7 +649,7 @@ pub(all) struct Route {
   handler : ((Context) -> Unit raise)?
 }
 
-pub struct RouteGroup {
+pub(all) struct RouteGroup {
   router : Router
   prefix : String
   middlewares : Array[((Context) -> Unit raise) -> (Context) -> Unit raise]
@@ -753,7 +753,7 @@ pub(all) struct Session {
   mut json_cache : Map[String, (String, Json)]?
 }
 
-pub struct SessionStore {
+pub(all) struct SessionStore {
   sessions : Map[String, Session]
   rng : @random.Rand
   ttl : Int64
@@ -769,7 +769,7 @@ pub fn SessionStore::save(Self, Session) -> Unit
 pub fn SessionStore::sweep(Self) -> Unit
 pub fn SessionStore::ttl(Self) -> Int64
 
-pub struct Sse {
+pub(all) struct Sse {
   conn : @http.ServerConnection
   mut closed : Bool
   buffer : StringBuilder
@@ -793,7 +793,7 @@ pub(all) struct StaticMount {
   mut chain : ((Context) -> Unit raise)?
 }
 
-pub struct Stream {
+pub(all) struct Stream {
   conn : @http.ServerConnection
   mut closed : Bool
   mut started : Bool

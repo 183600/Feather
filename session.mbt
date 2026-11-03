@@ -51,7 +51,7 @@ const SESSION_STORE_MAX_SESSIONS : Int32 = 10_000
 /// and, at most once a minute, whenever the store is written to; the store is
 /// also capped at `SESSION_STORE_MAX_SESSIONS` entries. Call
 /// `SessionStore::sweep` to collect expired sessions eagerly.
-pub struct SessionStore {
+pub(all) struct SessionStore {
   sessions : Map[String, Session]
   rng : @random.Rand
   ttl : Int64

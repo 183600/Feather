@@ -9,7 +9,7 @@
 /// `set_status` / `set_header` before the first write; the first write (or
 /// `close`) sends them. Because no `Content-Length` is known up front, the body
 /// uses HTTP/1.1 chunked transfer encoding.
-pub struct Stream {
+pub(all) struct Stream {
   conn : @http.ServerConnection
   mut closed : Bool
   mut started : Bool

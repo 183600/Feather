@@ -25,7 +25,7 @@ const RATE_LIMIT_MAX_BUCKETS : Int32 = 4096
 /// grow without bound. All state is per process, which is the right default
 /// for a single server; share a store through another mechanism when running
 /// several instances.
-pub struct RateLimiter {
+pub(all) struct RateLimiter {
   max : Int32
   window : Int64
   buckets : Map[String, RateBucket]

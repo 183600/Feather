@@ -1,5 +1,5 @@
 ///|
-pub struct App {
+pub(all) struct App {
   router : Router
   middlewares : Array[Middleware]
   state : Map[String, String]

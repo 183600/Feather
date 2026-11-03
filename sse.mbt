@@ -7,7 +7,7 @@
 /// and flushes it immediately, so clients receive events as they happen.
 /// `comment` writes a keep-alive comment line, which is also useful for
 /// dispatching periodic heartbeats through proxies.
-pub struct Sse {
+pub(all) struct Sse {
   conn : @http.ServerConnection
   mut closed : Bool
   buffer : StringBuilder
