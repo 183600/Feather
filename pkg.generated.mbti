@@ -507,6 +507,7 @@ pub fn Feather::delete(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::endpoints(Self) -> Array[Endpoint]
 pub fn Feather::etag(Self) -> Self
 pub fn Feather::fallback(Self, (Context) -> Unit raise) -> Self
+pub fn Feather::fallback_with(Self, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn Feather::get(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::get_json_state(Self, String) -> Json?
 pub fn Feather::get_state(Self, String) -> String
