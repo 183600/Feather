@@ -496,6 +496,33 @@ pub fn Feather::has_stream(self : Feather, path : String) -> Bool {
 }
 
 ///|
+/// Resolve a server-sent events handler registered for `path`.
+pub fn Feather::resolve_sse(
+  self : Feather,
+  path : String,
+) -> (SseHandler, Map[String, String])? {
+  self.app.resolve_sse(path)
+}
+
+///|
+/// Resolve a WebSocket handler registered for `path`.
+pub fn Feather::resolve_websocket(
+  self : Feather,
+  path : String,
+) -> (WebSocketHandler, Map[String, String])? {
+  self.app.resolve_websocket(path)
+}
+
+///|
+/// Resolve a streaming handler registered for `path`.
+pub fn Feather::resolve_stream(
+  self : Feather,
+  path : String,
+) -> (StreamHandler, Map[String, String])? {
+  self.app.resolve_stream(path)
+}
+
+///|
 /// Resolve a request path through the static mounts, returning the file on
 /// disk that would be served.
 pub fn Feather::static_file_for(self : Feather, path : String) -> String? {

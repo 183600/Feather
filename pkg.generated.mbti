@@ -530,6 +530,9 @@ pub fn Feather::put(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::remove_json_state(Self, String) -> Self
 pub fn Feather::remove_state(Self, String) -> Self
 pub fn Feather::request_timeout(Self, Int32) -> Self
+pub fn Feather::resolve_sse(Self, String) -> (async (Context, Sse) -> Unit, Map[String, String])?
+pub fn Feather::resolve_stream(Self, String) -> (async (Context, Stream) -> Unit, Map[String, String])?
+pub fn Feather::resolve_websocket(Self, String) -> (async (Context, @websocket.Conn) -> Unit, Map[String, String])?
 pub fn Feather::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn Feather::route_body_limit(Self, String, String, Int32) -> Self
 pub fn Feather::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
