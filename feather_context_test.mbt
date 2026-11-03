@@ -35,6 +35,28 @@ test "Context defer_cleanup runs when the handler fails" {
 }
 
 ///|
+/// A cleanup that raises must not stop the remaining cleanups, and must not
+/// corrupt the response the handler already produced.
+test "a failing cleanup does not stop other cleanups" {
+  let order : Array[String] = []
+  let app = @feather.App::new().get("/cleanup", fn(ctx) {
+    ctx.defer_cleanup(fn() raise { order.push("first") })
+    ctx.defer_cleanup(fn() raise { order.push("second"); raise @feather.HttpError(500, "boom") })
+    ctx.defer_cleanup(fn() { order.push("third") })
+    ctx.text(200, "ok")
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/cleanup",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "ok")
+  assert_eq(order.join(","), "third,second,first")
+}
+
+///|
 test "cleanups registered during cleanup still run" {
   let order : Array[String] = []
   let app = @feather.App::new().get("/nested", fn(ctx) {
