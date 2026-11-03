@@ -787,6 +787,40 @@ test "Feather facade registers fallbacks and websockets" {
 }
 
 ///|
+test "Feather::fallback_with wraps the fallback with middleware" {
+  let feather = create_feather({ host: "127.0.0.1", port: 0, timeout: 0, })
+  ignore(
+    feather.fallback_with(
+      [fn(next) {
+        fn(ctx) raise {
+          ctx.set_header("X-Fallback", "wrapped")
+          next(ctx)
+        }
+      }],
+      fn(ctx) { ctx.text(404, "not found") },
+    ),
+  )
+  ignore(feather.get("/known", fn(ctx) { ctx.text(200, "ok") }))
+  let known = feather.handle({
+    method: "GET",
+    path: "/known",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(known.body, "ok")
+  assert_eq(known.headers.get("X-Fallback"), None)
+  let missing = feather.handle({
+    method: "GET",
+    path: "/missing",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(missing.status, 404)
+  assert_eq(missing.body, "not found")
+  assert_eq(missing.headers.get("X-Fallback"), Some("wrapped"))
+}
+
+///|
 async test "server advertises content length for text responses" {
   let app = @feather.App::new().get("/hello", fn(ctx) {
     ctx.text(200, "héllo")

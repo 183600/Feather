@@ -198,6 +198,18 @@ pub fn Feather::fallback(self : Feather, handler : Handler) -> Feather {
 }
 
 ///|
+/// Install a fallback handler with additional middleware.
+/// See `App::fallback_with` for details.
+pub fn Feather::fallback_with(
+  self : Feather,
+  middlewares : Array[Middleware],
+  handler : Handler,
+) -> Feather {
+  ignore(self.app.fallback_with(middlewares, handler))
+  self
+}
+
+///|
 pub fn Feather::max_body_size(self : Feather, size : Int32) -> Feather {
   ignore(self.app.max_body_size(size))
   self
