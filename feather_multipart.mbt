@@ -1460,3 +1460,59 @@ pub fn Context::multipart_files_all(self : Context) -> Array[MultipartPart] {
   files
 }
 
+///|
+/// Find the last index of `needle` in `haystack`, or `None` if not found.
+fn rfind(haystack : StringView, needle : StringView) -> Int32? {
+  let n = needle.length()
+  if n == 0 {
+    return None
+  }
+  let h = haystack.length()
+  let mut i = h
+  while i >= n {
+    i = i - 1
+    if haystack[i:i+n] == needle {
+      return Some(i)
+    }
+  }
+  None
+}
+
+///|
+/// Sanitize a filename for safe filesystem storage. Strips directory components,
+/// control characters, and reserved names. Returns a safe basename or an empty
+/// string if the input cannot produce a valid name.
+pub fn sanitize_filename(name : String) -> String {
+  let cleaned = strip_control_characters(name)
+  let view = cleaned.view()
+  if view.is_empty() {
+    return ""
+  }
+  let basename = match rfind(view, "/".view()) {
+    Some(index) => view[index + 1:].to_owned()
+    None => match rfind(view, "\\".view()) {
+      Some(index) => view[index + 1:].to_owned()
+      None => cleaned
+    }
+  }
+  let basename = trim_ascii_space(basename.view()).to_owned()
+  if basename.is_empty() ||
+    basename == "." ||
+    basename == ".." {
+    return ""
+  }
+  let result = StringBuilder(size_hint=basename.length())
+  for ch in basename.iter() {
+    let code = ch.to_int()
+    if code >= 0x20 && code != 0x7F && code != 47 && code != 92 {
+      result.write_char(ch)
+    }
+  }
+  let safe = result.to_string()
+  if safe.is_empty() {
+    ""
+  } else {
+    safe
+  }
+}
+
