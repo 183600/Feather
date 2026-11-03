@@ -19,7 +19,14 @@ fn parse_cookie_map(header : StringView) -> Map[String, String] {
   let mut pos = 0
   while pos <= length {
     let mut end = pos
-    while end < length && header.unsafe_get(end) != (';' : UInt16) {
+    let mut in_quotes = false
+    while end < length {
+      let ch = header.unsafe_get(end)
+      if ch == ('"' : UInt16) {
+        in_quotes = !in_quotes
+      } else if ch == (';' : UInt16) && !in_quotes {
+        break
+      }
       end = end + 1
     }
     let mut start = pos
@@ -92,7 +99,14 @@ fn parse_cookie_multi(
   let mut pos = 0
   while pos <= length {
     let mut end = pos
-    while end < length && header.unsafe_get(end) != (';' : UInt16) {
+    let mut in_quotes = false
+    while end < length {
+      let ch = header.unsafe_get(end)
+      if ch == ('"' : UInt16) {
+        in_quotes = !in_quotes
+      } else if ch == (';' : UInt16) && !in_quotes {
+        break
+      }
       end = end + 1
     }
     let mut start = pos

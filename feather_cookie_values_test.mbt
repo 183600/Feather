@@ -70,3 +70,20 @@ test "cookie helpers return empty results without a Cookie header" {
   assert_eq(ctx.cookie_values("a").length(), 0)
   assert_false(ctx.has_cookie("a"))
 }
+
+///|
+test "cookie parser respects quoted semicolons in values" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([
+      ("Cookie", "a=\"b;c\"; d=1; e=\"x;y;z\""),
+    ]),
+    body: "",
+  })
+  assert_eq(ctx.cookies().get("a"), Some("b;c"))
+  assert_eq(ctx.cookies().get("d"), Some("1"))
+  assert_eq(ctx.cookies().get("e"), Some("x;y;z"))
+  assert_eq(ctx.cookie_values("a").join("|"), "b;c")
+  assert_eq(ctx.cookies_all().get("e").unwrap().join("|"), "x;y;z")
+}
