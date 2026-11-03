@@ -390,3 +390,110 @@ test "preferred_encoding picks the best coding and honors server order" {
     Some("deflate"),
   )
 }
+
+///|
+/// App-level content negotiation: `Context::format` runs through the full
+/// request cycle and the `Accept` header picks the offered representation.
+fn negotiate_app() -> @feather.App {
+  @feather.App::new().get(
+    "/item",
+    fn(ctx) {
+      ctx.format([
+        ("application/json", fn(ctx) { ctx.json(200, { "kind": "json" }) }),
+        ("text/html", fn(ctx) { ctx.html(200, "<p>html</p>") }),
+      ])
+    },
+  )
+}
+
+test "app format serves json when the client accepts it best" {
+  let app = negotiate_app()
+  let response = app.respond({
+    method: "GET",
+    path: "/item",
+    headers: Map([
+      ("Accept", "text/html;q=0.5, application/json;q=0.9"),
+    ]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.headers.get("Content-Type"), Some("application/json; charset=utf-8"))
+  assert_eq(response.headers.get("Vary"), Some("Accept"))
+  assert_true(response.body.contains("\"kind\""))
+}
+
+test "app format serves html when the client accepts it best" {
+  let app = negotiate_app()
+  let response = app.respond({
+    method: "GET",
+    path: "/item",
+    headers: Map([("Accept", "text/html")]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.headers.get("Content-Type"), Some("text/html; charset=utf-8"))
+  assert_eq(response.body, "<p>html</p>")
+}
+
+test "app format answers 406 when the client rejects every offer" {
+  let app = negotiate_app()
+  let response = app.respond({
+    method: "GET",
+    path: "/item",
+    headers: Map([("Accept", "application/xml;q=0")]),
+    body: "",
+  })
+  assert_eq(response.status, 406)
+  assert_eq(response.headers.get("Vary"), Some("Accept"))
+}
+
+test "app format serves the first offer when no Accept header is present" {
+  let app = negotiate_app()
+  let response = app.respond({
+    method: "GET",
+    path: "/item",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.headers.get("Content-Type"), Some("application/json; charset=utf-8"))
+}
+
+///|
+fn negotiate_fallback_app() -> @feather.App {
+  @feather.App::new().get(
+    "/item",
+    fn(ctx) {
+      ctx.format(
+        [("application/json", fn(ctx) { ctx.json(200, { "kind": "json" }) })],
+        fallback=fn(ctx) { ctx.text(200, "plain fallback") },
+      )
+    },
+  )
+}
+
+test "app format runs the fallback when no offer is acceptable" {
+  let app = negotiate_fallback_app()
+  let response = app.respond({
+    method: "GET",
+    path: "/item",
+    headers: Map([("Accept", "text/plain")]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "plain fallback")
+  assert_eq(response.headers.get("Vary"), Some("Accept"))
+}
+
+test "app format wildcard accept picks the server preference" {
+  let app = negotiate_app()
+  let response = app.respond({
+    method: "GET",
+    path: "/item",
+    headers: Map([("Accept", "*/*")]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  // First offer wins on a wildcard accept, which is JSON here.
+  assert_eq(response.headers.get("Content-Type"), Some("application/json; charset=utf-8"))
+}
