@@ -123,6 +123,41 @@ pub fn Context::file(
 }
 
 ///|
+/// Serve a file as the response body.
+///
+/// `Context::file` with the minimum required arguments: status and path.
+/// The content type is inferred from the path's extension.
+pub fn Context::file_simple(
+  self : Context,
+  status : Int32,
+  path : String,
+) -> Unit {
+  self.response.status = status
+  self.response.body = ""
+  self.response.data = None
+  clear_replaced_body_headers(self.response.headers)
+  let resolved_type = mime_type_for(path)
+  set_header_ignore_case(self.response.headers, "Content-Type", resolved_type)
+  self.file = Some({ path, content_type: resolved_type, })
+}
+
+///|
+/// Serve a file with an explicit content type.
+pub fn Context::file_with_type(
+  self : Context,
+  status : Int32,
+  path : String,
+  content_type : String,
+) -> Unit {
+  self.response.status = status
+  self.response.body = ""
+  self.response.data = None
+  clear_replaced_body_headers(self.response.headers)
+  set_header_ignore_case(self.response.headers, "Content-Type", content_type)
+  self.file = Some({ path, content_type, })
+}
+
+///|
 pub fn Context::file_response(self : Context) -> FileResponse? {
   self.file
 }

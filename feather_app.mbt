@@ -340,6 +340,21 @@ pub fn App::fallback(self : App, handler : Handler) -> App {
 }
 
 ///|
+/// Register a fallback handler for unmatched routes, wrapped in middleware.
+///
+/// The middlewares run after every application middleware (`App::use`) and only
+/// when no route matches the request. Middleware that does not call through
+/// answers with its own response instead of invoking the handler.
+pub fn App::fallback_with(
+  self : App,
+  middlewares : Array[Middleware],
+  handler : Handler,
+) -> App {
+  let wrapped = apply_middleware(middlewares, handler)
+  self.fallback(wrapped)
+}
+
+///|
 pub fn App::group(self : App, prefix : String) -> RouteGroup {
   {
     router: self.router,

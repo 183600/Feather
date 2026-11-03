@@ -213,6 +213,7 @@ pub fn App::delete(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::endpoints(Self) -> Array[Endpoint]
 pub fn App::etag(Self) -> Self
 pub fn App::fallback(Self, (Context) -> Unit raise) -> Self
+pub fn App::fallback_with(Self, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn App::get(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::get_json_state(Self, String) -> Json?
 pub fn App::get_state(Self, String) -> String
@@ -329,6 +330,8 @@ pub fn Context::fail_problem(Self, Int32, String, title? : String, type_name? : 
 pub fn Context::fail_with(Self, Int32, String, Json) -> Unit raise HttpErrorPayload
 pub fn Context::file(Self, Int32, String, content_type? : String, download_name? : String) -> Unit
 pub fn Context::file_response(Self) -> FileResponse?
+pub fn Context::file_simple(Self, Int32, String) -> Unit
+pub fn Context::file_with_type(Self, Int32, String, String) -> Unit
 pub fn Context::flash(Self, String, category? : String) -> Bool
 pub fn Context::flash_peek(Self, category? : String) -> Array[String]
 pub fn Context::flash_take(Self, category? : String) -> Array[String]
