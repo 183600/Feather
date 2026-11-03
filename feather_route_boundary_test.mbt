@@ -240,3 +240,75 @@ test "multiple slashes and trailing slash normalise with a query" {
   assert_eq(response.status, 200)
   assert_eq(response.body, "ok")
 }
+
+///|
+test "route paths are case sensitive" {
+  let app = @feather.App::new()
+    .get("/api/users", fn(ctx) { ctx.text(200, "found") })
+    .fallback(fn(ctx) { ctx.text(404, "missing") })
+  assert_eq(
+    app.respond({
+      method: "GET",
+      path: "/api/users",
+      headers: Map([]),
+      body: "",
+    }).status,
+    200,
+  )
+  assert_eq(
+    app.respond({
+      method: "GET",
+      path: "/API/USERS",
+      headers: Map([]),
+      body: "",
+    }).status,
+    404,
+  )
+  assert_eq(
+    app.respond({
+      method: "GET",
+      path: "/Api/Users",
+      headers: Map([]),
+      body: "",
+    }).status,
+    404,
+  )
+}
+
+///|
+test "a route registered with a trailing slash matches a request without one" {
+  let app = @feather.App::new().get("/api/", fn(ctx) { ctx.text(200, "trailing") })
+  let response = app.respond({
+    method: "GET",
+    path: "/api",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "trailing")
+}
+
+///|
+test "route case sensitivity applies to parameter segments too" {
+  let app = @feather.App::new()
+    .get("/Users/:id", fn(ctx) { ctx.text(200, ctx.param("id")) })
+    .fallback(fn(ctx) { ctx.text(404, "missing") })
+  assert_eq(
+    app.respond({
+      method: "GET",
+      path: "/Users/42",
+      headers: Map([]),
+      body: "",
+    }).body,
+    "42",
+  )
+  assert_eq(
+    app.respond({
+      method: "GET",
+      path: "/users/42",
+      headers: Map([]),
+      body: "",
+    }).status,
+    404,
+  )
+}
