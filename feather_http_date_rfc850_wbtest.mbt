@@ -1,4 +1,15 @@
 ///|
+fn expand_two_digit_year(two_digit : Int32) -> Int64 {
+  let current = http_current_year()
+  let candidate = current / 100L * 100L + two_digit.to_int64()
+  if candidate > current + 50L {
+    candidate - 100L
+  } else {
+    candidate
+  }
+}
+
+///|
 test "rfc850 two-digit years stay inside the rfc 9110 window" {
   let current = http_current_year()
   for digit in [0, 1, 50, 68, 69, 70, 76, 77, 90, 99] {

@@ -529,65 +529,6 @@ fn find_part_delimiter(
 }
 
 ///|
-fn find_view_ignore_ascii_case(
-  haystack : StringView,
-  needle : StringView,
-  start : Int32,
-) -> Int32? {
-  let length = needle.length()
-  if length == 0 {
-    return Some(start)
-  }
-  let last = haystack.length() - length
-  let first = needle.unsafe_get(0).to_int()
-  let lower_first = if first >= 65 && first <= 90 { first + 32 } else { first }
-  let mut i = start
-  while i <= last {
-    let value = haystack.unsafe_get(i).to_int()
-    let first_matches = if value == first {
-      true
-    } else {
-      let lower_value = if value >= 65 && value <= 90 {
-        value + 32
-      } else {
-        value
-      }
-      lower_value == lower_first
-    }
-    if first_matches {
-      let mut j = 1
-      let mut matched = true
-      while j < length {
-        let left = haystack.unsafe_get(i + j).to_int()
-        let right = needle.unsafe_get(j).to_int()
-        if left != right {
-          let lower_left = if left >= 65 && left <= 90 {
-            left + 32
-          } else {
-            left
-          }
-          let lower_right = if right >= 65 && right <= 90 {
-            right + 32
-          } else {
-            right
-          }
-          if lower_left != lower_right {
-            matched = false
-            break
-          }
-        }
-        j = j + 1
-      }
-      if matched {
-        return Some(i)
-      }
-    }
-    i = i + 1
-  }
-  None
-}
-
-///|
 /// Look up a `;`-separated parameter such as `boundary` or `filename` in a
 /// header value, honoring quoted string values.
 ///

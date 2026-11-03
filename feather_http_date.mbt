@@ -418,20 +418,6 @@ fn http_current_year() -> Int64 {
 }
 
 ///|
-/// Expand an `rfc850-date` two-digit year as RFC 9110 §5.6.7 requires: a
-/// timestamp that would appear more than 50 years in the future is read as the
-/// most recent year in the past with the same last two digits.
-fn expand_two_digit_year(two_digit : Int32) -> Int64 {
-  let current = http_current_year()
-  let candidate = current / 100L * 100L + two_digit.to_int64()
-  if candidate > current + 50L {
-    candidate - 100L
-  } else {
-    candidate
-  }
-}
-
-///|
 /// Expand an `rfc850-date` two-digit year using the full timestamp.
 ///
 /// RFC 9110 §5.6.7 applies the 50-year rule to the timestamp, not merely to

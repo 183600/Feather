@@ -1,4 +1,24 @@
 ///|
+fn accept_quality_for(header : StringView, media_type : StringView) -> Int32 {
+  let (want_type, want_subtype) = match media_range_parts(media_type) {
+    Some(parts) => parts
+    None => return 0
+  }
+  if trim_ascii_space(header).is_empty() {
+    return 1000
+  }
+  accept_quality_from(parse_accept_entries(header), want_type, want_subtype)
+}
+
+///|
+fn accept_encoding_quality(header : StringView, coding : StringView) -> Int32 {
+  if trim_ascii_space(header).is_empty() {
+    return 1000
+  }
+  encoding_quality_from(parse_encoding_entries(header), coding)
+}
+
+///|
 test "weak etag comparison is symmetric" {
   assert_true(etag_header_matches("W/\"abc\"".view(), "\"abc\""))
   assert_true(etag_header_matches("\"abc\"".view(), "W/\"abc\""))

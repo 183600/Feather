@@ -26,20 +26,6 @@ fn media_range_parts(range : StringView) -> (StringView, StringView)? {
 }
 
 ///|
-/// Quality value (in thousandths) that `header` assigns to `media_type`, or
-/// `0` when it is rejected. Used directly by white-box tests.
-fn accept_quality_for(header : StringView, media_type : StringView) -> Int32 {
-  let (want_type, want_subtype) = match media_range_parts(media_type) {
-    Some(parts) => parts
-    None => return 0
-  }
-  if trim_ascii_space(header).is_empty() {
-    return 1000
-  }
-  accept_quality_from(parse_accept_entries(header), want_type, want_subtype)
-}
-
-///|
 /// One parsed media range of an `Accept` header.
 priv struct AcceptEntry {
   range_type : StringView
@@ -731,16 +717,6 @@ fn encoding_entries_cached(header : String) -> Array[EncodingEntry] {
 ///|
 /// Quality value (in thousandths) assigned to `coding` by an
 /// `Accept-Encoding` header.
-///
-/// A missing header accepts every coding. An empty header value is treated
-/// like a missing header. When the header is present but neither `coding` nor
-/// `*` is listed, the coding is not acceptable and `0` is returned.
-fn accept_encoding_quality(header : StringView, coding : StringView) -> Int32 {
-  if trim_ascii_space(header).is_empty() {
-    return 1000
-  }
-  encoding_quality_from(parse_encoding_entries(header), coding)
-}
 
 ///|
 /// Check whether the request's `Accept-Encoding` header allows `encoding`.

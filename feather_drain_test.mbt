@@ -1,14 +1,4 @@
 ///|
-/// Busy-wait synchronously without yielding. Used only where a handler must
-/// observe a flag change without giving the event loop a chance to run.
-fn drain_block_ms(ms : Int64) -> Unit {
-  let deadline = @async.now() + ms
-  while @async.now() < deadline {
-    ()
-  }
-}
-
-///|
 async fn drain_port_refuses(port : Int32) -> Bool {
   try {
     @async.with_timeout(2000, () => {
