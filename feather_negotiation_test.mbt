@@ -223,6 +223,71 @@ test "format fallback can set custom status and headers" {
 }
 
 ///|
+test "format fallback can set cookies" {
+  let ctx = accept_ctx("application/xml")
+  ctx.format(
+    [("application/json", fn(ctx) { ctx.text(200, "json") })],
+    fallback=fn(ctx) {
+      ctx.set_cookie("fallback", "yes", path="/", http_only=true)
+      ctx.text(200, "fallback with cookie")
+    },
+  )
+  assert_eq(ctx.response.status, 200)
+  assert_eq(ctx.response.body, "fallback with cookie")
+  assert_eq(ctx.response_header("Vary"), "Accept")
+  let cookie = ctx.response_header("Set-Cookie")
+  assert_true(cookie != "")
+  assert_true(cookie.contains("fallback=yes"))
+  assert_true(cookie.contains("HttpOnly"))
+}
+
+///|
+test "format handler cookies are included when handler runs" {
+  let ctx = accept_ctx("text/html")
+  ctx.format(
+    [
+      ("text/html", fn(ctx) {
+        ctx.set_cookie("handler", "html", path="/")
+        ctx.html(200, "<html></html>")
+      }),
+    ],
+    fallback=fn(ctx) {
+      ctx.set_cookie("fallback", "yes", path="/")
+      ctx.text(200, "fallback")
+    },
+  )
+  assert_eq(ctx.response.status, 200)
+  assert_eq(ctx.response.body, "<html></html>")
+  let cookie = ctx.response_header("Set-Cookie")
+  assert_true(cookie != "")
+  assert_true(cookie.contains("handler=html"))
+  assert_false(cookie.contains("fallback=yes"))
+}
+
+///|
+test "format fallback cookies are included when fallback runs" {
+  let ctx = accept_ctx("application/xml")
+  ctx.format(
+    [
+      ("text/html", fn(ctx) {
+        ctx.set_cookie("handler", "html", path="/")
+        ctx.html(200, "<html></html>")
+      }),
+    ],
+    fallback=fn(ctx) {
+      ctx.set_cookie("fallback", "yes", path="/")
+      ctx.text(200, "fallback")
+    },
+  )
+  assert_eq(ctx.response.status, 200)
+  assert_eq(ctx.response.body, "fallback")
+  let cookie = ctx.response_header("Set-Cookie")
+  assert_true(cookie != "")
+  assert_true(cookie.contains("fallback=yes"))
+  assert_false(cookie.contains("handler=html"))
+}
+
+///|
 test "format does not duplicate an Accept entry in Vary" {
   let ctx = accept_ctx("application/json")
   ctx.format([
