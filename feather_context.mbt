@@ -765,8 +765,7 @@ pub fn Context::redirect(
 ) -> Unit {
   self.file = None
   self.response.status = status
-  clear_replaced_body_headers(self.response.headers)
-  clear_replaced_representation_headers(self.response.headers)
+  clear_replaced_headers(self.response.headers)
   // A redirect has no body, so a representation type prepared for an earlier
   // response must not leak into it.
   ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
@@ -786,8 +785,7 @@ pub fn Context::no_content(self : Context) -> Unit {
   self.response.body = ""
   self.response.data = None
   ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
-  clear_replaced_body_headers(self.response.headers)
-  clear_replaced_representation_headers(self.response.headers)
+  clear_replaced_headers(self.response.headers)
 }
 
 ///|

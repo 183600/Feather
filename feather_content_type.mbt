@@ -284,8 +284,7 @@ pub fn middleware_allowed_content_types(
           }
         }
       }
-      clear_replaced_body_headers(ctx.response.headers)
-      clear_replaced_representation_headers(ctx.response.headers)
+      clear_replaced_headers(ctx.response.headers)
       ctx.text(415, "415 Unsupported Media Type")
     }
   }

@@ -184,8 +184,7 @@ pub fn middleware_csrf(
         csrf_constant_time_equal(provided, expected.view()) {
         next(ctx)
       } else {
-        clear_replaced_body_headers(ctx.response.headers)
-        clear_replaced_representation_headers(ctx.response.headers)
+        clear_replaced_headers(ctx.response.headers)
         ctx.text(403, "403 Forbidden")
       }
     }
@@ -310,8 +309,7 @@ pub fn middleware_csrf_cookie(
         csrf_constant_time_equal(provided, token.view()) {
         next(ctx)
       } else {
-        clear_replaced_body_headers(ctx.response.headers)
-        clear_replaced_representation_headers(ctx.response.headers)
+        clear_replaced_headers(ctx.response.headers)
         ctx.text(403, "403 Forbidden")
       }
     }

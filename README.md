@@ -123,6 +123,10 @@ WebSocket, SSE, and streaming lives in
 ./moon run examples/hello --target native
 ```
 
+Additional examples demonstrate sessions, flash messages, signed cookies
+([examples/session_demo](examples/session_demo)) and server-sent events with
+rate limiting ([examples/sse_stream](examples/sse_stream)).
+
 ## Requests and context
 
 Query, form and route values are available through both single-value and

@@ -107,6 +107,24 @@ pub fn apply_middleware(
 }
 
 ///|
+/// Clear all route-related state from a context, including the registered
+/// pattern, method, name, and any captured parameters.
+fn clear_route_state(ctx : Context) -> Unit {
+  ignore(ctx.state.remove(ROUTE_PATTERN_STATE_KEY))
+  ignore(ctx.state.remove(ROUTE_METHOD_STATE_KEY))
+  ignore(ctx.state.remove(ROUTE_NAME_STATE_KEY))
+  let stale_params : Array[String] = []
+  for key, _ in ctx.state {
+    if key.has_prefix(PARAM_PREFIX) {
+      stale_params.push(key)
+    }
+  }
+  for key in stale_params {
+    ignore(ctx.state.remove(key))
+  }
+}
+
+///|
 /// Every method `App::all` / `RouteGroup::all` / `Feather::all` registers.
 /// `CONNECT` and `TRACE` are part of HTTP/1.1 just like the usual verbs, so an
 /// "all methods" route must cover them too.
@@ -1809,18 +1827,7 @@ fn Router::dispatch_with_synthesized(
   // Parameter bindings use the reserved `param:` state namespace and must be
   // cleared too: otherwise a route for another method or pattern could still
   // read a parameter captured by the previous dispatch.
-  ignore(ctx.state.remove(ROUTE_PATTERN_STATE_KEY))
-  ignore(ctx.state.remove(ROUTE_METHOD_STATE_KEY))
-  ignore(ctx.state.remove(ROUTE_NAME_STATE_KEY))
-  let stale_params : Array[String] = []
-  for key, _ in ctx.state {
-    if key.has_prefix(PARAM_PREFIX) {
-      stale_params.push(key)
-    }
-  }
-  for key in stale_params {
-    ignore(ctx.state.remove(key))
-  }
+  clear_route_state(ctx)
   // The asterisk-form names the server, not a path. Answer it here so a
   // catch-all or parameter route cannot shadow the server-wide reply.
   if meth == "OPTIONS" && clean_path == "*" {
@@ -1888,5 +1895,13 @@ fn clear_replaced_representation_headers(
   ignore(remove_header_ignore_case(headers, "ETag"))
   ignore(remove_header_ignore_case(headers, "Last-Modified"))
   ignore(remove_header_ignore_case(headers, "Content-Disposition"))
+}
+
+///|
+/// Clear both body and representation headers when a response is being
+/// completely replaced (error, redirect, or empty body).
+fn clear_replaced_headers(headers : Map[String, String]) -> Unit {
+  clear_replaced_body_headers(headers)
+  clear_replaced_representation_headers(headers)
 }
 

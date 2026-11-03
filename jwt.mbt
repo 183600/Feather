@@ -448,8 +448,7 @@ pub fn middleware_jwt_hs256(
           ignore(ctx.json_state.remove(JWT_CLAIMS_STATE_KEY))
           ctx.file = None
           ctx.response.status = 401
-          clear_replaced_body_headers(ctx.response.headers)
-          clear_replaced_representation_headers(ctx.response.headers)
+          clear_replaced_headers(ctx.response.headers)
           set_header_ignore_case(
             ctx.response.headers,
             "WWW-Authenticate",

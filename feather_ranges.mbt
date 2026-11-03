@@ -197,8 +197,7 @@ fn apply_buffered_range_core(
       set_header_ignore_case(response.headers, "Accept-Ranges", "bytes")
     ByteRangeInvalid => {
       response.status = 416
-      clear_replaced_body_headers(response.headers)
-      clear_replaced_representation_headers(response.headers)
+      clear_replaced_headers(response.headers)
       set_header_ignore_case(
         response.headers,
         "Content-Type",

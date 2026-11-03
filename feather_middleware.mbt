@@ -36,8 +36,7 @@ pub fn middleware_body_limit(max_bytes : Int32) -> Middleware {
   fn(next) {
     fn(ctx) raise {
       if ctx.body_bytes().length() > limit {
-        clear_replaced_body_headers(ctx.response.headers)
-        clear_replaced_representation_headers(ctx.response.headers)
+        clear_replaced_headers(ctx.response.headers)
         ctx.text(413, "413 Payload Too Large")
       } else {
         next(ctx)
@@ -1483,8 +1482,7 @@ fn bearer_auth_middleware(
       } else {
         ctx.file = None
         ctx.response.status = 401
-        clear_replaced_body_headers(ctx.response.headers)
-        clear_replaced_representation_headers(ctx.response.headers)
+        clear_replaced_headers(ctx.response.headers)
         set_header_ignore_case(
           ctx.response.headers,
           "WWW-Authenticate",
@@ -1519,8 +1517,7 @@ fn basic_auth_middleware(
       } else {
         ctx.file = None
         ctx.response.status = 401
-        clear_replaced_body_headers(ctx.response.headers)
-        clear_replaced_representation_headers(ctx.response.headers)
+        clear_replaced_headers(ctx.response.headers)
         set_header_ignore_case(
           ctx.response.headers,
           "WWW-Authenticate",

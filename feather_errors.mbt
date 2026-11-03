@@ -46,8 +46,7 @@ pub fn problem_response(
 ) -> Unit {
   ctx.file = None
   ctx.response.status = status
-  clear_replaced_body_headers(ctx.response.headers)
-  clear_replaced_representation_headers(ctx.response.headers)
+  clear_replaced_headers(ctx.response.headers)
   set_header_ignore_case(
     ctx.response.headers,
     "Content-Type",
@@ -71,8 +70,7 @@ fn negotiated_error_body(
   plain_body : String,
   plain_detail : String,
 ) -> Unit {
-  clear_replaced_body_headers(ctx.response.headers)
-  clear_replaced_representation_headers(ctx.response.headers)
+  clear_replaced_headers(ctx.response.headers)
   // The rendering below is chosen from `Accept`, so the response must not be
   // reused for a request with different preferences.
   ctx.vary("Accept")
@@ -129,8 +127,7 @@ pub fn method_not_allowed(ctx : Context, allowed : Array[String]) -> Unit {
 fn respond_options_with_allow(ctx : Context, allow : String) -> Unit {
   ctx.file = None
   ctx.response.status = 204
-  clear_replaced_body_headers(ctx.response.headers)
-  clear_replaced_representation_headers(ctx.response.headers)
+  clear_replaced_headers(ctx.response.headers)
   // A 204 carries no representation, so a content type prepared for an
   // earlier response must not leak into the automatic OPTIONS answer.
   ignore(remove_header_ignore_case(ctx.response.headers, "Content-Type"))
@@ -255,8 +252,7 @@ fn cached_problem_body(status : Int32, message : String) -> String {
 pub fn error_response(ctx : Context, status : Int32, message : String) -> Unit {
   ctx.file = None
   ctx.response.status = status
-  clear_replaced_body_headers(ctx.response.headers)
-  clear_replaced_representation_headers(ctx.response.headers)
+  clear_replaced_headers(ctx.response.headers)
   ctx.vary("Accept")
   if ctx.wants_problem_details() {
     set_header_ignore_case(
@@ -323,8 +319,7 @@ pub fn error_response_with_payload(
       }
   }
   ctx.response.status = status
-  clear_replaced_body_headers(ctx.response.headers)
-  clear_replaced_representation_headers(ctx.response.headers)
+  clear_replaced_headers(ctx.response.headers)
   if problem {
     set_header_ignore_case(
       ctx.response.headers,
