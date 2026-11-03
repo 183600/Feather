@@ -527,26 +527,30 @@ async fn handle_request(
       _ => ()
     }
 } else {
-     let (response, file, auto_etag, compress, compress_min_size) =
-       build_response(app, request, body, conn, body_limit) catch {
-         PayloadTooLarge => {
-           send_error_and_close(conn, 413, "413 Payload Too Large", head)
-           return
-         }
-         MalformedRequestBody => {
-           send_simple(conn, 400, "400 Bad Request", head)
-           return
-         }
-         UnsupportedRequestBodyCoding => {
-           send_error_and_close(conn, 415, "415 Unsupported Media Type", head)
-           return
-         }
-         err => {
-           ignore(err)
-           send_error_and_close(conn, 500, "500 Internal Server Error", head)
-           return
-         }
-       }
+      let (response, file, auto_etag, compress, compress_min_size) =
+        build_response(app, request, body, conn, body_limit) catch {
+          PayloadTooLarge => {
+            send_error_and_close(conn, 413, "413 Payload Too Large", head)
+            conn.skip_request_body() catch { _ => () }
+            return
+          }
+          MalformedRequestBody => {
+            send_simple(conn, 400, "400 Bad Request", head)
+            conn.skip_request_body() catch { _ => () }
+            return
+          }
+          UnsupportedRequestBodyCoding => {
+            send_error_and_close(conn, 415, "415 Unsupported Media Type", head)
+            conn.skip_request_body() catch { _ => () }
+            return
+          }
+          err => {
+            ignore(err)
+            send_error_and_close(conn, 500, "500 Internal Server Error", head)
+            conn.skip_request_body() catch { _ => () }
+            return
+          }
+        }
      try {
        match file {
          Some(file) =>

@@ -127,3 +127,26 @@ async test "gzip route body limit applies to the decoded representation" {
     assert_true(head.has_prefix("HTTP/1.1 200"), msg=head)
   })
 }
+
+///|
+async test "body is skipped after 413 with timeout 0 for keep-alive" {
+  let app = @feather.App::new()
+    .request_timeout(0)
+    .post("/echo", fn(ctx) { ctx.text(200, ctx.request.body) })
+    .route_body_limit("POST", "/echo", 4)
+  with_raw_server(app, conn => {
+    // First request exceeds body limit, should get 413
+    conn.write(
+      @utf8.encode(
+        "POST /echo HTTP/1.1\r\nHost: test\r\nContent-Length: 6\r\nConnection: close\r\n\r\nhello!",
+      ),
+    )
+    let head1 = @async.with_timeout(2000, () => read_http_head(conn)) catch {
+      _ => ""
+    }
+    assert_true(head1.has_prefix("HTTP/1.1 413"), msg=head1)
+    // Verify connection closed after 413, indicating body was consumed and error handled
+    let peek = @async.with_timeout(200, () => conn.read_some()) catch { _ => None }
+    assert_eq(peek, None)
+  })
+}
