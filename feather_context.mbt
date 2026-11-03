@@ -825,6 +825,18 @@ pub fn Context::query_string(self : Context) -> String {
 }
 
 ///|
+/// The fragment component of the request target, without the leading `#`.
+///
+/// Handlers can use this to read a fragment that was carried in an offline or
+/// hand-built request. Returns `""` when the target has no fragment.
+pub fn Context::fragment(self : Context) -> String {
+  match self.request.path.find("#") {
+    Some(index) => self.request.path[index + 1:].to_owned()
+    None => ""
+  }
+}
+
+///|
 /// The registered pattern of the route that matched the request, with `:param`
 /// and `*wildcard` segments kept in place (for example `/users/:id`). Returns
 /// `""` when no ordinary route matched, including fallback and static-file

@@ -57,3 +57,17 @@ async test "server target accessors keep the query spelling" {
     assert_eq(client.read_all().text(), "/echo|q=a+b&q=c%2Fd&flag")
   })
 }
+
+///|
+test "fragment accessor returns the raw fragment" {
+  assert_eq(target_ctx("/users/42?tab=posts#bio").fragment(), "bio")
+  assert_eq(target_ctx("/path#").fragment(), "")
+  assert_eq(target_ctx("/path#section-1").fragment(), "section-1")
+  assert_eq(target_ctx("/path?x=1#frag?sub").fragment(), "frag?sub")
+  assert_eq(target_ctx("/path#frag#second").fragment(), "frag#second")
+  assert_eq(target_ctx("/path?x=1").fragment(), "")
+  assert_eq(target_ctx("/path").fragment(), "")
+  assert_eq(target_ctx("*").fragment(), "")
+  // absolute-form target keeps fragment after normalization
+  assert_eq(target_ctx("http://example.com/a/b?x=1#frag").fragment(), "frag")
+}
