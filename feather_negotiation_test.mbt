@@ -176,6 +176,53 @@ test "format runs the fallback handler when no offer is acceptable" {
 }
 
 ///|
+test "format runs the fallback handler when no offer is acceptable" {
+  let ctx = accept_ctx("application/xml")
+  ctx.format([("application/json", fn(ctx) { ctx.text(200, "json") })], fallback=fn(
+    ctx,
+  ) {
+    ctx.text(200, "fallback")
+  })
+  assert_eq(ctx.response.status, 200)
+  assert_eq(ctx.response.body, "fallback")
+  assert_eq(ctx.response_header("Vary"), "Accept")
+}
+
+///|
+test "format fallback can return a problem details response" {
+  let ctx = accept_ctx("application/xml")
+  ctx.format(
+    [("application/json", fn(ctx) { ctx.text(200, "json") })],
+    fallback=fn(ctx) {
+      ctx.problem(406, "No acceptable representation", type_name="about:blank")
+    },
+  )
+  assert_eq(ctx.response.status, 406)
+  assert_true(ctx.response.body.contains("No acceptable representation"))
+  assert_eq(
+    ctx.response_header("Content-Type"),
+    "application/problem+json; charset=utf-8",
+  )
+  assert_eq(ctx.response_header("Vary"), "Accept")
+}
+
+///|
+test "format fallback can set custom status and headers" {
+  let ctx = accept_ctx("application/xml")
+  ctx.format(
+    [("application/json", fn(ctx) { ctx.text(200, "json") })],
+    fallback=fn(ctx) {
+      ctx.set_header("X-Custom", "fallback-value")
+      ctx.text(400, "custom fallback")
+    },
+  )
+  assert_eq(ctx.response.status, 400)
+  assert_eq(ctx.response.body, "custom fallback")
+  assert_eq(ctx.response_header("X-Custom"), "fallback-value")
+  assert_eq(ctx.response_header("Vary"), "Accept")
+}
+
+///|
 test "format does not duplicate an Accept entry in Vary" {
   let ctx = accept_ctx("application/json")
   ctx.format([
