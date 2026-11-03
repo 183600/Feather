@@ -96,6 +96,11 @@ import {
 ## Quick start
 
 ```moonbit
+import {
+  "183600/feather",
+  "moonbitlang/async/socket",
+}
+
 async fn main {
   let app = @feather.App::new()
     .use(@feather.middleware_recover())
