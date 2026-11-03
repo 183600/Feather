@@ -3,7 +3,23 @@ pub(all) enum ByteRange {
   ByteRangeFull
   ByteRangeSpec(Int64, Int64)
   ByteRangeInvalid
+} derive(Debug)
+
+///|
+pub impl Show for ByteRange with fn to_string(self) {
+  match self {
+    ByteRangeFull => "ByteRangeFull"
+    ByteRangeSpec(start, end) =>
+      "ByteRangeSpec(\{start}, \{end})"
+    ByteRangeInvalid => "ByteRangeInvalid"
+  }
 }
+
+///|
+pub extend ByteRange with Show::{output, to_string}
+
+///|
+pub extend ByteRange with Debug::{to_repr}
 
 ///|
 fn etag_header_matches(value : StringView, etag : String) -> Bool {

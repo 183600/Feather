@@ -215,7 +215,10 @@ middleware, so logs and metrics can group requests by named route.
 `app.routes()` lists ordinary `(method, path)` routes, including routes
 contributed by mounted applications. `app.endpoints()` returns those routes
 plus WebSocket, SSE, streaming and static registrations, each tagged with an
-`EndpointKind`, for startup logging or generated API documentation.
+`EndpointKind`, for startup logging or generated API documentation. Endpoints
+(and the other public value types, such as `Request`, `Response`, `Config`,
+`Jwt` and `ByteRange`) implement `Show` and `Debug`, so they can be printed
+directly.
 
 ## Middleware
 

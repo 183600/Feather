@@ -431,7 +431,24 @@ pub(all) enum EndpointKind {
   EndpointStream
   /// A static file mount registered with `static_files`.
   EndpointStatic
+} derive(Debug)
+
+///|
+pub impl Show for EndpointKind with fn to_string(self) {
+  match self {
+    EndpointRoute => "EndpointRoute"
+    EndpointWebSocket => "EndpointWebSocket"
+    EndpointSse => "EndpointSse"
+    EndpointStream => "EndpointStream"
+    EndpointStatic => "EndpointStatic"
+  }
 }
+
+///|
+pub extend EndpointKind with Show::{output, to_string}
+
+///|
+pub extend EndpointKind with Debug::{to_repr}
 
 ///|
 /// One registered endpoint, as reported by `App::endpoints`.
@@ -443,7 +460,18 @@ pub(all) struct Endpoint {
   pub method : String
   pub path : String
   pub kind : EndpointKind
+} derive(Debug)
+
+///|
+pub impl Show for Endpoint with fn to_string(self) {
+  "@feather.Endpoint(\{self.method}, \{self.path}, \{self.kind})"
 }
+
+///|
+pub extend Endpoint with Show::{output, to_string}
+
+///|
+pub extend Endpoint with Debug::{to_repr}
 
 ///|
 /// Ordering used to keep endpoints with the same method and path deterministic.

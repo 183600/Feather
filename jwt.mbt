@@ -25,7 +25,18 @@ pub(all) suberror JwtError {
 pub(all) struct Jwt {
   header : Json
   claims : Json
+} derive(Debug)
+
+///|
+pub impl Show for Jwt with fn to_string(self) {
+  "@feather.Jwt(header=\{self.header.stringify()}, claims=\{self.claims.stringify()})"
 }
+
+///|
+pub extend Jwt with Show::{output, to_string}
+
+///|
+pub extend Jwt with Debug::{to_repr}
 
 ///|
 /// The protected header of a verified token.

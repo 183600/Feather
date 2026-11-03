@@ -278,13 +278,21 @@ pub(all) enum ByteRange {
   ByteRangeFull
   ByteRangeSpec(Int64, Int64)
   ByteRangeInvalid
-}
+} derive(@debug.Debug)
+pub fn ByteRange::output(Self, &Logger) -> Unit
+pub fn ByteRange::to_repr(Self) -> @debug.Repr
+pub fn ByteRange::to_string(Self) -> String
+pub impl Show for ByteRange
 
 pub(all) struct Config {
   host : String
   port : Int32
   timeout : Int32
-}
+} derive(@debug.Debug)
+pub fn Config::output(Self, &Logger) -> Unit
+pub fn Config::to_repr(Self) -> @debug.Repr
+pub fn Config::to_string(Self) -> String
+pub impl Show for Config
 
 pub(all) struct Context {
   request : Request
@@ -489,7 +497,11 @@ pub(all) struct Endpoint {
   method : String
   path : String
   kind : EndpointKind
-}
+} derive(@debug.Debug)
+pub fn Endpoint::output(Self, &Logger) -> Unit
+pub fn Endpoint::to_repr(Self) -> @debug.Repr
+pub fn Endpoint::to_string(Self) -> String
+pub impl Show for Endpoint
 
 pub(all) enum EndpointKind {
   EndpointRoute
@@ -497,7 +509,11 @@ pub(all) enum EndpointKind {
   EndpointSse
   EndpointStream
   EndpointStatic
-}
+} derive(@debug.Debug)
+pub fn EndpointKind::output(Self, &Logger) -> Unit
+pub fn EndpointKind::to_repr(Self) -> @debug.Repr
+pub fn EndpointKind::to_string(Self) -> String
+pub impl Show for EndpointKind
 
 pub(all) struct Feather {
   config : Config
@@ -577,13 +593,17 @@ pub(all) struct FileResponse {
 pub(all) struct Jwt {
   header : Json
   claims : Json
-}
+} derive(@debug.Debug)
 pub fn Jwt::claim(Self, String) -> Json?
 pub fn Jwt::claims(Self) -> Json
 pub fn Jwt::header(Self) -> Json
 pub fn Jwt::number_claim(Self, String) -> Double?
+pub fn Jwt::output(Self, &Logger) -> Unit
 pub fn Jwt::string_claim(Self, String) -> String?
 pub fn Jwt::subject(Self) -> String
+pub fn Jwt::to_repr(Self) -> @debug.Repr
+pub fn Jwt::to_string(Self) -> String
+pub impl Show for Jwt
 
 pub(all) struct MultipartPart {
   name : String
@@ -632,7 +652,11 @@ pub(all) struct Request {
   path : String
   headers : Map[String, String]
   body : String
-}
+} derive(@debug.Debug)
+pub fn Request::output(Self, &Logger) -> Unit
+pub fn Request::to_repr(Self) -> @debug.Repr
+pub fn Request::to_string(Self) -> String
+pub impl Show for Request
 
 pub(all) struct Response {
   mut status : Int32
@@ -641,6 +665,11 @@ pub(all) struct Response {
   mut data : Bytes?
   cookies : Array[@http.Cookie]
 }
+pub fn Response::output(Self, &Logger) -> Unit
+pub fn Response::to_repr(Self) -> @debug.Repr
+pub fn Response::to_string(Self) -> String
+pub impl Show for Response
+pub impl @debug.Debug for Response
 
 pub(all) struct Route {
   path : String

@@ -43,7 +43,18 @@ pub(all) struct Config {
   host : String
   port : Int32
   timeout : Int32
+} derive(Debug)
+
+///|
+pub impl Show for Config with fn to_string(self) {
+  "@feather.Config(\{self.host}, \{self.port}, \{self.timeout})"
 }
+
+///|
+pub extend Config with Show::{output, to_string}
+
+///|
+pub extend Config with Debug::{to_repr}
 
 ///|
 pub(all) struct Request {
@@ -51,7 +62,18 @@ pub(all) struct Request {
   path : String
   headers : Map[String, String]
   body : String
+} derive(Debug)
+
+///|
+pub impl Show for Request with fn to_string(self) {
+  "@feather.Request(\{self.method}, \{self.path}, headers=[\{response_headers_text(self.headers)}], body=\{self.body})"
 }
+
+///|
+pub extend Request with Show::{output, to_string}
+
+///|
+pub extend Request with Debug::{to_repr}
 
 ///|
 pub(all) struct FileResponse {
@@ -67,6 +89,84 @@ pub(all) struct Response {
   mut data : Bytes?
   cookies : Array[@http.Cookie]
 }
+
+///|
+/// Render the queued response cookies as `name=value` pairs.
+///
+/// `@http.Cookie` has no `Show` implementation, so the cookie list is rendered
+/// by hand; only the name and the value are shown, which is what a log line
+/// needs.
+fn response_cookies_text(cookies : Array[@http.Cookie]) -> String {
+  let builder = StringBuilder(size_hint=cookies.length() * 16)
+  let mut written = 0
+  for cookie in cookies {
+    if written > 0 {
+      builder.write_string("; ")
+    }
+    builder.write_string(cookie.name)
+    builder.write_char('=')
+    builder.write_string(cookie.value)
+    written = written + 1
+  }
+  builder.to_string()
+}
+
+///|
+/// Render the response headers as `name: value` pairs.
+fn response_headers_text(headers : Map[String, String]) -> String {
+  let builder = StringBuilder(size_hint=headers.length() * 24)
+  let mut written = 0
+  for name, value in headers {
+    if written > 0 {
+      builder.write_string(", ")
+    }
+    builder.write_string(name)
+    builder.write_string(": ")
+    builder.write_string(value)
+    written = written + 1
+  }
+  builder.to_string()
+}
+
+///|
+/// Render the response headers as a `Repr` record, so `Debug` output keeps the
+/// same shape as the derived `Debug` output of the other public types.
+fn response_headers_repr(headers : Map[String, String]) -> Repr {
+  let fields : Map[String, Repr] = Map([], capacity=headers.length())
+  for name, value in headers {
+    fields.set(name, Repr::string(value))
+  }
+  Repr::record(fields)
+}
+
+///|
+pub impl Show for Response with fn to_string(self) {
+  let data_length = match self.data {
+    Some(data) => data.length().to_string()
+    None => "none"
+  }
+  "@feather.Response(\{self.status}, headers=[\{response_headers_text(self.headers)}], body=\{self.body}, data=\{data_length}, cookies=[\{response_cookies_text(self.cookies)}])"
+}
+
+///|
+pub impl Debug for Response with fn to_repr(self) {
+  Repr::record({
+    "status": Repr::integer(self.status.to_string()),
+    "headers": response_headers_repr(self.headers),
+    "body": Repr::string(self.body),
+    "data": Repr::integer(match self.data {
+      Some(data) => data.length().to_string()
+      None => "none"
+    }),
+    "cookies": Repr::string(response_cookies_text(self.cookies)),
+  })
+}
+
+///|
+pub extend Response with Show::{output, to_string}
+
+///|
+pub extend Response with Debug::{to_repr}
 
 ///|
 pub(all) struct Context {
