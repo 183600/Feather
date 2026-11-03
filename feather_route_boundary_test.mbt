@@ -227,3 +227,16 @@ test "wildcard captures empty remainder at root with param pattern" {
   })
   assert_eq(response.status, 404)
 }
+
+///|
+test "multiple slashes and trailing slash normalise with a query" {
+  let app = @feather.App::new().get("/api/users", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "GET",
+    path: "/api//users/?x=1",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "ok")
+}
