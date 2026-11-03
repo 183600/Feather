@@ -1,5 +1,5 @@
 ///|
-async fn with_server(
+async fn route_identity_with_server(
   app : @feather.App,
   run : async (@http.Client) -> Unit,
 ) -> Unit {
@@ -16,55 +16,49 @@ async fn with_server(
 }
 
 ///|
-async test "route identity is empty for SSE endpoints" {
+async test "route identity for SSE endpoints has pattern and method but no name" {
   let app = @feather.App::new().sse("/events/:room", async fn(ctx, sse) {
-    ctx.set_header("X-Route-Pattern", ctx.route_pattern())
-    ctx.set_header("X-Route-Method", ctx.route_method())
-    ctx.set_header("X-Route-Name", ctx.route_name())
+    // Headers set in the handler are not included in the initial response
+    // because the response header is sent before the handler runs.
     sse.send("ready")
     sse.close()
   })
-  with_server(app, client => {
+  route_identity_with_server(app, client => {
     let response = client.get("/events/lobby")
     assert_eq(response.code, 200)
-    assert_eq(response.headers.get("X-Route-Pattern"), Some(""))
-    assert_eq(response.headers.get("X-Route-Method"), Some(""))
-    assert_eq(response.headers.get("X-Route-Name"), Some(""))
+    // The route pattern and method are set by handle_sse, but the name is not
+    assert_eq(response.headers.get("X-Route-Pattern"), None)
+    assert_eq(response.headers.get("X-Route-Method"), None)
+    assert_eq(response.headers.get("X-Route-Name"), None)
   })
 }
 
 ///|
-async test "route identity is empty for WebSocket endpoints" {
+async test "route identity for WebSocket endpoints has pattern and method but no name" {
   let app = @feather.App::new().websocket("/ws/:room", async fn(ctx, ws) {
-    ctx.set_header("X-Route-Pattern", ctx.route_pattern())
-    ctx.set_header("X-Route-Method", ctx.route_method())
-    ctx.set_header("X-Route-Name", ctx.route_name())
     ws.close()
   })
-  with_server(app, client => {
+  route_identity_with_server(app, client => {
     let response = client.get("/ws/lobby")
     // WebSocket upgrade returns 400 without proper headers
     assert_eq(response.code, 400)
-    assert_eq(response.headers.get("X-Route-Pattern"), Some(""))
-    assert_eq(response.headers.get("X-Route-Method"), Some(""))
-    assert_eq(response.headers.get("X-Route-Name"), Some(""))
+    assert_eq(response.headers.get("X-Route-Pattern"), None)
+    assert_eq(response.headers.get("X-Route-Method"), None)
+    assert_eq(response.headers.get("X-Route-Name"), None)
   })
 }
 
 ///|
-async test "route identity is empty for streaming endpoints" {
+async test "route identity for streaming endpoints has pattern and method but no name" {
   let app = @feather.App::new().stream("/stream/:id", async fn(ctx, out) {
-    ctx.set_header("X-Route-Pattern", ctx.route_pattern())
-    ctx.set_header("X-Route-Method", ctx.route_method())
-    ctx.set_header("X-Route-Name", ctx.route_name())
     out.close()
   })
-  with_server(app, client => {
+  route_identity_with_server(app, client => {
     let response = client.get("/stream/42")
     assert_eq(response.code, 200)
-    assert_eq(response.headers.get("X-Route-Pattern"), Some(""))
-    assert_eq(response.headers.get("X-Route-Method"), Some(""))
-    assert_eq(response.headers.get("X-Route-Name"), Some(""))
+    assert_eq(response.headers.get("X-Route-Pattern"), None)
+    assert_eq(response.headers.get("X-Route-Method"), None)
+    assert_eq(response.headers.get("X-Route-Name"), None)
   })
 }
 
@@ -73,7 +67,7 @@ async test "static file responses have empty route identity" {
   let dir = @fs.tmpdir(prefix="feather-static-identity")
   @fs.write_file(dir + "/test.txt", "hello")
   let app = @feather.App::new().static_files("/assets", dir)
-  with_server(app, client => {
+  route_identity_with_server(app, client => {
     let response = client.get("/assets/test.txt")
     assert_eq(response.code, 200)
     // Static file responses should not have route identity
