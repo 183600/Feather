@@ -390,6 +390,12 @@ pub fn Context::queries(self : Context) -> Map[String, String] {
 }
 
 ///|
+/// Alias for `Context::queries`, matching the `form_map` naming convention.
+pub fn Context::query_map(self : Context) -> Map[String, String] {
+  self.queries()
+}
+
+///|
 /// All query parameters, keyed by name, with every repeated value preserved in
 /// appearance order. Unlike `Context::queries`, which keeps only the last value
 /// of a repeated parameter, this lets a caller enumerate the complete query

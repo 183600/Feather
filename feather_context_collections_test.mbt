@@ -52,6 +52,24 @@ test "query all preserves repeated values and query order" {
 }
 
 ///|
+test "query_map alias returns the same map as queries" {
+  let ctx = query_context("a=1&b=hello+world&c=")
+  let qm = ctx.query_map()
+  let qs = ctx.queries()
+  assert_eq(qm.get("a"), qs.get("a"))
+  assert_eq(qm.get("b"), qs.get("b"))
+  assert_eq(qm.get("c"), qs.get("c"))
+  assert_eq(qm.length(), qs.length())
+  let empty = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(empty.query_map().length(), 0)
+}
+
+///|
 test "query all returns copies that cannot corrupt the parse cache" {
   let ctx = query_context("tag=a&tag=b")
   let first = ctx.query_all()
