@@ -275,8 +275,9 @@ before the handler runs. Handlers read the verified claims with
 `Context::jwt_claims`, `Context::jwt_claim`, or `Context::jwt_subject`; the
 protected header (for example its `kid`) is available through
 `Context::jwt_header` and `Context::jwt_header_parameter`, while outer logging
-middleware can read the stable failure category from `Context::jwt_error`
-after the middleware returns:
+middleware can read the stable failure category from `Context::jwt_error` after
+the middleware returns (for example `"missing"` for a request without a bearer
+token or `"expired"` for one whose token is no longer valid):
 
 ```moonbit
 let app = @feather.App::new()

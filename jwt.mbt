@@ -104,6 +104,10 @@ const JWT_CLAIMS_STATE_KEY : String = "__feather_jwt_claims"
 const JWT_ERROR_STATE_KEY : String = "__feather_jwt_error"
 
 ///|
+/// Failure category recorded when the request carries no bearer token at all.
+const JWT_ERROR_MISSING : String = "missing"
+
+///|
 /// Decode one compact-serialization segment as canonical, unpadded base64url
 /// and then strict UTF-8 JSON.
 ///
@@ -369,7 +373,7 @@ pub fn Context::jwt_subject(self : Context) -> String {
 
 ///|
 /// The reason a request was refused by `middleware_jwt_hs256`, expressed as a
-/// stable category such as `"expired"`, `"invalid_signature"` or
+/// stable category such as `"missing"`, `"expired"`, `"invalid_signature"` or
 /// `"malformed"`. Returns `""` when verification succeeded or the middleware
 /// was not installed.
 ///
@@ -445,7 +449,13 @@ pub fn middleware_jwt_hs256(
               None
             }
           }
-        None => None
+        None => {
+          // A request without a bearer token is refused like any other bad
+          // one, so the category is recorded as well: an outer logger can tell
+          // "no credentials" apart from "expired credentials".
+          ctx.state.set(JWT_ERROR_STATE_KEY, JWT_ERROR_MISSING)
+          None
+        }
       }
       match verified {
         Some(jwt) => {

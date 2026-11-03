@@ -326,6 +326,49 @@ test "jwt middleware records failure categories for logs" {
 }
 
 ///|
+test "jwt middleware records a missing token category for logs" {
+  let seen = Ref("")
+  let app = App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        next(ctx)
+        seen.val = ctx.jwt_error()
+      }
+    })
+    .use(middleware_jwt_hs256("secret"))
+    .get("/me", fn(ctx) { ctx.text(200, ctx.jwt_subject()) })
+  let response = app.respond({
+    method: "GET",
+    path: "/me",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 401)
+  assert_eq(seen.val, "missing")
+  assert_eq(response.body, "401 Unauthorized")
+  assert_false(response.body.contains("missing"))
+}
+
+///|
+test "jwt middleware clears the failure category after a successful request" {
+  let seen = Ref("")
+  let app = App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        next(ctx)
+        seen.val = ctx.jwt_error()
+      }
+    })
+    .use(middleware_jwt_hs256("secret"))
+    .get("/me", fn(ctx) { ctx.text(200, ctx.jwt_subject()) })
+  let now = @async.now() / 1000L
+  let valid = jwt_token(jwt_claims(now + 60L, "alice"), "secret")
+  let response = app.respond(jwt_request(valid))
+  assert_eq(response.status, 200)
+  assert_eq(seen.val, "")
+}
+
+///|
 test "jwt middleware uses a custom realm and rejects expired tokens" {
   let now = @async.now() / 1000L
   let app = App::new()
