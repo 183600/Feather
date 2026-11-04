@@ -30,6 +30,28 @@ pub fn Context::has_header(self : Context, key : String) -> Bool {
 }
 
 ///|
+/// All request headers as a map with canonical (lowercased) names.
+/// Returns a copy so callers can mutate it freely.
+pub fn Context::request_headers(self : Context) -> Map[String, String] {
+  let result : Map[String, String] = Map([], capacity=self.request.headers.length())
+  for key, value in self.request.headers {
+    result.set(key.to_lower(), value)
+  }
+  result
+}
+
+///|
+/// All response headers as a map with canonical (lowercased) names.
+/// Returns a copy so callers can mutate it freely.
+pub fn Context::response_headers(self : Context) -> Map[String, String] {
+  let result : Map[String, String] = Map([], capacity=self.response.headers.length())
+  for key, value in self.response.headers {
+    result.set(key.to_lower(), value)
+  }
+  result
+}
+
+///|
 /// Parsed host names keyed by the trimmed `Host` header value.
 let host_cache : Map[StringView, String] = Map([])
 

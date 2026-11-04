@@ -110,3 +110,83 @@ test "content_length and content_length64 parse the Content-Length header" {
   })
   assert_eq(int64_overflow.content_length64(), None)
 }
+
+///|
+test "Context::request_headers returns all request headers with canonical names" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([
+      ("Content-Type", "application/json"),
+      ("X-Custom-Header", "value1"),
+      ("X-Another", "value2"),
+    ]),
+    body: "",
+  })
+  let headers = ctx.request_headers()
+  assert_eq(headers.get("content-type"), Some("application/json"))
+  assert_eq(headers.get("x-custom-header"), Some("value1"))
+  assert_eq(headers.get("x-another"), Some("value2"))
+  assert_eq(headers.length(), 3)
+  // Original map should be unchanged
+  assert_eq(ctx.header("Content-Type"), "application/json")
+}
+
+///|
+test "Context::request_headers returns empty map for no headers" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([]),
+    body: "",
+  })
+  let headers = ctx.request_headers()
+  assert_eq(headers.length(), 0)
+}
+
+///|
+test "Context::response_headers returns all response headers with canonical names" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([]),
+    body: "",
+  })
+  ctx.set_header("Content-Type", "text/html")
+  ctx.set_header("X-Response-Header", "response-value")
+  ctx.set_header("Cache-Control", "no-cache")
+  let headers = ctx.response_headers()
+  assert_eq(headers.get("content-type"), Some("text/html"))
+  assert_eq(headers.get("x-response-header"), Some("response-value"))
+  assert_eq(headers.get("cache-control"), Some("no-cache"))
+  assert_eq(headers.length(), 3)
+}
+
+///|
+test "Context::response_headers returns empty map when no response headers set" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([]),
+    body: "",
+  })
+  let headers = ctx.response_headers()
+  assert_eq(headers.length(), 0)
+}
+
+///|
+test "Context::request_headers and response_headers return copies" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([("X-Test", "value")]),
+    body: "",
+  })
+  let req_headers = ctx.request_headers()
+  let res_headers = ctx.response_headers()
+  // Mutating the copies should not affect the context
+  req_headers.set("x-test", "mutated")
+  res_headers.set("x-new", "new-value")
+  assert_eq(ctx.header("X-Test"), "value")
+  assert_eq(ctx.response_header("X-New"), "")
+}
