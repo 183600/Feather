@@ -1,4 +1,8 @@
 ///|
+/// Read a request header, matched case-insensitively. Returns `""` when the
+/// header is absent. When a hand-built header map carries the same name under
+/// several spellings, the first entry found wins; headers received from the
+/// network hold one value per name.
 pub fn Context::header(self : Context, key : String) -> String {
   match get_header_ignore_case(self.request.headers, key) {
     Some(value) => value

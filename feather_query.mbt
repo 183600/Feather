@@ -84,6 +84,9 @@ let last_parsed_urlencoded_map : Ref[Map[String, String]?] = Ref(None)
 let last_parsed_urlencoded_valid : Ref[Bool] = Ref(false)
 
 ///|
+/// Parse an `application/x-www-form-urlencoded` string into a map. Keys and
+/// values are percent-decoded and `+` becomes a space. A repeated key
+/// resolves to its last value; pairs without `=` contribute an empty value.
 pub fn parse_urlencoded(source : String) -> Map[String, String] {
   match last_parsed_urlencoded_source.val {
     Some(cached) =>
@@ -282,6 +285,11 @@ fn query_param(source : StringView, name : String) -> String {
 }
 
 ///|
+/// The value of query parameter `name`, or `""` when the query string does not
+/// carry it. A parameter repeated in the query string (`?a=1&a=2`) resolves to
+/// its last value, matching the urlencoded parser and `Context::form`; use
+/// `Context::query_values` when every occurrence is needed. Names containing
+/// `%` or `+` also match the raw key spelling.
 pub fn Context::query(self : Context, name : String) -> String {
   let path = self.request.path
   match path_query_index(path) {
@@ -379,8 +387,10 @@ pub fn Context::form_default(
 }
 
 ///|
-/// The parsed query string, keyed by name. The result is a fresh copy, so
-/// mutating it cannot disturb a later request that carries the same query.
+/// The parsed query string, keyed by name. A repeated parameter resolves to
+/// its last value; `Context::query_all` preserves every occurrence. The result
+/// is a fresh copy, so mutating it cannot disturb a later request that carries
+/// the same query.
 pub fn Context::queries(self : Context) -> Map[String, String] {
   let path = self.request.path
   match path_query_index(path) {
