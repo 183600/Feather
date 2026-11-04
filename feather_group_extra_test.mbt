@@ -282,3 +282,37 @@ test "nested group prefixes normalize like top-level groups" {
   assert_eq(response.status, 200)
   assert_eq(response.body, "pong")
 }
+
+///|
+test "RouteGroup::url_for generates URLs with the group prefix" {
+  let app = @feather.App::new()
+  let api = app.group("/api")
+  ignore(api.route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") }))
+  // RouteGroup::url_for should include the group prefix
+  assert_eq(api.url_for("user", params={ "id": "42" }), Some("/api/users/42"))
+  // App::url_for should also work
+  assert_eq(app.url_for("user", params={ "id": "42" }), Some("/api/users/42"))
+}
+
+///|
+test "RouteGroup::url_for works with nested groups" {
+  let app = @feather.App::new()
+  let api = app.group("/api")
+  let v1 = api.group("/v1")
+  ignore(v1.route_named("item", "GET", "/items/:id", fn(ctx) { ctx.text(200, "ok") }))
+  // Nested group url_for should include full prefix
+  assert_eq(v1.url_for("item", params={ "id": "7" }), Some("/api/v1/items/7"))
+  assert_eq(api.url_for("item", params={ "id": "7" }), Some("/api/v1/items/7"))
+  assert_eq(app.url_for("item", params={ "id": "7" }), Some("/api/v1/items/7"))
+}
+
+///|
+test "RouteGroup::url_for encodes parameter values" {
+  let app = @feather.App::new()
+  let api = app.group("/api")
+  ignore(api.route_named("search", "GET", "/search/:term", fn(ctx) { ctx.text(200, "ok") }))
+  assert_eq(
+    api.url_for("search", params={ "term": "hello world" }),
+    Some("/api/search/hello%20world"),
+  )
+}
