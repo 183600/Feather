@@ -44,8 +44,8 @@ architecture is described below.
 - **Middleware** – CORS, request logging, panic recovery, request IDs,
   rate limiting, basic, bearer and HS256 JWT auth, CSRF, secure headers, HTTPS
   redirect, method override, sessions, path- or predicate-scoped installation,
-  Prometheus-style request metrics, and a problem-details error handler whose
-  negotiated bodies vary on `Accept`.
+  Prometheus-style request metrics, IP allow/deny filtering, and a
+  problem-details error handler whose negotiated bodies vary on `Accept`.
 - **Context** – path/query/form/multipart access, multi-value `query_all` /
   `form_all` maps and `has_query` / `has_form` / `has_param` presence checks,
   raw `pathname` / `query_string` request-target accessors, typed
@@ -350,6 +350,16 @@ and a trailing root dot are ignored, `*.example.com` accepts subdomains (but
 not the apex), and `"*"` accepts any well-formed authority. The check reads
 `Host` directly, never forwarded-host headers; pass `allow_missing=true` for
 HTTP/1.0 clients that omit it.
+
+`middleware_ip_filter(allow=..., deny=...)` rejects requests from clients whose
+address is not allowed with `403 Forbidden` before the handler runs. An entry
+is either a plain address (`192.0.2.1`, `2001:db8::1`) or a CIDR block
+(`192.0.2.0/24`, `2001:db8::/32`); entries that are not valid addresses or
+blocks are ignored, so an allowlist whose entries are all invalid rejects
+every request instead of opening the filter. The client address is the one
+`Context::ip` reports, which is the peer address of the connection unless the
+application trusts proxies with `App::trust_proxy`; the forwarded headers are
+never consulted directly, so a client cannot choose its own address.
 
 `middleware_body_limit` rejects oversized request bodies with `413` before the
 handler runs, which is useful for allowing only small payloads on a specific
