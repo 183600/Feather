@@ -17,6 +17,23 @@ architecture is described below.
 - Target: the HTTP server requires the **native** target; the library itself
   compiles for the default MoonBit target as well.
 
+## Contents
+
+- [Features](#features)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Requests and context](#requests-and-context)
+- [Routing](#routing)
+- [Middleware](#middleware)
+- [Responses and conditional requests](#responses-and-conditional-requests)
+- [Static files](#static-files)
+- [SSE, streaming, and WebSocket](#sse-streaming-and-websocket)
+- [Server lifecycle](#server-lifecycle)
+- [Package layout](#package-layout)
+- [Development](#development)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## Features
 
 - **Routing** – method routes (`get`/`post`/`put`/`patch`/`delete`/`head`/

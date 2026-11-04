@@ -1,17 +1,14 @@
 # Feather 原始设计说明
 
-> **Status note:** this file is the **original design brief**, kept for
-> historical reference only. It describes the framework as it was planned, not
-> as it is today. The implementation has grown well beyond this document and
-> now includes sessions, CSRF, signed cookies, flash, rate limiting, SSE,
-> streaming, static files, compression, ETag, and content negotiation. For the
-> current architecture and public API see [README.md](README.md). This file is
-> not a specification of the shipped code.
+> **说明**：本文档为历史参考的原始设计简述，仅描述框架规划期的方案，而非当前实现。
+> 实际实现已大幅扩展，新增了会话、CSRF、签名 Cookie、Flash、限流、SSE、流式响应、
+> 静态文件、压缩、ETag 与内容协商等功能。当前架构与公共 API 请参考
+> [README.md](README.md)。本文件不作为已发布代码的规范依据。
 
-下面给你一套**“可以落地实现”的 MoonBit 后端 Web 框架方案**（偏 Gin/Express 风格），
-底层严格基于 `moonbitlang/async/http` 的 **`@http.run_server` +
-`@http.ServerConnection`** 来跑服务器、读请求、写响应。核心目标是：**路由 + 中间件 +
-Context + 统一响应封装 + 可靠的连接内请求循环**。
+下面是一套可落地的 MoonBit 后端 Web 框架方案，风格接近 Gin/Express。
+底层严格基于 `moonbitlang/async/http` 提供的 **`@http.run_server`** 与
+**`@http.ServerConnection`** 运行服务器、读取请求并写入响应。核心目标是实现
+**路由**、**中间件**、**请求上下文**、**统一响应封装**以及**可靠的连接内请求循环**。
 
 > 这是早期的设计草案，已被实际实现超越；当前的架构与 API 请参阅
 > [README.md](README.md)，不要以本文件为 shipped 代码的规范。

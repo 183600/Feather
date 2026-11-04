@@ -432,6 +432,17 @@ pub fn middleware_no_cache() -> Middleware {
 }
 
 ///|
+fn cache_control_directive(scope : String, max_age : Int32, immutable : Bool) -> String {
+  let seconds = if max_age > 0 { max_age } else { 0 }
+  let base = "\{scope}, max-age=\{seconds}"
+  if immutable {
+    "\{base}, immutable"
+  } else {
+    base
+  }
+}
+
+///|
 /// Middleware that lets shared caches store the responses it wraps for
 /// `max_age` seconds, mirroring `Context::cache_public`. Negative lifetimes are
 /// clamped to zero and `immutable=true` adds the `immutable` directive. A
@@ -440,13 +451,7 @@ pub fn middleware_cache_public(
   max_age : Int32,
   immutable~ : Bool = false,
 ) -> Middleware {
-  let seconds = if max_age > 0 { max_age } else { 0 }
-  let value = if immutable {
-    "public, max-age=\{seconds}, immutable"
-  } else {
-    "public, max-age=\{seconds}"
-  }
-  middleware_cache_control(value)
+  middleware_cache_control(cache_control_directive("public", max_age, immutable))
 }
 
 ///|
@@ -458,13 +463,7 @@ pub fn middleware_cache_private(
   max_age : Int32,
   immutable~ : Bool = false,
 ) -> Middleware {
-  let seconds = if max_age > 0 { max_age } else { 0 }
-  let value = if immutable {
-    "private, max-age=\{seconds}, immutable"
-  } else {
-    "private, max-age=\{seconds}"
-  }
-  middleware_cache_control(value)
+  middleware_cache_control(cache_control_directive("private", max_age, immutable))
 }
 
 ///|
