@@ -17,6 +17,16 @@ pub const DEFAULT_MAX_BODY_SIZE : Int32 = 1000
 
 pub const DEFAULT_SESSION_TTL : Int64 = 86_400_000
 
+pub const METRICS_CONTENT_TYPE : String = "text/plain; version=0.0.4; charset=utf-8"
+
+pub const METRICS_DURATION_METRIC : String = "feather_http_request_duration_milliseconds"
+
+pub const METRICS_REQUESTS_METRIC : String = "feather_http_requests_total"
+
+pub const METRICS_STATIC_ROUTE : String = "static"
+
+pub const METRICS_UNMATCHED_ROUTE : String = "unmatched"
+
 pub const PARAM_PREFIX : String = "param:"
 
 pub const PROBLEM_CONTENT_TYPE : String = "application/problem+json; charset=utf-8"
@@ -98,6 +108,8 @@ pub fn middleware_jwt_hs256(String, realm? : String, leeway? : Int32, require_ex
 pub fn middleware_logger(log? : (String) -> Unit, with_duration? : Bool, skip? : (Context) -> Bool, format? : (Context, Int64) -> String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_method_override(field? : String, header? : String) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
+pub fn middleware_metrics(Metrics) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_no_cache() -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
@@ -609,6 +621,34 @@ pub fn Jwt::subject(Self) -> String
 pub fn Jwt::to_repr(Self) -> @debug.Repr
 pub fn Jwt::to_string(Self) -> String
 pub impl Show for Jwt
+
+pub(all) struct Metrics {
+  series : Map[String, MetricsSeries]
+} derive(@debug.Debug)
+pub fn Metrics::count(Self, String, String, Int32) -> Int64
+pub fn Metrics::duration_sum(Self, String, String, Int32) -> Int64
+pub fn Metrics::new() -> Self
+pub fn Metrics::output(Self, &Logger) -> Unit
+pub fn Metrics::record(Self, String, String, Int32, Int64) -> Unit
+pub fn Metrics::render(Self) -> String
+pub fn Metrics::series_count(Self) -> Int32
+pub fn Metrics::to_repr(Self) -> @debug.Repr
+pub fn Metrics::to_string(Self) -> String
+pub fn Metrics::total(Self) -> Int64
+pub fn Metrics::write(Self, Context) -> Unit
+pub impl Show for Metrics
+
+pub(all) struct MetricsSeries {
+  method : String
+  route : String
+  status : Int32
+  count : Int64
+  duration_sum : Int64
+} derive(@debug.Debug)
+pub fn MetricsSeries::output(Self, &Logger) -> Unit
+pub fn MetricsSeries::to_repr(Self) -> @debug.Repr
+pub fn MetricsSeries::to_string(Self) -> String
+pub impl Show for MetricsSeries
 
 pub(all) struct MultipartPart {
   name : String

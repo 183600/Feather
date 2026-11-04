@@ -44,7 +44,8 @@ architecture is described below.
 - **Middleware** – CORS, request logging, panic recovery, request IDs,
   rate limiting, basic, bearer and HS256 JWT auth, CSRF, secure headers, HTTPS
   redirect, method override, sessions, path- or predicate-scoped installation,
-  and a problem-details error handler whose negotiated bodies vary on `Accept`.
+  Prometheus-style request metrics, and a problem-details error handler whose
+  negotiated bodies vary on `Accept`.
 - **Context** – path/query/form/multipart access, multi-value `query_all` /
   `form_all` maps and `has_query` / `has_form` / `has_param` presence checks,
   raw `pathname` / `query_string` request-target accessors, typed
@@ -256,6 +257,24 @@ predicate to omit health checks and other noisy requests (the handler still
 runs). Pass `format` to replace the default line with structured output; its
 callback receives the context and elapsed milliseconds, so it can include the
 final status, route name, request id, or fields from request state.
+
+`middleware_metrics` records a request counter and the time spent handling each
+request in a `Metrics` registry, labelled with the request method, the
+registered route pattern and the response status. The registry renders the
+Prometheus text exposition format, so a scrape endpoint is one line:
+
+```moonbit
+let metrics = @feather.Metrics::new()
+let app = @feather.App::new()
+  .use(@feather.middleware_metrics(metrics))
+  .get("/metrics", fn(ctx) { metrics.write(ctx) })
+```
+
+The series use the registered pattern (`/users/:id`), not the concrete request
+target, so a client cannot create a new series for every id it asks for.
+Requests that did not reach a route (a `404`, a `405`, or a request an earlier
+middleware rejected) are grouped under the `unmatched` route label, and
+requests served by a static file mount under `static`.
 
 `middleware_recover()` converts errors into the framework's default responses.
 Use `middleware_recover_with(handler=...)` instead when the application needs
