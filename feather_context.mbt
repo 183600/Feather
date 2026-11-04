@@ -659,6 +659,87 @@ fn safe_local_redirect_path(candidate : StringView) -> String? {
 }
 
 ///|
+/// Parse an authority (host:port) into its host and port components.
+/// Returns (host, port) where port is None if not present.
+fn parse_authority(authority : StringView) -> (String, Int32?) {
+  let authority = trim_ascii_space(authority)
+  if authority.is_empty() {
+    return ("", None)
+  }
+  if authority.unsafe_get(0) == ('[' : UInt16) {
+    let close = match authority.find("]") {
+      Some(index) => index
+      None => return ("", None)
+    }
+    let host = authority[:close + 1].to_owned()
+    let rest = authority[close + 1:]
+    if rest.is_empty() {
+      return (host, None)
+    }
+    if rest.unsafe_get(0) == (':' : UInt16) {
+      let port_str = rest[1:]
+      let mut port = 0
+      for i in 0..<port_str.length() {
+        let digit = port_str.unsafe_get(i).to_int() - 48
+        if digit < 0 || digit > 9 {
+          return ("", None)
+        }
+        port = port * 10 + digit
+        if port > 65535 {
+          return ("", None)
+        }
+      }
+      return (host, Some(port))
+    }
+    return ("", None)
+  }
+  let mut colons = 0
+  let mut last_colon = -1
+  for i in 0..<authority.length() {
+    if authority.unsafe_get(i) == (':' : UInt16) {
+      colons = colons + 1
+      last_colon = i
+    }
+  }
+  if colons == 0 {
+    return (authority.to_owned(), None)
+  } else if colons == 1 {
+    if last_colon <= 0 {
+      return ("", None)
+    }
+    let host = authority[:last_colon].to_owned()
+    let port_str = authority[last_colon + 1:]
+    let mut port = 0
+    for i in 0..<port_str.length() {
+      let digit = port_str.unsafe_get(i).to_int() - 48
+      if digit < 0 || digit > 9 {
+        return ("", None)
+      }
+      port = port * 10 + digit
+      if port > 65535 {
+        return ("", None)
+      }
+    }
+    return (host, Some(port))
+  } else {
+    return ("", None)
+  }
+}
+
+///|
+/// Normalize an authority for origin comparison: lowercase host, add default port if missing.
+fn normalize_authority_for_origin(authority : StringView, scheme : StringView) -> String? {
+  let (host, port) = parse_authority(authority)
+  if host.is_empty() {
+    return None
+  }
+  let default_port = if scheme.equal_ignore_ascii_case("https".view()) { 443 } else { 80 }
+  let effective_port = port.unwrap_or(default_port)
+  let normalized_host = host.to_lower()
+  Some("\{normalized_host}:\{effective_port}")
+}
+
+///|
 /// Turn a `Referer` into a local redirect target, or `None` when it does not
 /// name this host or cannot be parsed safely.
 ///
@@ -666,7 +747,7 @@ fn safe_local_redirect_path(candidate : StringView) -> String? {
 /// referer was an absolute URL. That is what keeps `Context::redirect_back`
 /// from becoming an open redirect: another origin is rejected, and a matching
 /// origin contributes only its path and query.
-fn local_referer_target(referer : String, authority : String) -> String? {
+fn local_referer_target(referer : String, authority : String, scheme : String) -> String? {
   let raw = trim_ascii_space(referer.view()).to_owned()
   if raw.is_empty() {
     return None
@@ -679,13 +760,13 @@ fn local_referer_target(referer : String, authority : String) -> String? {
   if view.has_prefix("/") {
     return safe_local_redirect_path(view)
   }
-  let scheme_length = if starts_with_ignore_ascii_case(
+  let (referer_scheme, scheme_length) = if starts_with_ignore_ascii_case(
     view,
     "http://".view(),
   ) {
-    7
+    ("http", 7)
   } else if starts_with_ignore_ascii_case(view, "https://".view()) {
-    8
+    ("https", 8)
   } else {
     return None
   }
@@ -704,16 +785,14 @@ fn local_referer_target(referer : String, authority : String) -> String? {
   if host_part.is_empty() {
     return None
   }
-  let expected = match host_authority_host(authority.view()) {
-    Some(host) => host
-    None => return None
-  }
-  let actual = match host_authority_host(host_part) {
-    Some(host) => host
-    None => return None
-  }
-  if !expected.view().equal_ignore_ascii_case(actual.view()) {
-    return None
+  let referer_origin = normalize_authority_for_origin(host_part, referer_scheme.view())
+  let request_origin = normalize_authority_for_origin(authority.view(), scheme.view())
+  match (referer_origin, request_origin) {
+    (Some(ref_origin), Some(req_origin)) =>
+      if ref_origin != req_origin {
+        return None
+      }
+    _ => return None
   }
   let tail = rest[end:]
   if tail.is_empty() {
@@ -749,6 +828,7 @@ pub fn Context::redirect_back(
   let target = match local_referer_target(
     self.header("Referer"),
     self.forwarded_authority(),
+    self.protocol(),
   ) {
     Some(target) => target
     None => if fallback == "" { "/" } else { fallback }
