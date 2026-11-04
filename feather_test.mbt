@@ -1,13 +1,4 @@
 ///|
-test "Feather server can be created with basic configuration" {
-  let config : Config = { host: "127.0.0.1", port: 8080, timeout: 30000, }
-  let server = create_server(config)
-  assert_eq(server.host, "127.0.0.1")
-  assert_eq(server.port, 8080)
-  assert_eq(server.timeout, 30000)
-}
-
-///|
 test "Request and Response objects have expected properties" {
   let request : Request = {
     method: "GET",

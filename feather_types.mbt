@@ -252,8 +252,3 @@ pub(all) enum RouteOutcome {
   RouteNotFound
 }
 
-///|
-pub fn create_server(config : Config) -> Config {
-  config
-}
-

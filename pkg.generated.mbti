@@ -47,8 +47,6 @@ pub fn create_feather(Config) -> Feather
 
 pub fn create_router() -> Router
 
-pub fn create_server(Config) -> Config
-
 pub fn error_response(Context, Int32, String) -> Unit
 
 pub fn error_response_with_payload(Context, Int32, String, Json) -> Unit
