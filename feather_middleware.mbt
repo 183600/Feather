@@ -182,9 +182,11 @@ pub fn middleware_logger(
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
+      let skipped = Ref(false)
       match skip {
         Some(skip) =>
           if skip(ctx) {
+            skipped.val = true
             next(ctx)
             return
           }
@@ -192,25 +194,33 @@ pub fn middleware_logger(
       }
       let timed = with_duration || format is Some(_)
       let started = if timed { @async.now() } else { 0L }
+      // The log line is emitted by `errdefer` so a cancelled request (which a
+      // `catch` block will not see under the upcoming cancellation semantics)
+      // is still logged; such a request carries no framework status, so it is
+      // logged as `500` like the server renders it. The catch arms only
+      // translate the framework error into the status the log line shows.
+      let mut failure_status = 500
+      errdefer {
+        if !skipped.val {
+          ctx.response.status = failure_status
+          logger_emit(log, ctx, started, with_duration, format)
+        }
+      }
       next(ctx) catch {
         HttpError(status, message) => {
-          ctx.response.status = status
-          logger_emit(log, ctx, started, with_duration, format)
+          failure_status = status
           raise HttpError(status, message)
         }
         HttpErrorPayload(status, message, payload) => {
-          ctx.response.status = status
-          logger_emit(log, ctx, started, with_duration, format)
+          failure_status = status
           raise HttpErrorPayload(status, message, payload)
         }
         HttpProblem(status, type_name, title, detail, instance) => {
-          ctx.response.status = status
-          logger_emit(log, ctx, started, with_duration, format)
+          failure_status = status
           raise HttpProblem(status, type_name, title, detail, instance)
         }
         err => {
-          ctx.response.status = 500
-          logger_emit(log, ctx, started, with_duration, format)
+          failure_status = 500
           raise err
         }
       }
