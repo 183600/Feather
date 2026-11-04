@@ -99,6 +99,48 @@ pub fn Context::host(self : Context) -> String {
 }
 
 ///|
+/// The subdomains of the request host, most specific first.
+///
+/// The host is split at its dots and the last `root_domains` labels are
+/// treated as the root domain, so `a.b.example.com` has the subdomains
+/// `["a", "b"]` with the default of two root labels. A host with no more
+/// labels than the root domain has no subdomains, an IP address never has
+/// any, and a trailing root dot is ignored.
+pub fn Context::subdomains(
+  self : Context,
+  root_domains~ : Int32 = 2,
+) -> Array[String] {
+  let subdomains : Array[String] = []
+  let host = self.host()
+  if host == "" {
+    return subdomains
+  }
+  // An address literal is not a domain name.
+  if valid_ipv4_literal(host.view()) || host.has_prefix("[") {
+    return subdomains
+  }
+  let labels : Array[StringView] = []
+  for part in host.view().split(".") {
+    labels.push(part)
+  }
+  let mut count = labels.length()
+  // A trailing root dot leaves an empty last label behind.
+  if count > 0 && labels[count - 1].is_empty() {
+    count = count - 1
+  }
+  let root = if root_domains < 0 { 0 } else { root_domains }
+  if count <= root {
+    return subdomains
+  }
+  let mut index = 0
+  while index < count - root {
+    subdomains.push(labels[index].to_owned())
+    index = index + 1
+  }
+  subdomains
+}
+
+///|
 /// Extract the TCP/UDP port from a trimmed `Host`-style authority, for example
 /// `8080` from `example.com:8080` or `[::1]:8080`. Returns `None` when the
 /// authority has no port, when the port is not a valid decimal number in

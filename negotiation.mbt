@@ -340,6 +340,52 @@ pub fn Context::accepts(self : Context, media_type : String) -> Bool {
 }
 
 ///|
+/// The media types the client accepts, most preferred first.
+///
+/// The `Accept` header is split into its media ranges; a range with a quality
+/// of zero is dropped, because the client rejects it, and the remaining
+/// ranges are ordered by their quality, keeping the order of the header for
+/// ranges with the same quality. The media types are lowercased and keep
+/// their wildcards, so `text/*` and `*/*` are reported as they were sent.
+///
+/// A missing or empty `Accept` header accepts everything, which is reported
+/// as `["*/*"]`.
+pub fn Context::accepted_types(self : Context) -> Array[String] {
+  let header = self.header("Accept")
+  if trim_ascii_space(header.view()).is_empty() {
+    return ["*/*"]
+  }
+  let entries = accept_entries_cached(header)
+  // The header order breaks ties between ranges of the same quality, so the
+  // result does not depend on how the sort handles equal elements.
+  let ranked : Array[(Int32, Int32, String)] = []
+  let mut index = 0
+  for entry in entries {
+    if entry.quality > 0 {
+      ranked.push((
+        entry.quality,
+        index,
+        entry.range_type.to_lower().to_owned() +
+        "/" +
+        entry.range_subtype.to_lower().to_owned(),
+      ))
+    }
+    index = index + 1
+  }
+  ranked.sort_by(fn(a, b) {
+    if a.0 != b.0 {
+      return b.0.compare(a.0)
+    }
+    a.1.compare(b.1)
+  })
+  let types : Array[String] = []
+  for item in ranked {
+    types.push(item.2)
+  }
+  types
+}
+
+///|
 /// Whether a parsed `Accept` range asks for JSON.
 fn accept_entry_asks_json(entry : AcceptEntry) -> Bool {
   let range_type = entry.range_type

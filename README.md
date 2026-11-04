@@ -180,11 +180,20 @@ for the file itself. A part's text is decoded with the charset declared by its
 parameters, and `is_json` / `is_form` / `is_multipart` classify common body
 types. `Context::content_type_parameter("charset")` reads one parameter,
 unquoting values such as multipart boundaries and matching parameter names
-case-insensitively.
+case-insensitively. `Context::type_is("application/*+json")` reports whether
+the request's media type matches a pattern; like `is_json` it ignores
+parameters and case, and it understands the same wildcards as
+`middleware_allowed_content_types`.
 
 Request headers can be parsed with `Context::header_int`, `header_int64`,
 `header_bool` and `header_float`, which use the same strict parsers as the
 query/param/form helpers and ignore surrounding whitespace.
+
+`Context::subdomains()` splits the request host into the labels in front of
+the root domain, so `a.b.example.com` reports the subdomains `a` and `b`
+(pass `root_domains` for a root domain with a different number of labels).
+`Context::accepted_types()` lists the media ranges of the `Accept` header,
+most preferred first, with the ranges the client rejects (`q=0`) dropped.
 
 `Context::set_content_type("text/plain", parameters=[("charset", "utf-8")])`
 sets a response media type and appends parameters in order, quoting values that

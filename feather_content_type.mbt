@@ -175,6 +175,25 @@ pub fn Context::is_json(self : Context) -> Bool {
 }
 
 ///|
+/// Whether the request's media type matches `media_type`.
+///
+/// The comparison ignores parameters and case, so a request with
+/// `Content-Type: application/json; charset=utf-8` matches
+/// `application/json`. The pattern may be an exact media type, `type/*`,
+/// `*/*`, `*`, or a structured-suffix pattern such as `application/*+json`.
+/// A request without a `Content-Type` never matches.
+pub fn Context::type_is(self : Context, media_type : String) -> Bool {
+  let actual = self.content_type()
+  if actual == "" {
+    return false
+  }
+  content_type_pattern_matches(
+    parsed_content_type(media_type).view(),
+    actual.view(),
+  )
+}
+
+///|
 /// Whether the request body is `application/x-www-form-urlencoded`.
 pub fn Context::is_form(self : Context) -> Bool {
   self.content_type() == "application/x-www-form-urlencoded"
