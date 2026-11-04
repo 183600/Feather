@@ -190,3 +190,22 @@ test "Context::request_headers and response_headers return copies" {
   assert_eq(ctx.header("X-Test"), "value")
   assert_eq(ctx.response_header("X-New"), "")
 }
+
+///|
+test "Context::request_headers handles headers with special characters in values" {
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/",
+    headers: Map([
+      ("X-Special", "value with spaces and !@#$%^&*()"),
+      ("X-Unicode", "café naïve résumé"),
+      ("X-Empty", ""),
+    ]),
+    body: "",
+  })
+  let headers = ctx.request_headers()
+  assert_eq(headers.get("x-special"), Some("value with spaces and !@#$%^&*()"))
+  assert_eq(headers.get("x-unicode"), Some("café naïve résumé"))
+  assert_eq(headers.get("x-empty"), Some(""))
+  assert_eq(headers.length(), 3)
+}
