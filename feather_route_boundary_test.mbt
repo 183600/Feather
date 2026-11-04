@@ -449,55 +449,6 @@ test "url_for returns none for missing parameter" {
   assert_eq(url, None)
 }
 
-///|
-test "url_for with query parameters generates correct URL" {
-  let app = @feather.App::new()
-    .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })
-  let url = app.url_for("search", query=Map([("page", "1"), ("q", "hello")]))
-  assert_eq(url, Some("/search?page=1&q=hello"))
-}
-
-///|
-test "url_for with parameters generates correct URL" {
-  let app = @feather.App::new()
-    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
-  let url = app.url_for("user", params=Map([("id", "42")]))
-  assert_eq(url, Some("/users/42"))
-}
-
-///|
-test "url_for returns none for missing parameter" {
-  let app = @feather.App::new()
-    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
-  let url = app.url_for("user", params=Map([("name", "john")]))
-  assert_eq(url, None)
-}
-
-///|
-test "url_for with query parameters generates correct URL" {
-  let app = @feather.App::new()
-    .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })
-  let url = app.url_for("search", query=Map([("page", "1"), ("q", "hello")]))
-  assert_eq(url, Some("/search?page=1&q=hello"))
-}
-
-///|
-test "url_for with parameters generates correct URL" {
-  let app = @feather.App::new()
-    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
-  let url = app.url_for("user", params=Map([("id", "42")]))
-  assert_eq(url, Some("/users/42"))
-}
-
-///|
-test "url_for returns none for missing parameter" {
-  let app = @feather.App::new()
-    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
-  let url = app.url_for("user", params=Map([("name", "john")]))
-  assert_eq(url, None)
-}
-
-///|
 test "url_for with empty params map generates root URL" {
   let app = @feather.App::new()
     .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })

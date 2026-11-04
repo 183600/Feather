@@ -163,32 +163,6 @@ test "format skips rejected offers and answers 406 when none remain" {
 }
 
 ///|
-test "format runs the fallback handler when no offer is acceptable" {
-  let ctx = accept_ctx("application/xml")
-  ctx.format([("application/json", fn(ctx) { ctx.text(200, "json") })], fallback=fn(
-    ctx,
-  ) {
-    ctx.text(200, "fallback")
-  })
-  assert_eq(ctx.response.status, 200)
-  assert_eq(ctx.response.body, "fallback")
-  assert_eq(ctx.response_header("Vary"), "Accept")
-}
-
-///|
-test "format runs the fallback handler when no offer is acceptable" {
-  let ctx = accept_ctx("application/xml")
-  ctx.format([("application/json", fn(ctx) { ctx.text(200, "json") })], fallback=fn(
-    ctx,
-  ) {
-    ctx.text(200, "fallback")
-  })
-  assert_eq(ctx.response.status, 200)
-  assert_eq(ctx.response.body, "fallback")
-  assert_eq(ctx.response_header("Vary"), "Accept")
-}
-
-///|
 test "format fallback can return a problem details response" {
   let ctx = accept_ctx("application/xml")
   ctx.format(
