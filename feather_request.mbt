@@ -77,6 +77,82 @@ pub fn Context::host(self : Context) -> String {
 }
 
 ///|
+/// Extract the TCP/UDP port from a trimmed `Host`-style authority, for example
+/// `8080` from `example.com:8080` or `[::1]:8080`. Returns `None` when the
+/// authority has no port, when the port is not a valid decimal number in
+/// `1..=65535`, or when the authority is malformed.
+fn authority_port(authority : StringView) -> Int32? {
+  let value = trim_ascii_space(authority)
+  if value.is_empty() {
+    return None
+  }
+  if value.unsafe_get(0) == ('[' : UInt16) {
+    match value.find("]") {
+      Some(close) =>
+        if close <= 1 {
+          None
+        } else {
+          let rest = value[close + 1:]
+          if rest.is_empty() || rest.unsafe_get(0) != (':' : UInt16) {
+            None
+          } else {
+            port_of(rest[1:])
+          }
+        }
+      None => None
+    }
+  } else {
+    match value.find(":") {
+      Some(index) =>
+        if index == 0 || index == value.length() - 1 {
+          None
+        } else {
+          let before = value[:index]
+          if before.contains(":") {
+            None
+          } else {
+            port_of(value[index + 1:])
+          }
+        }
+      None => None
+    }
+  }
+}
+
+///|
+/// Parse a decimal port, rejecting empty values and anything above 65535.
+fn port_of(value : StringView) -> Int32? {
+  let mut port : Int32 = 0
+  let mut i = 0
+  while i < value.length() {
+    let digit = value.unsafe_get(i).to_int() - 48
+    if digit < 0 || digit > 9 {
+      return None
+    }
+    port = port * 10 + digit
+    if port > 65535 {
+      return None
+    }
+    i = i + 1
+  }
+  if i == 0 {
+    None
+  } else {
+    Some(port)
+  }
+}
+
+///|
+/// The port from the request's `Host` header, when a valid numeric port is
+/// present (for example `8080` from `Host: example.com:8080`). Returns `None`
+/// when the header is absent, has no port, or carries an invalid port. Unlike
+/// `Context::forwarded_authority`, this reads the raw `Host` header, so it
+/// matches `Context::host`.
+pub fn Context::port(self : Context) -> Int32? {
+  authority_port(self.header("Host").view())
+}
+
+///|
 /// Unescape an RFC 7239 parameter value enclosed in double quotes. Values
 /// that are not quoted are returned unchanged; anything after the closing
 /// quote is ignored.
