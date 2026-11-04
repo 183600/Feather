@@ -513,6 +513,9 @@ fn set_optional_hardening_header(
 /// over HTTPS), `content_security_policy` to lock down which resources the
 /// browser may load, or the corresponding `*_report_only` /
 /// `permissions_policy` / `cross_origin_*` options for the modern policy
+/// headers. The `dns_prefetch_control`, `download_options`,
+/// `permitted_cross_domain_policies`, `origin_agent_cluster` and
+/// `xss_protection` options add the remaining widely deployed hardening
 /// headers. Optional values are only emitted when supplied, so a minimal
 /// installation keeps the same response headers as before.
 pub fn middleware_secure_headers(
@@ -526,6 +529,11 @@ pub fn middleware_secure_headers(
   cross_origin_opener_policy? : String,
   cross_origin_embedder_policy? : String,
   cross_origin_resource_policy? : String,
+  dns_prefetch_control? : String,
+  download_options? : String,
+  permitted_cross_domain_policies? : String,
+  origin_agent_cluster? : String,
+  xss_protection? : String,
 ) -> Middleware {
   fn(next) {
     fn(ctx) raise {
@@ -571,6 +579,31 @@ pub fn middleware_secure_headers(
         headers,
         "Cross-Origin-Resource-Policy",
         cross_origin_resource_policy,
+      )
+      set_optional_hardening_header(
+        headers,
+        "X-DNS-Prefetch-Control",
+        dns_prefetch_control,
+      )
+      set_optional_hardening_header(
+        headers,
+        "X-Download-Options",
+        download_options,
+      )
+      set_optional_hardening_header(
+        headers,
+        "X-Permitted-Cross-Domain-Policies",
+        permitted_cross_domain_policies,
+      )
+      set_optional_hardening_header(
+        headers,
+        "Origin-Agent-Cluster",
+        origin_agent_cluster,
+      )
+      set_optional_hardening_header(
+        headers,
+        "X-XSS-Protection",
+        xss_protection,
       )
       next(ctx)
     }

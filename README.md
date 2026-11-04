@@ -340,11 +340,13 @@ source control.
 
 `middleware_secure_headers` installs `nosniff`, frame and referrer policies by
 default. It also accepts `hsts`, `content_security_policy`,
-`content_security_policy_report_only`, `permissions_policy`, and
+`content_security_policy_report_only`, `permissions_policy`,
 `cross_origin_opener_policy` / `cross_origin_embedder_policy` /
-`cross_origin_resource_policy`; optional headers are only emitted when
-configured, and their names are matched case-insensitively against values
-already on the response.
+`cross_origin_resource_policy`, and the remaining widely deployed hardening
+headers `dns_prefetch_control`, `download_options`,
+`permitted_cross_domain_policies`, `origin_agent_cluster` and
+`xss_protection`; optional headers are only emitted when configured, and their
+names are matched case-insensitively against values already on the response.
 
 `middleware_request_id` reuses a validated incoming id or mints a
 `feather-<n>` value, stores it for `Context::request_id`, and echoes it in the

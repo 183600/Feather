@@ -107,6 +107,74 @@ test "secure headers replace case-variant modern policy headers" {
 }
 
 ///|
+test "secure headers emit the remaining hardening headers when configured" {
+  let app = secure_headers_app(
+    @feather.middleware_secure_headers(
+      dns_prefetch_control="off",
+      download_options="noopen",
+      permitted_cross_domain_policies="none",
+      origin_agent_cluster="?1",
+      xss_protection="0",
+    ),
+  )
+  let response = secure_headers_response(app)
+  assert_eq(response.headers.get("X-DNS-Prefetch-Control"), Some("off"))
+  assert_eq(response.headers.get("X-Download-Options"), Some("noopen"))
+  assert_eq(
+    response.headers.get("X-Permitted-Cross-Domain-Policies"),
+    Some("none"),
+  )
+  assert_eq(response.headers.get("Origin-Agent-Cluster"), Some("?1"))
+  assert_eq(response.headers.get("X-XSS-Protection"), Some("0"))
+}
+
+///|
+test "secure headers leave the remaining hardening headers unset" {
+  let response = secure_headers_response(
+    secure_headers_app(@feather.middleware_secure_headers()),
+  )
+  assert_eq(response.headers.get("X-DNS-Prefetch-Control"), None)
+  assert_eq(response.headers.get("X-Download-Options"), None)
+  assert_eq(response.headers.get("X-Permitted-Cross-Domain-Policies"), None)
+  assert_eq(response.headers.get("Origin-Agent-Cluster"), None)
+  assert_eq(response.headers.get("X-XSS-Protection"), None)
+}
+
+///|
+test "secure headers replace case-variant hardening headers" {
+  let app = @feather.App::new()
+    .use(fn(next) {
+      fn(ctx) raise {
+        ctx.set_header("x-dns-prefetch-control", "on")
+        ctx.set_header("origin-agent-cluster", "?0")
+        next(ctx)
+      }
+    })
+    .use(
+      @feather.middleware_secure_headers(
+        dns_prefetch_control="off",
+        origin_agent_cluster="?1",
+      ),
+    )
+    .get("/", fn(ctx) { ctx.text(200, "ok") })
+  let response = secure_headers_response(app)
+  let mut prefetch = 0
+  let mut cluster = 0
+  for key, _ in response.headers {
+    if key.view().equal_ignore_ascii_case("x-dns-prefetch-control".view()) {
+      prefetch = prefetch + 1
+    }
+    if key.view().equal_ignore_ascii_case("origin-agent-cluster".view()) {
+      cluster = cluster + 1
+    }
+  }
+  assert_eq(prefetch, 1)
+  assert_eq(cluster, 1)
+  assert_eq(response.headers.get("X-DNS-Prefetch-Control"), Some("off"))
+  assert_eq(response.headers.get("Origin-Agent-Cluster"), Some("?1"))
+}
+
+///|
 test "secure headers stay on responses produced by an inner recovery" {
   let app = @feather.App::new()
     .use(@feather.middleware_secure_headers(cross_origin_resource_policy="same-origin"))
