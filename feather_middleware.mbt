@@ -245,13 +245,14 @@ pub fn middleware_response_time(
   fn(next) {
     fn(ctx) raise {
       let started = @async.now()
-      next(ctx) catch {
-        err => {
-          let elapsed = @async.now() - started
-          ctx.set_header(header, format_elapsed(elapsed, precision))
-          raise err
-        }
+      // `errdefer` keeps the header on error exits of any kind, including a
+      // cancelled request, which a `catch` block would not see under the
+      // upcoming cancellation semantics.
+      errdefer {
+        let elapsed = @async.now() - started
+        ctx.set_header(header, format_elapsed(elapsed, precision))
       }
+      next(ctx)
       let elapsed = @async.now() - started
       ctx.set_header(header, format_elapsed(elapsed, precision))
       if ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) ||

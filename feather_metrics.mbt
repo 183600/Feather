@@ -341,12 +341,20 @@ pub fn middleware_metrics(metrics : Metrics) -> Middleware {
   fn(next) {
     fn(ctx) raise {
       let started = @async.now()
+      // The error is rendered by an outer recovery middleware, so the status
+      // is not known yet; the framework error carries it. The bookkeeping
+      // itself lives in `errdefer` so a cancelled request (which a `catch`
+      // block will not see under the upcoming cancellation semantics) is still
+      // recorded; a cancellation carries no framework status, so the request
+      // falls back to `500`.
+      let mut failure_status = 500
+      errdefer {
+        ctx.response.status = failure_status
+        metrics_record_request(ctx, metrics, started)
+      }
       next(ctx) catch {
         err => {
-          // The error is rendered by an outer recovery middleware, so the
-          // status is not known yet; the framework error carries it.
-          ctx.response.status = error_status(err)
-          metrics_record_request(ctx, metrics, started)
+          failure_status = error_status(err)
           raise err
         }
       }
