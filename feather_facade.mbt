@@ -455,10 +455,28 @@ pub fn Feather::handle(self : Feather, request : Request) -> Response {
 }
 
 ///|
+/// Alias for [`Feather::handle`]. Runs a request through the application
+/// without a server and returns the response.
+pub fn Feather::respond(self : Feather, request : Request) -> Response {
+  self.app.respond(request)
+}
+
+///|
 /// Run a request through the application without a server and return the
 /// response, compressing it when the application compresses responses and the
 /// request accepts gzip. See `App::respond_async` for the details.
 pub async fn Feather::handle_async(
+  self : Feather,
+  request : Request,
+) -> Response {
+  self.app.respond_async(request)
+}
+
+///|
+/// Alias for [`Feather::handle_async`]. Runs a request through the application
+/// without a server and returns the response, compressing it when the
+/// application compresses responses and the request accepts gzip.
+pub async fn Feather::respond_async(
   self : Feather,
   request : Request,
 ) -> Response {

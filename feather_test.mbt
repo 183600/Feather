@@ -1524,3 +1524,52 @@ test "Context with different request and response states" {
   assert_eq(ctx.get("key2"), "value2")
 }
 
+///|
+test "Feather respond runs a request through the application" {
+  let config : Config = { host: "localhost", port: 3000, timeout: 5000, }
+  let feather = create_feather(config)
+    .get("/hello", fn(ctx) { ctx.text(200, "world") })
+  let request : Request = { method: "GET", path: "/hello", headers: Map::new(), body: "" }
+  let response = feather.respond(request)
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "world")
+}
+
+///|
+test "Feather respond returns 404 for unknown routes" {
+  let config : Config = { host: "localhost", port: 3000, timeout: 5000, }
+  let feather = create_feather(config)
+    .get("/hello", fn(ctx) { ctx.text(200, "world") })
+  let request : Request = { method: "GET", path: "/unknown", headers: Map::new(), body: "" }
+  let response = feather.respond(request)
+  assert_eq(response.status, 404)
+}
+
+///|
+test "Feather respond runs middleware before the handler" {
+  let config : Config = { host: "localhost", port: 3000, timeout: 5000, }
+  let feather = create_feather(config)
+    .use(fn(next) {
+      fn(ctx) raise {
+        ctx.set_header("X-Middleware", "yes")
+        next(ctx)
+      }
+    })
+    .get("/hello", fn(ctx) { ctx.text(200, "world") })
+  let request : Request = { method: "GET", path: "/hello", headers: Map::new(), body: "" }
+  let response = feather.respond(request)
+  assert_eq(response.status, 200)
+  assert_eq(response.headers.get("X-Middleware"), Some("yes"))
+}
+
+///|
+test "Feather respond handles route parameters" {
+  let config : Config = { host: "localhost", port: 3000, timeout: 5000, }
+  let feather = create_feather(config)
+    .get("/user/:name", fn(ctx) { ctx.text(200, ctx.param("name")) })
+  let request : Request = { method: "GET", path: "/user/alice", headers: Map::new(), body: "" }
+  let response = feather.respond(request)
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "alice")
+}
+

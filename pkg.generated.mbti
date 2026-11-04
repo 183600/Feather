@@ -580,6 +580,8 @@ pub fn Feather::request_timeout(Self, Int32) -> Self
 pub fn Feather::resolve_sse(Self, String) -> (async (Context, Sse) -> Unit, Map[String, String])?
 pub fn Feather::resolve_stream(Self, String) -> (async (Context, Stream) -> Unit, Map[String, String])?
 pub fn Feather::resolve_websocket(Self, String) -> (async (Context, @websocket.Conn) -> Unit, Map[String, String])?
+pub fn Feather::respond(Self, Request) -> Response
+pub async fn Feather::respond_async(Self, Request) -> Response
 pub fn Feather::route(Self, String, String, (Context) -> Unit raise) -> Self
 pub fn Feather::route_body_limit(Self, String, String, Int32) -> Self
 pub fn Feather::route_named(Self, String, String, String, (Context) -> Unit raise) -> Self
