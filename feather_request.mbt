@@ -619,6 +619,57 @@ pub fn Context::forwarded_ip(self : Context) -> String {
 }
 
 ///|
+/// The client addresses in front of the application, like `req.ips` in
+/// Express.
+///
+/// Without `App::trust_proxy` the forwarded headers are not trusted, so the
+/// list holds only the connection's peer address — the value `Context::ip`
+/// reports. With `hops` trusted proxies the list holds the forwarded addresses
+/// those proxies recorded, closest proxy first, followed by the peer address;
+/// a negative `hops` trusts the whole forwarded chain. Placeholders recorded
+/// by proxies that sent no address (obfuscated or `unknown` nodes) are dropped
+/// from the list, so they never shift the order of the reported addresses.
+///
+/// The entry `Context::ip` selects is the one at index `hops - 1` whenever
+/// that hop recorded an address.
+///
+/// `Context::ip` stays the way to read the one address the application has
+/// decided to act on.
+pub fn Context::ips(self : Context) -> Array[String] {
+  let peer = match self.state.get("remote_addr") {
+    Some(value) => value
+    None => "127.0.0.1"
+  }
+  let hops = match self.state.get(TRUST_PROXY_HOPS_KEY) {
+    Some(value) =>
+      match parse_int_value(value.view()) {
+        Some(hops) => hops
+        None => 0
+      }
+    None => 0
+  }
+  let result : Array[String] = []
+  if hops != 0 {
+    let chain = forwarded_chain(self)
+    // The chain is ordered closest proxy first, so the trusted prefix is the
+    // first `hops` entries (the whole chain when `hops` is negative).
+    let count = if hops < 0 || hops >= chain.length() {
+      chain.length()
+    } else {
+      hops
+    }
+    for i = 0; i < count; i = i + 1 {
+      let address = chain[i]
+      if address != "" {
+        result.push(address)
+      }
+    }
+  }
+  result.push(peer)
+  result
+}
+
+///|
 /// The request's `Content-Length` header parsed as a 32-bit integer.
 ///
 /// Returns `None` when the header is absent, malformed, or outside the `Int32`

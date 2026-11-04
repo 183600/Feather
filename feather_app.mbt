@@ -12,6 +12,7 @@ pub(all) struct App {
   static_mounts : Array[StaticMount]
   mount_middlewares : Array[(String, Array[Middleware])]
   mut no_route_handler : Handler?
+  mut method_not_allowed_handler : Handler?
   ws_router : Router
   ws_handlers : Map[String, WebSocketHandler]
   ws_middlewares : Map[String, Handler]
@@ -49,6 +50,7 @@ fn App::fresh(timeout : Int32) -> App {
     static_mounts: [],
     mount_middlewares: [],
     no_route_handler: None,
+    method_not_allowed_handler: None,
     ws_router: create_router(),
     ws_handlers: Map([]),
     ws_middlewares: Map([]),
@@ -352,6 +354,22 @@ pub fn App::fallback_with(
 ) -> App {
   let wrapped = apply_middleware(middlewares, handler)
   self.fallback(wrapped)
+}
+
+///|
+/// Register a handler for requests whose path exists but whose method is not
+/// allowed, replacing the default `405 Method Not Allowed` response.
+///
+/// The framework keeps setting the `Allow` header with the path's allowed
+/// methods, so the handler only owns the status and body — typically a JSON
+/// problem document for an API. Middleware installed with `App::use` still
+/// wraps the handler, and `OPTIONS` requests keep the automatic `Allow`
+/// response. Pass a handler that does not call through to replace it; calling
+/// this again replaces the previous handler and there is no way to restore the
+/// default except building a new application.
+pub fn App::method_not_allowed(self : App, handler : Handler) -> App {
+  self.method_not_allowed_handler = Some(handler)
+  self
 }
 
 ///|

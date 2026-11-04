@@ -189,6 +189,16 @@ Request headers can be parsed with `Context::header_int`, `header_int64`,
 `header_bool` and `header_float`, which use the same strict parsers as the
 query/param/form helpers and ignore surrounding whitespace.
 
+`Context::send_status(418)` sets the status and answers with the standard
+reason phrase as a plain-text body (bodyless for `204`, `205` and `304`),
+which is convenient for endpoints that only report a condition.
+`Context::location("/items/42")` installs a `Location` header without writing
+a redirect, so a `201 Created` response can point at the new resource while
+keeping its own status and body. `Context::ips()` lists the client addresses
+in front of the application — the trusted forwarded chain with the peer
+address appended when `App::trust_proxy` is configured, and only the peer
+otherwise.
+
 `Context::subdomains()` splits the request host into the labels in front of
 the root domain, so `a.b.example.com` reports the subdomains `a` and `b`
 (pass `root_domains` for a root domain with a different number of labels).
@@ -292,6 +302,14 @@ receives the original error (so it can match `HttpError`,
 `HttpErrorPayload`, `HttpProblem`, or its own error type) and owns the
 response. `error_status(err)` returns the status carried by framework errors
 and `500` otherwise. Request cleanups still run after a custom recovery.
+
+Unmatched paths are answered by the handler registered with `App::fallback`.
+A request whose path exists but whose method is not allowed is answered with
+an automatic `405` that carries the `Allow` header; register
+`App::method_not_allowed(handler)` to replace its body instead (for example
+with a JSON problem document). The framework keeps supplying `Allow`, the
+handler owns the status and body, application middleware still wraps it, and
+`OPTIONS` requests keep the automatic `Allow` response.
 
 CORS can be limited to a fixed set of origins with
 `middleware_cors_allowlist`, or decided per request with

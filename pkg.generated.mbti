@@ -205,6 +205,7 @@ pub(all) struct App {
   static_mounts : Array[StaticMount]
   mount_middlewares : Array[(String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise])]
   mut no_route_handler : ((Context) -> Unit raise)?
+  mut method_not_allowed_handler : ((Context) -> Unit raise)?
   ws_router : Router
   ws_handlers : Map[String, async (Context, @websocket.Conn) -> Unit]
   ws_middlewares : Map[String, (Context) -> Unit raise]
@@ -243,6 +244,7 @@ pub fn App::has_stream(Self, String) -> Bool
 pub fn App::has_websocket(Self, String) -> Bool
 pub fn App::head(Self, String, (Context) -> Unit raise) -> Self
 pub fn App::max_body_size(Self, Int32) -> Self
+pub fn App::method_not_allowed(Self, (Context) -> Unit raise) -> Self
 pub fn App::mount(Self, String, Self) -> Self
 pub fn App::mount_with(Self, String, Self, Array[((Context) -> Unit raise) -> (Context) -> Unit raise]) -> Self
 pub fn App::new() -> Self
@@ -408,6 +410,7 @@ pub fn Context::host(Self) -> String
 pub fn Context::html(Self, Int32, String) -> Unit
 pub fn Context::inline(Self, String) -> Unit
 pub fn Context::ip(Self) -> String
+pub fn Context::ips(Self) -> Array[String]
 pub fn Context::is_form(Self) -> Bool
 pub fn Context::is_json(Self) -> Bool
 pub fn Context::is_multipart(Self) -> Bool
@@ -423,6 +426,7 @@ pub fn Context::jwt_error(Self) -> String
 pub fn Context::jwt_header(Self) -> Json?
 pub fn Context::jwt_header_parameter(Self, String) -> Json?
 pub fn Context::jwt_subject(Self) -> String
+pub fn Context::location(Self, String) -> Unit
 pub fn Context::multipart(Self) -> Array[MultipartPart]
 pub fn Context::multipart_file(Self, String) -> MultipartPart?
 pub fn Context::multipart_files(Self, String) -> Array[MultipartPart]
@@ -485,6 +489,7 @@ pub fn Context::route_method(Self) -> String
 pub fn Context::route_name(Self) -> String
 pub fn Context::route_pattern(Self) -> String
 pub fn Context::run_cleanups(Self) -> Unit
+pub fn Context::send_status(Self, Int32) -> Unit
 pub fn Context::session(Self) -> Session?
 pub fn Context::session_clear(Self) -> Bool
 pub fn Context::session_destroy(Self) -> Bool
@@ -562,6 +567,7 @@ pub fn Feather::has_websocket(Self, String) -> Bool
 pub fn Feather::head(Self, String, (Context) -> Unit raise) -> Self
 pub fn Feather::listen_address(Self) -> String
 pub fn Feather::max_body_size(Self, Int32) -> Self
+pub fn Feather::method_not_allowed(Self, (Context) -> Unit raise) -> Self
 pub fn Feather::mount(Self, String, Self) -> Self
 pub fn Feather::mount_with(Self, String, Self, Array[((Context) -> Unit raise) -> (Context) -> Unit raise]) -> Self
 pub fn Feather::options(Self, String, (Context) -> Unit raise) -> Self

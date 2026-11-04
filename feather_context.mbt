@@ -858,6 +858,53 @@ pub fn Context::redirect(
 }
 
 ///|
+/// Install a `Location` response header without writing a redirect response.
+///
+/// Handlers that need to control the status and body themselves (a `303`
+/// render, a `201` pointing at a created resource, an HTML meta-refresh page)
+/// set those separately. Control characters are stripped from the value and a
+/// later `Context::redirect` overwrites it, exactly like any other header.
+pub fn Context::location(self : Context, url : String) -> Unit {
+  set_header_ignore_case(
+    self.response.headers,
+    "Location",
+    strip_control_characters(url),
+  )
+}
+
+///|
+/// Set the status and send its standard reason phrase as the body, like
+/// `res.sendStatus` in Express: `ctx.send_status(418)` answers with
+/// `418 I'm a teapot` as `text/plain`. Statuses that forbid a message body are
+/// answered without one: `204` and `205` clear the response like
+/// `no_content`, and `304` drops the body and its representation metadata
+/// while keeping validators that were already set.
+pub fn Context::send_status(self : Context, status : Int32) -> Unit {
+  if status == 204 || status == 205 {
+    self.no_content()
+    // `no_content` answers with 204; a `205 Reset Content` keeps its own
+    // status and frames like the server does: an empty body with an explicit
+    // zero length.
+    self.response.status = status
+    if status == 205 {
+      set_header_ignore_case(self.response.headers, "Content-Length", "0")
+    }
+    return
+  }
+  if status == 304 {
+    self.file = None
+    self.response.status = 304
+    self.response.body = ""
+    self.response.data = None
+    ignore(remove_header_ignore_case(self.response.headers, "Content-Type"))
+    clear_replaced_body_headers(self.response.headers)
+    ignore(remove_header_ignore_case(self.response.headers, "Content-Disposition"))
+    return
+  }
+  self.text(status, status_text(status))
+}
+
+///|
 pub fn Context::no_content(self : Context) -> Unit {
   self.file = None
   self.response.status = 204

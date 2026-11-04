@@ -210,6 +210,14 @@ pub fn Feather::fallback_with(
 }
 
 ///|
+/// Register a handler for requests whose method is not allowed.
+/// See `App::method_not_allowed` for details.
+pub fn Feather::method_not_allowed(self : Feather, handler : Handler) -> Feather {
+  ignore(self.app.method_not_allowed(handler))
+  self
+}
+
+///|
 pub fn Feather::max_body_size(self : Feather, size : Int32) -> Feather {
   ignore(self.app.max_body_size(size))
   self

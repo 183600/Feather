@@ -140,11 +140,21 @@ fn App::run_mounted_method_response(
   path : StringView,
   allow : String,
 ) -> Unit raise {
+  let options = normalize_method(ctx.request.method) == "OPTIONS"
   let respond : Handler = fn(ctx) raise {
-    if normalize_method(ctx.request.method) == "OPTIONS" {
+    if options {
       respond_options_with_allow(ctx, allow)
     } else {
-      method_not_allowed_with_allow(ctx, allow)
+      match self.method_not_allowed_handler {
+        Some(handler) => {
+          // The application owns the status and body, but the `Allow` header
+          // describing the path's methods is still the framework's to supply,
+          // so the response stays RFC 9110-compliant.
+          set_header_ignore_case(ctx.response.headers, "Allow", allow)
+          handler(ctx)
+        }
+        None => method_not_allowed_with_allow(ctx, allow)
+      }
     }
   }
   match self.auto_mount_chain(path) {
