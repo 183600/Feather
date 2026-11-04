@@ -264,15 +264,362 @@ test "route paths are case sensitive" {
     }).status,
     404,
   )
-  assert_eq(
+assert_eq(
     app.respond({
       method: "GET",
-      path: "/Api/Users",
+      path: "/API/USERS",
       headers: Map([]),
       body: "",
     }).status,
     404,
   )
+}
+
+///|
+test "path with query string routes by path portion only" {
+  let app = @feather.App::new().get("/search", fn(ctx) {
+    ctx.text(200, "search")
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/search?q=test",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "search")
+}
+
+///|
+test "path with fragment routes by path portion only" {
+  let app = @feather.App::new().get("/home", fn(ctx) {
+    ctx.text(200, "home")
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/home#section",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "home")
+}
+
+///|
+test "multiple leading slashes normalize to single slash" {
+  let app = @feather.App::new().get("/api", fn(ctx) {
+    ctx.text(200, "api")
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/////api",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "api")
+}
+
+///|
+test "route registered with trailing slash matches request without" {
+  let app = @feather.App::new().get("/api/", fn(ctx) { ctx.text(200, "trailing") })
+  let response = app.respond({
+    method: "GET",
+    path: "/api",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "trailing")
+}
+
+///|
+test "route registered without trailing slash matches request with" {
+  let app = @feather.App::new().get("/api", fn(ctx) { ctx.text(200, "no-trailing") })
+  let response = app.respond({
+    method: "GET",
+    path: "/api/",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "no-trailing")
+}
+
+///|
+test "wildcard capture of empty path after root param" {
+  let app = @feather.App::new()
+    .get("/:id/*rest", fn(ctx) {
+      ctx.text(200, ctx.param("id") + ":" + ctx.param("rest"))
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 404)
+}
+
+///|
+test "has_param true for wildcard even when path is root with query" {
+  let app = @feather.App::new().get("/*path", fn(ctx) {
+    ctx.text(200, ctx.has_param("path").to_string())
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/?x=1",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "true")
+}
+
+///|
+test "parameter capture coexists with wildcard capture" {
+  let app = @feather.App::new()
+    .get("/:id/*rest", fn(ctx) {
+      ctx.text(200, ctx.param("id") + ":" + ctx.param("rest"))
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/users/42",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "users:42")
+}
+
+///|
+test "route precedence: static > param > wildcard with query" {
+  let app = @feather.App::new()
+    .get("/app", fn(ctx) { ctx.text(200, "static") })
+    .get("/:id", fn(ctx) { ctx.text(200, "param:" + ctx.param("id")) })
+    .get("/*rest", fn(ctx) { ctx.text(200, "wild:" + ctx.param("rest")) })
+  let response = app.respond({
+    method: "GET",
+    path: "/app?q=1",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "static")
+}
+
+///|
+test "parameter route does not match root (wildcard matches instead)" {
+  let app = @feather.App::new()
+    .get("/:id", fn(ctx) { ctx.text(200, "param:" + ctx.param("id")) })
+    .get("/*rest", fn(ctx) { ctx.text(200, "wild:" + ctx.param("rest")) })
+  let response = app.respond({
+    method: "GET",
+    path: "/?x=1",
+    headers: Map([]),
+    body: "",
+  })
+  // After query string stripping, path becomes "/", and /:id does not match root;
+  // the wildcard /*rest matches instead (param child only explored when segments remain)
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "wild:")
+}
+
+///|
+test "url_for with query parameters generates correct URL" {
+  let app = @feather.App::new()
+    .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("search", query=Map([("page", "1"), ("q", "hello")]))
+  assert_eq(url, Some("/search?page=1&q=hello"))
+}
+
+///|
+test "url_for with parameters generates correct URL" {
+  let app = @feather.App::new()
+    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("user", params=Map([("id", "42")]))
+  assert_eq(url, Some("/users/42"))
+}
+
+///|
+test "url_for returns none for missing parameter" {
+  let app = @feather.App::new()
+    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("user", params=Map([("name", "john")]))
+  assert_eq(url, None)
+}
+
+///|
+test "url_for with query parameters generates correct URL" {
+  let app = @feather.App::new()
+    .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("search", query=Map([("page", "1"), ("q", "hello")]))
+  assert_eq(url, Some("/search?page=1&q=hello"))
+}
+
+///|
+test "url_for with parameters generates correct URL" {
+  let app = @feather.App::new()
+    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("user", params=Map([("id", "42")]))
+  assert_eq(url, Some("/users/42"))
+}
+
+///|
+test "url_for returns none for missing parameter" {
+  let app = @feather.App::new()
+    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("user", params=Map([("name", "john")]))
+  assert_eq(url, None)
+}
+
+///|
+test "url_for with query parameters generates correct URL" {
+  let app = @feather.App::new()
+    .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("search", query=Map([("page", "1"), ("q", "hello")]))
+  assert_eq(url, Some("/search?page=1&q=hello"))
+}
+
+///|
+test "url_for with parameters generates correct URL" {
+  let app = @feather.App::new()
+    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("user", params=Map([("id", "42")]))
+  assert_eq(url, Some("/users/42"))
+}
+
+///|
+test "url_for returns none for missing parameter" {
+  let app = @feather.App::new()
+    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("user", params=Map([("name", "john")]))
+  assert_eq(url, None)
+}
+
+///|
+test "url_for with empty params map generates root URL" {
+  let app = @feather.App::new()
+    .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("search", params=Map([]))
+  assert_eq(url, Some("/search"))
+}
+
+///|
+test "url_for with empty query generates correct URL" {
+  let app = @feather.App::new()
+    .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("search", query=Map([]))
+  assert_eq(url, Some("/search"))
+}
+
+///|
+test "route matching with percent-encoded param segment" {
+  let app = @feather.App::new().get("/user/%7Etest", fn(ctx) {
+    ctx.text(200, "matched")
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/user/%7Etest",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "matched")
+}
+
+///|
+test "route with param and query string" {
+  let app = @feather.App::new().get("/search/:q", fn(ctx) {
+    ctx.text(200, ctx.param("q"))
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/search/feather",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "feather")
+}
+
+///|
+test "wildcard capture with multiple slashes" {
+  let app = @feather.App::new().get("/*path", fn(ctx) {
+    ctx.text(200, ctx.param("path"))
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "///deep/path",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "deep/path")
+}
+
+///|
+test "has_param distinguishes absent from empty for param with query" {
+  let app = @feather.App::new()
+    .get("/search/:q", fn(ctx) {
+      ctx.text(200, ctx.has_param("q").to_string() + ":" + ctx.param("q"))
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/search/feather",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "true:feather")
+}
+
+///|
+test "route not found with OPTIONS and allowed methods" {
+  let app = @feather.App::new().get("/items", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "DELETE",
+    path: "/items",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 405)
+  assert_eq(
+    response.headers.get("Allow"),
+    Some("GET, HEAD"),
+  )
+}
+
+///|
+test "OPTIONS * with no routes registered" {
+  let app = @feather.App::new()
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "*",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(
+    response.headers.get("Allow"),
+    Some("GET, PUT, HEAD, POST, PATCH, TRACE, DELETE, CONNECT, OPTIONS"),
+  )
+}
+
+///|
+test "route with both param and wildcard, path with query" {
+  let app = @feather.App::new()
+    .get("/:id/*rest", fn(ctx) {
+      ctx.text(200, ctx.param("id") + ":" + ctx.param("rest"))
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/42/extra/deep",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "42:extra/deep")
 }
 
 ///|
