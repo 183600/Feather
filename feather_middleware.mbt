@@ -232,6 +232,67 @@ pub fn middleware_logger(
 }
 
 ///|
+/// Middleware that adds an `X-Response-Time` header with the elapsed
+/// milliseconds. The header is added for all responses, including errors and
+/// asynchronous endpoints (SSE, streaming, WebSocket, static files).
+///
+/// Pass `header` to customize the header name (default `X-Response-Time`).
+/// Pass `precision` to control decimal places (default `0` for whole milliseconds).
+pub fn middleware_response_time(
+  header~ : String = "X-Response-Time",
+  precision~ : Int32 = 0,
+) -> Middleware {
+  fn(next) {
+    fn(ctx) raise {
+      let started = @async.now()
+      next(ctx) catch {
+        err => {
+          let elapsed = @async.now() - started
+          ctx.set_header(header, format_elapsed(elapsed, precision))
+          raise err
+        }
+      }
+      let elapsed = @async.now() - started
+      ctx.set_header(header, format_elapsed(elapsed, precision))
+      if ctx.state.get(STATIC_CHAIN_PASS_KEY) is Some(_) ||
+        ctx.state.get(ASYNC_ENDPOINT_KEY) is Some(_) ||
+        ctx.state.get(ASYNC_CHAIN_PASS_KEY) is Some(_) {
+        ctx.defer_cleanup(fn() {
+          let elapsed = @async.now() - started
+          ctx.set_header(header, format_elapsed(elapsed, precision))
+        })
+      }
+    }
+  }
+}
+
+///|
+fn format_elapsed(millis : Int64, precision : Int32) -> String {
+  let p = if precision < 0 { 0 } else { precision }
+  if p == 0 {
+    millis.to_string()
+  } else {
+    let divisor = 10L ^ p.to_int64()
+    let whole = millis / divisor
+    let frac_raw = (millis % divisor).to_string()
+    let frac = if frac_raw.length() < p {
+      let builder = StringBuilder(size_hint=p)
+      let zeros = p - frac_raw.length()
+      let mut i = 0
+      while i < zeros {
+        builder.write_char('0')
+        i = i + 1
+      }
+      builder.write_string(frac_raw)
+      builder.to_string()
+    } else {
+      frac_raw
+    }
+    whole.to_string() + "." + frac
+  }
+}
+
+///|
 /// Normalize a request id: trim surrounding whitespace, remove control
 /// characters, and reject a value longer than `max_length` (`0` means no
 /// limit). Rejecting rather than truncating avoids splitting a surrogate pair
