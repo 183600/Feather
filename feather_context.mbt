@@ -635,13 +635,21 @@ fn safe_local_redirect_path(candidate : StringView) -> String? {
     decoded_view.contains("\\") {
     return None
   }
-  // Also check raw input for obvious violations
+  // Also check raw input for obvious violations and control characters
   if candidate.is_empty() ||
     candidate.unsafe_get(0) != ('/' : UInt16) ||
     candidate.has_prefix("//") ||
     candidate.has_prefix("/\\") ||
     candidate.contains("\\") {
     return None
+  }
+  let mut i = 0
+  while i < candidate.length() {
+    let code = candidate.unsafe_get(i).to_int()
+    if code < 0x20 || code == 0x7F {
+      return None
+    }
+    i = i + 1
   }
   // Browsers and intermediaries may percent-decode a path before following
   // it. Apply the same checks to the decoded path rather than only to the raw

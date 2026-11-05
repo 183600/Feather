@@ -35,7 +35,8 @@ pub fn middleware_body_limit(max_bytes : Int32) -> Middleware {
   let limit = if max_bytes < 0 { 0 } else { max_bytes }
   fn(next) {
     fn(ctx) raise {
-      if ctx.body_bytes().length() > limit {
+      let body_length = ctx.body_bytes().length()
+      if body_length > limit {
         clear_replaced_headers(ctx.response.headers)
         ctx.text(413, "413 Payload Too Large")
       } else {
