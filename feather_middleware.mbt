@@ -47,6 +47,26 @@ pub fn middleware_body_limit(max_bytes : Int32) -> Middleware {
 }
 
 ///|
+/// Middleware that truncates request bodies larger than `max_bytes` instead
+/// of rejecting with `413`. The truncated body is capped at `max_bytes` bytes
+/// and `Content-Length` is set accordingly. This allows handlers to still
+/// process partially-received requests.
+pub fn middleware_body_truncate(max_bytes : Int32) -> Middleware {
+  let limit = if max_bytes < 0 { 0 } else { max_bytes }
+  fn(next) {
+    fn(ctx) raise {
+      let body_length = ctx.body_bytes().length()
+      if body_length > limit {
+        let truncated = ctx.body_bytes()[:limit]
+        ctx.response.body = @utf8.decode(truncated.view())
+        ctx.set_header("Content-Length", truncated.length().to_string())
+      }
+      next(ctx)
+    }
+  }
+}
+
+///|
 /// Middleware that turns errors escaping the handler chain into responses:
 /// `HttpError` / `HttpErrorPayload` become their status and JSON body,
 /// `HttpProblem` becomes its RFC 7807 problem-details body, while any other
