@@ -388,3 +388,235 @@ test "OPTIONS on an unmatched path is 404 without Allow" {
   assert_eq(response.status, 404)
   assert_eq(response.headers.get("Allow"), None)
 }
+///|
+test "url_for returns nil for unknown route name" {
+  let app = @feather.App::new().get("/", fn(ctx) { ctx.text(200, "ok") })
+  assert_eq(app.url_for("unknown"), None)
+}
+
+///|
+test "url_for with named route and path params" {
+  let app = @feather.App::new()
+    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("user", params=Map([("id", "42")]))
+  assert_eq(url, Some("/users/42"))
+}
+
+///|
+test "url_for with named route and wildcard param with content" {
+  let app = @feather.App::new()
+    .route_named("file", "GET", "/static/*path", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("file", params=Map([("path", "css/app.css")]))
+  assert_eq(url, Some("/static/css/app.css"))
+}
+
+///|
+test "url_for with named route and wildcard param empty value returns path with empty wildcard" {
+  let app = @feather.App::new()
+    .route_named("file", "GET", "/static/*path", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("file", params=Map([("path", "")]))
+  // Empty wildcard value generates /static/ (trailing slash from the registered pattern)
+  assert_eq(url, Some("/static/"))
+}
+
+///|
+test "url_for with named route and query parameters sorted alphabetically" {
+  let app = @feather.App::new()
+    .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("search", query=Map([("page", "1"), ("q", "hello")]))
+  // Query params are sorted alphabetically: page comes before q
+  assert_eq(url, Some("/search?page=1&q=hello"))
+}
+
+///|
+test "url_for with named route and no params or query returns registered path" {
+  let app = @feather.App::new()
+    .route_named("ping", "GET", "/api/ping", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("ping")
+  assert_eq(url, Some("/api/ping"))
+}
+
+///|
+test "CONNECT route OPTIONS * responds with CONNECT and OPTIONS methods" {
+  let app = @feather.App::new()
+    .connect("/tunnel", fn(ctx) { ctx.text(201, "connected") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "*",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Allow"), Some("CONNECT, OPTIONS"))
+}
+
+///|
+test "TRACE route OPTIONS * responds with TRACE and OPTIONS methods" {
+  let app = @feather.App::new()
+    .trace("/echo", fn(ctx) { ctx.text(200, ctx.request.path) })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "*",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Allow"), Some("TRACE, OPTIONS"))
+}
+
+///|
+test "HEAD-only route specific path OPTIONS advertises HEAD only (no implicit OPTIONS)" {
+  let app = @feather.App::new().head("/items", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/items",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.body, "")
+  assert_eq(response.headers.get("Allow"), Some("HEAD"))
+}
+
+///|
+test "POST-only route specific path OPTIONS advertises POST only (no implicit OPTIONS)" {
+  let app = @feather.App::new().post("/items", fn(ctx) { ctx.text(201, "created") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/items",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.body, "")
+  assert_eq(response.headers.get("Allow"), Some("POST"))
+}
+
+///|
+test "OPTIONS on multi-method specific path advertises all methods with HEAD implicit" {
+  let app = @feather.App::new()
+    .get("/items", fn(ctx) { ctx.text(200, "list") })
+    .post("/items", fn(ctx) { ctx.text(201, "created") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/items",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Allow"), Some("GET, HEAD, POST"))
+}
+
+///|
+test "OPTIONS on parameter-matched specific path advertises that route's methods with HEAD" {
+  let app = @feather.App::new().get("/users/:id", fn(ctx) { ctx.text(200, "user") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/users/42",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Allow"), Some("GET, HEAD"))
+}
+
+///|
+test "OPTIONS on wildcard-matched specific path advertises GET and HEAD" {
+  let app = @feather.App::new().get("/*path", fn(ctx) { ctx.text(200, "wild") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/anything/here",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Allow"), Some("GET, HEAD"))
+}
+
+///|
+test "OPTIONS on unmatched path is 404 without Allow header" {
+  let app = @feather.App::new().get("/items", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/missing",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 404)
+  assert_eq(response.headers.get("Allow"), None)
+}
+
+///|
+test "static mount with dynamic prefix :tenant binds captured params" {
+  let app = @feather.App::new()
+    .static_files("/:tenant/assets", "/srv/public")
+  let file = app.static_file_for("/acme/assets/app.js")
+  assert_eq(file, Some("/srv/public/app.js"))
+}
+
+///|
+test "wildcard static mount at root captures remainder" {
+  let app = @feather.App::new()
+    .static_files("/*path", "/srv/root")
+  let file = app.static_file_for("/some/deep/path.txt")
+  assert_eq(file, Some("/srv/root/some/deep/path.txt"))
+}
+
+///|
+test "root wildcard does not match empty path when / route also exists" {
+  let app = @feather.App::new()
+    .get("/*path", fn(ctx) { ctx.text(200, "wildcard") })
+    .get("/", fn(ctx) { ctx.text(200, "root") })
+  let response = app.respond({
+    method: "GET",
+    path: "/",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "root")
+}
+
+///|
+test "dynamic route param capture with url_for" {
+  let app = @feather.App::new()
+    .route_named("item", "GET", "/items/:id", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("item", params=Map([("id", "42")]))
+  assert_eq(url, Some("/items/42"))
+}
+
+///|
+test "method not allowed with only TRACE method advertises TRACE only" {
+  let app = @feather.App::new().trace("/echo", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "POST",
+    path: "/echo",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 405)
+  // TRACE-only path: Allow lists TRACE only (no HEAD implicit for non-GET methods)
+  assert_eq(response.headers.get("Allow"), Some("TRACE"))
+}
+
+///|
+test "fallback handler preserves route pattern identity for matched routes" {
+  let app = @feather.App::new()
+    .get("/known", fn(ctx) { ctx.text(200, "ok") })
+    .fallback(fn(ctx) { ctx.text(404, "missing") })
+  let response = app.respond({
+    method: "GET",
+    path: "/unknown",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 404)
+  // Route pattern for unmatched paths should be empty
+  let ctx = @feather.Context::new({
+    method: "GET",
+    path: "/unknown",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(ctx.route_pattern(), "")
+}
