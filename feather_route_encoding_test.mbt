@@ -96,3 +96,13 @@ test "static path decoding keeps parameter captures raw" {
   })
   assert_eq(route_encoding_get(app, "/p/a%2Fb").body, "a%2Fb|a/b")
 }
+
+///|
+test "url_for encodes query parameter values" {
+  let app = @feather.App::new()
+  ignore(
+    app.route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") }),
+  )
+  let url = app.url_for("search", query=Map([("q", "hello world"), ("a", "b&c"), ("x", "100%")]))
+  assert_eq(url, Some("/search?a=b%26c&q=hello%20world&x=100%25"))
+}
