@@ -106,3 +106,14 @@ test "url_for encodes query parameter values" {
   let url = app.url_for("search", query=Map([("q", "hello world"), ("a", "b&c"), ("x", "100%")]))
   assert_eq(url, Some("/search?a=b%26c&q=hello%20world&x=100%25"))
 }
+
+///|
+test "url_for encodes path parameter slashes" {
+  let app = @feather.App::new()
+  ignore(
+    app.route_named("files", "GET", "/files/:path", fn(ctx) { ctx.text(200, ctx.param_decoded("path")) }),
+  )
+  let url = app.url_for("files", params=Map([("path", "a/b/c")]))
+  assert_eq(url, Some("/files/a%2Fb%2Fc"))
+  assert_eq(route_encoding_get(app, url.unwrap()).body, "a/b/c")
+}
