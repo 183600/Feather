@@ -77,6 +77,8 @@ pub fn middleware_bearer_auth_with((String) -> Bool, realm? : String) -> ((Conte
 
 pub fn middleware_body_limit(Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
+pub fn middleware_body_truncate(Int32) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
+
 pub fn middleware_cache_control(String, overwrite? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
 
 pub fn middleware_cache_private(Int32, immutable? : Bool) -> ((Context) -> Unit raise) -> (Context) -> Unit raise
