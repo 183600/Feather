@@ -55,11 +55,10 @@ pub fn middleware_body_truncate(max_bytes : Int32) -> Middleware {
   let limit = if max_bytes < 0 { 0 } else { max_bytes }
   fn(next) {
     fn(ctx) raise {
-      let body_length = ctx.body_bytes().length()
-      if body_length > limit {
-        let truncated = ctx.body_bytes()[:limit]
-        ctx.response.body = @utf8.decode(truncated.view())
-        ctx.set_header("Content-Length", truncated.length().to_string())
+      let body = ctx.body_bytes()
+      if body.length() > limit {
+        let truncated = body[:limit]
+        ctx.state.set("__feather_raw_body", base64_encode(truncated.to_bytes()))
       }
       next(ctx)
     }
