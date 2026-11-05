@@ -575,13 +575,13 @@ async fn handle_request(
            )
          }
        }
-       conn.skip_request_body() catch {
-         _ => ()
-       }
      } catch {
        _ => ()
      }
-   }
+     conn.skip_request_body() catch {
+       _ => ()
+     }
+    }
 }
 
 ///|
