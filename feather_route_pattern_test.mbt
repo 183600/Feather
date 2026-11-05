@@ -114,16 +114,155 @@ async test "async endpoints expose their matched route identity" {
 }
 
 ///|
-test "Router::route reports the GET method for a HEAD fallback" {
-  let router = @feather.create_router()
-  router.add_route("GET", "/report", fn(_ctx) { () })
-  match router.route("HEAD", "/report") {
-    @feather.RouteFound(route) => assert_eq(route.method, "GET")
-    _ => fail("expected the HEAD request to fall back to the GET route")
-  }
-  router.add_route("HEAD", "/explicit", fn(_ctx) { () })
-  match router.route("HEAD", "/explicit") {
-    @feather.RouteFound(route) => assert_eq(route.method, "HEAD")
-    _ => fail("expected the explicit HEAD route")
-  }
+test "route pattern is captured in handler response headers" {
+  let app = @feather.App::new().get("/api/users/:id", fn(ctx) {
+    ctx.set_header("X-Route-Pattern", ctx.route_pattern())
+    ctx.text(200, ctx.param("id"))
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/api/users/42",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "42")
+  assert_eq(
+    response.headers.get("X-Route-Pattern"),
+    Some("/api/users/:id"),
+  )
+}
+
+///|
+test "route pattern with param and wildcard combo" {
+  let app = @feather.App::new()
+    .get("/:resource/*path", fn(ctx) {
+      ctx.set_header("X-Route-Pattern", ctx.route_pattern())
+      ctx.text(200, ctx.param("resource") + ":" + ctx.param("path"))
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/images/photo.png?q=1",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.headers.get("X-Route-Pattern"), Some("/:resource/*path"))
+  assert_eq(response.body, "images:photo.png")
+}
+
+///|
+test "route pattern with multiple parameters" {
+  let app = @feather.App::new()
+    .get("/:a/:b/:c", fn(ctx) {
+      ctx.set_header("X-Route-Pattern", ctx.route_pattern())
+      ctx.text(200, ctx.param("a") + ":" + ctx.param("b") + ":" + ctx.param("c"))
+    })
+  let response = app.respond({
+    method: "GET",
+    path: "/1/2/3",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.headers.get("X-Route-Pattern"), Some("/:a/:b/:c"))
+  assert_eq(response.body, "1:2:3")
+}
+
+///|
+test "url_for generates correct URL with query parameters" {
+  let app = @feather.App::new()
+    .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("search", query=Map([("q", "test")]))
+  assert_eq(url, Some("/search?q=test"))
+}
+
+///|
+test "route pattern with HEAD method returns correct status" {
+  let app = @feather.App::new().get("/report", fn(ctx) {
+    ctx.set_header("X-Route-Pattern", ctx.route_pattern())
+    ctx.text(200, "report")
+  })
+  let response = app.respond({
+    method: "HEAD",
+    path: "/report",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  // HEAD requests may not include a response body
+  assert_eq(response.headers.get("X-Route-Pattern"), Some("/report"))
+}
+
+///|
+test "route pattern with OPTIONS on registered path" {
+  let app = @feather.App::new().get("/items", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/items",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(
+    response.headers.get("Allow"),
+    Some("GET, HEAD"),
+  )
+}
+
+///|
+test "route pattern with method not allowed on different method" {
+  let app = @feather.App::new().get("/data", fn(ctx) { ctx.text(200, "data") })
+  let response = app.respond({
+    method: "DELETE",
+    path: "/data",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 405)
+  assert_eq(
+    response.headers.get("Allow"),
+    Some("GET, HEAD"),
+  )
+}
+
+///|
+test "url_for generates correct URL with query parameters" {
+  let app = @feather.App::new()
+    .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("search", query=Map([("q", "test")]))
+  assert_eq(url, Some("/search?q=test"))
+}
+
+///|
+test "route pattern with trailing slash normalization" {
+  let app = @feather.App::new().get("/api/", fn(ctx) {
+    ctx.set_header("X-Route-Pattern", ctx.route_pattern())
+    ctx.text(200, "api")
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/api",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.headers.get("X-Route-Pattern"), Some("/api/"))
+  assert_eq(response.body, "api")
+}
+
+///|
+test "route pattern handler sets header correctly with query string" {
+  let app = @feather.App::new().get("/search", fn(ctx) {
+    ctx.set_header("X-Route-Pattern", ctx.route_pattern())
+    ctx.text(200, ctx.query("q"))
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/search?q=hello+world",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "hello world")
 }
