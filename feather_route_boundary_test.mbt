@@ -805,3 +805,109 @@ test "wildcard does not match when param route could match" {
   assert_eq(response.status, 200)
   assert_eq(response.body, "param:test")
 }
+
+///|
+test "route with percent-encoded forward slash %2F in path matches" {
+  let app = @feather.App::new().get("/user/%2Ftest", fn(ctx) {
+    ctx.text(200, "matched")
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/user/%2Ftest",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "matched")
+}
+
+///|
+test "route with unicode path segment matches" {
+  let app = @feather.App::new().get("/日本/测试", fn(ctx) {
+    ctx.text(200, "matched")
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/日本/测试",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "matched")
+}
+
+///|
+test "route with backslash in path matches" {
+  let app = @feather.App::new().get("/api/test\\value", fn(ctx) {
+    ctx.text(200, "matched")
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/api/test\\value",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "matched")
+}
+
+///|
+test "route with mixed percent-encoded and param segments" {
+  let app = @feather.App::new().get("/user/%E8%8A%82%E5%8F%8C", fn(ctx) {
+    ctx.text(200, "matched")
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/user/%E8%8A%82%E5%8F%8C",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "matched")
+}
+
+///|
+test "route with multiple query parameters and fragment" {
+  let app = @feather.App::new().get("/search", fn(ctx) {
+    ctx.text(200, ctx.query("q") + ctx.fragment())
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/search?q=hello#section",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "hellosection")
+}
+
+///|
+test "route with param and query combined" {
+  let app = @feather.App::new().get("/users/:id", fn(ctx) {
+    ctx.text(200, ctx.param("id") + ":" + ctx.query("q"))
+  })
+  let response = app.respond({
+    method: "GET",
+    path: "/users/42?q=json",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "42:json")
+}
+
+///|
+test "url_for with param and wildcard combined" {
+  let app = @feather.App::new()
+    .route_named("file", "GET", "/files/:name/*path", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("file", params=Map([("name", "report"), ("path", "a/b.txt")]), query=Map([("a", "1")]))
+  assert_eq(url, Some("/files/report/a/b.txt?a=1"))
+}
+
+///|
+test "url_for with empty wildcard generates trailing slash" {
+  let app = @feather.App::new()
+    .route_named("root", "GET", "/*", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("root")
+  assert_eq(url, Some("/"))
+}
