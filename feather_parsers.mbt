@@ -137,8 +137,10 @@ fn parse_uint64_value(value : StringView) -> UInt64? {
     if length > 20 {
       return None
     }
-    // For 20-digit strings, check if the value exceeds UInt64 max
-    if length == 20 && result > 18446744073709551615UL {
+    // Reject a 20-digit value before `result * 10 + digit` would wrap around
+    // past `UInt64::max`, instead of returning a silently truncated result.
+    let max = 18446744073709551615UL
+    if length == 20 && result > (max - digit.to_uint64()) / 10UL {
       return None
     }
     result = result * 10UL + digit.to_uint64()
