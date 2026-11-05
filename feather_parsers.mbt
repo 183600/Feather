@@ -87,6 +87,66 @@ fn parse_int64_value(value : StringView) -> Int64? {
 }
 
 ///|
+/// Parse an unsigned 32-bit decimal integer from a string view.
+///
+/// Returns `None` when the string is empty, contains non-digit characters,
+/// or the value exceeds the `UInt32` range.
+fn parse_uint32_value(value : StringView) -> UInt64? {
+  let length = value.length()
+  if length == 0 {
+    return None
+  }
+  let mut result : UInt64 = 0
+  for i in 0..<length {
+    let code = value.unsafe_get(i).to_int()
+    if code < 48 || code > 57 {
+      return None
+    }
+    let digit = code - 48
+    // Check for overflow: result * 10 + digit > 4294967295
+    if result > 4294967295UL / 10 {
+      return None
+    }
+    result = result * 10UL + digit.to_uint64()
+  }
+  if result > 4294967295UL {
+    None
+  } else {
+    Some(result)
+  }
+}
+
+///|
+/// Parse an unsigned 64-bit decimal integer from a string view.
+///
+/// Returns `None` when the string is empty, contains non-digit characters,
+/// or the value exceeds the `UInt64` range.
+fn parse_uint64_value(value : StringView) -> UInt64? {
+  let length = value.length()
+  if length == 0 {
+    return None
+  }
+  let mut result : UInt64 = 0
+  for i in 0..<length {
+    let code = value.unsafe_get(i).to_int()
+    if code < 48 || code > 57 {
+      return None
+    }
+    let digit = code - 48
+    // Quick check: if the string has more than 20 digits, it definitely overflows
+    if length > 20 {
+      return None
+    }
+    // For 20-digit strings, check if the value exceeds UInt64 max
+    if length == 20 && result > 18446744073709551615UL {
+      return None
+    }
+    result = result * 10UL + digit.to_uint64()
+  }
+  Some(result)
+}
+
+///|
 fn parse_bool_value(value : StringView) -> Bool? {
   if value == "true" || value == "1" {
     Some(true)
@@ -120,6 +180,70 @@ pub fn Context::param_bool(self : Context, name : String) -> Bool? {
 }
 
 ///|
+/// The percent-decoded route parameter `name` parsed as an unsigned 64-bit
+/// integer. Returns `None` when the parameter is absent or does not fit in
+/// `UInt64`.
+pub fn Context::param_uint32(self : Context, name : String) -> UInt64? {
+  parse_uint32_value(self.param_decoded(name).view())
+}
+
+///|
+/// The route parameter `name` parsed as an unsigned 64-bit integer, or
+/// `default` when the parameter is absent or does not fit in `UInt64`. See
+/// `Context::param_uint32`.
+pub fn Context::param_uint32_default(
+  self : Context,
+  name : String,
+  default : UInt64,
+) -> UInt64 {
+  self.param_uint32(name).unwrap_or(default)
+}
+
+///|
+/// The percent-decoded route parameter `name` parsed as an unsigned 64-bit
+/// integer. Returns `None` when the parameter is absent or does not fit in
+/// `UInt64`.
+pub fn Context::param_uint64(self : Context, name : String) -> UInt64? {
+  parse_uint64_value(self.param_decoded(name).view())
+}
+
+///|
+/// The route parameter `name` parsed as an unsigned 64-bit integer, or
+/// `default` when the parameter is absent or does not fit in `UInt64`. See
+/// `Context::param_uint64`.
+pub fn Context::param_uint64_default(
+  self : Context,
+  name : String,
+  default : UInt64,
+) -> UInt64 {
+  self.param_uint64(name).unwrap_or(default)
+}
+
+///|
+/// The query parameter `name` parsed as an unsigned 64-bit integer, or
+/// `default` when the parameter is absent or does not fit in `UInt64`. See
+/// `Context::query_uint32`.
+pub fn Context::query_uint32_default(
+  self : Context,
+  name : String,
+  default : UInt64,
+) -> UInt64 {
+  self.query_uint32(name).unwrap_or(default)
+}
+
+///|
+/// The query parameter `name` parsed as an unsigned 64-bit integer, or
+/// `default` when the parameter is absent or does not fit in `UInt64`. See
+/// `Context::query_uint64`.
+pub fn Context::query_uint64_default(
+  self : Context,
+  name : String,
+  default : UInt64,
+) -> UInt64 {
+  self.query_uint64(name).unwrap_or(default)
+}
+
+///|
 pub fn Context::query_int(self : Context, name : String) -> Int32? {
   parse_int_value(self.query(name).view())
 }
@@ -134,6 +258,21 @@ pub fn Context::query_int64(self : Context, name : String) -> Int64? {
 ///|
 pub fn Context::query_bool(self : Context, name : String) -> Bool? {
   parse_bool_value(self.query(name).view())
+}
+
+///|
+///|
+/// The query parameter `name` parsed as an unsigned 64-bit integer. Returns
+/// `None` when the parameter is absent or does not fit in `UInt64`.
+pub fn Context::query_uint32(self : Context, name : String) -> UInt64? {
+  parse_uint32_value(self.query(name).view())
+}
+
+///|
+/// The query parameter `name` parsed as an unsigned 64-bit integer. Returns
+/// `None` when the parameter is absent or does not fit in `UInt64`.
+pub fn Context::query_uint64(self : Context, name : String) -> UInt64? {
+  parse_uint64_value(self.query(name).view())
 }
 
 ///|
@@ -254,6 +393,45 @@ pub fn Context::header_bool(self : Context, name : String) -> Bool? {
 }
 
 ///|
+///|
+/// The request header `name` parsed as an unsigned 64-bit integer. Returns
+/// `None` when the header is absent, malformed, or outside the `UInt64` range.
+pub fn Context::header_uint32(self : Context, name : String) -> UInt64? {
+  parse_uint32_value(trim_ascii_space(self.header(name).view()))
+}
+
+///|
+/// The request header `name` parsed as an unsigned 64-bit integer, or
+/// `default` when the header is absent or does not fit in `UInt64`. See
+/// `Context::header_uint32`.
+pub fn Context::header_uint32_default(
+  self : Context,
+  name : String,
+  default : UInt64,
+) -> UInt64 {
+  self.header_uint32(name).unwrap_or(default)
+}
+
+///|
+/// The request header `name` parsed as an unsigned 64-bit integer. Returns
+/// `None` when the header is absent, malformed, or outside the `UInt64` range.
+pub fn Context::header_uint64(self : Context, name : String) -> UInt64? {
+  parse_uint64_value(trim_ascii_space(self.header(name).view()))
+}
+
+///|
+/// The request header `name` parsed as an unsigned 64-bit integer, or
+/// `default` when the header is absent or does not fit in `UInt64`. See
+/// `Context::header_uint64`.
+pub fn Context::header_uint64_default(
+  self : Context,
+  name : String,
+  default : UInt64,
+) -> UInt64 {
+  self.header_uint64(name).unwrap_or(default)
+}
+
+///|
 /// The request header `name` parsed as a finite floating-point number.
 /// Returns `None` when the header is absent, malformed, or names `nan`/`inf`.
 pub fn Context::header_float(self : Context, name : String) -> Double? {
@@ -282,6 +460,50 @@ pub fn Context::form_int64(self : Context, name : String) -> Int64? {
 /// (`true`/`false` and `1`/`0`).
 pub fn Context::form_bool(self : Context, name : String) -> Bool? {
   parse_bool_value(self.form(name).view())
+}
+
+///|
+/// The form field `name` parsed as an unsigned 32-bit integer. Both urlencoded
+/// and multipart bodies are supported. Returns `None` when the request body is
+/// not a form, the field is absent, or the value is not a valid `UInt32`.
+///|
+/// The form field `name` parsed as an unsigned 64-bit integer. Both urlencoded
+/// and multipart bodies are supported. Returns `None` when the request body is
+/// not a form, the field is absent, or the value does not fit in `UInt64`.
+pub fn Context::form_uint32(self : Context, name : String) -> UInt64? {
+  parse_uint32_value(self.form(name).view())
+}
+
+///|
+/// The form field `name` parsed as an unsigned 64-bit integer. Both urlencoded
+/// and multipart bodies are supported. Returns `None` when the request body is
+/// not a form, the field is absent, or the value does not fit in `UInt64`.
+pub fn Context::form_uint64(self : Context, name : String) -> UInt64? {
+  parse_uint64_value(self.form(name).view())
+}
+
+///|
+/// The form field `name` parsed as an unsigned 64-bit integer, or
+/// `default` when the field is absent or does not fit in `UInt64`. See
+/// `Context::form_uint32`.
+pub fn Context::form_uint32_default(
+  self : Context,
+  name : String,
+  default : UInt64,
+) -> UInt64 {
+  self.form_uint32(name).unwrap_or(default)
+}
+
+///|
+/// The form field `name` parsed as an unsigned 64-bit integer, or
+/// `default` when the field is absent or does not fit in `UInt64`. See
+/// `Context::form_uint64`.
+pub fn Context::form_uint64_default(
+  self : Context,
+  name : String,
+  default : UInt64,
+) -> UInt64 {
+  self.form_uint64(name).unwrap_or(default)
 }
 
 ///|
