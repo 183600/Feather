@@ -294,3 +294,97 @@ test "wildcard route at root with empty path preference" {
   assert_eq(response.status, 200)
   assert_eq(response.body, "root")
 }
+
+///|
+/// `OPTIONS` on a path answers `204` with the path's allowed methods. `HEAD`
+/// is only advertised alongside `GET` (RFC 9110 §9.3.2), so a `HEAD`-only
+/// route must not imply `GET`.
+test "OPTIONS on a HEAD-only route advertises HEAD only" {
+  let app = @feather.App::new().head("/items", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/items",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.body, "")
+  assert_eq(response.headers.get("Allow"), Some("HEAD"))
+}
+
+///|
+/// A `POST`-only route advertises `POST`, not the implicit `HEAD` that `GET`
+/// carries.
+test "OPTIONS on a POST-only route advertises POST only" {
+  let app = @feather.App::new().post("/items", fn(ctx) { ctx.text(201, "created") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/items",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Allow"), Some("POST"))
+}
+
+///|
+/// `OPTIONS` on a path matched by a wildcard route reports the wildcard's
+/// methods, and the captured parameter is not exposed to the automatic answer.
+test "OPTIONS on a wildcard-matched path advertises GET and HEAD" {
+  let app = @feather.App::new().get("/*path", fn(ctx) { ctx.text(200, "wild") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/anything/here",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Allow"), Some("GET, HEAD"))
+}
+
+///|
+/// A path with several registered methods advertises all of them, with `HEAD`
+/// implicit whenever `GET` is present.
+test "OPTIONS on a multi-method path advertises every registered method" {
+  let app = @feather.App::new()
+    .get("/items", fn(ctx) { ctx.text(200, "list") })
+    .post("/items", fn(ctx) { ctx.text(201, "created") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/items",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Allow"), Some("GET, HEAD, POST"))
+}
+
+///|
+/// `OPTIONS` on a path matched by a parameter route advertises that route's
+/// methods.
+test "OPTIONS on a parameter-matched path advertises GET and HEAD" {
+  let app = @feather.App::new().get("/users/:id", fn(ctx) { ctx.text(200, "user") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/users/42",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Allow"), Some("GET, HEAD"))
+}
+
+///|
+/// `OPTIONS` on a path that no route matches is still `404`, without an
+/// `Allow` header.
+test "OPTIONS on an unmatched path is 404 without Allow" {
+  let app = @feather.App::new().get("/items", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "/missing",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 404)
+  assert_eq(response.headers.get("Allow"), None)
+}
