@@ -198,3 +198,99 @@ test "fallback handler sets empty route identity" {
   })
   assert_eq(response.status, 404)
 }
+
+///|
+test "url_for with named route and path params" {
+  let app = @feather.App::new()
+    .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("user", params=Map([("id", "42")]))
+  assert_eq(url, Some("/users/42"))
+}
+
+///|
+test "url_for with named route and wildcard param" {
+  let app = @feather.App::new()
+    .route_named("file", "GET", "/static/*path", fn(ctx) { ctx.text(200, "ok") })
+  let url = app.url_for("file", params=Map([("path", "css/app.css")]))
+  assert_eq(url, Some("/static/css/app.css"))
+}
+
+///|
+test "OPTIONS * with CONNECT route includes CONNECT method" {
+  let app = @feather.App::new()
+    .connect("/tunnel", fn(ctx) {
+      ctx.text(201, "connected")
+    })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "*",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Allow"), Some("CONNECT, OPTIONS"))
+}
+
+///|
+test "OPTIONS * with TRACE route includes TRACE method" {
+  let app = @feather.App::new()
+    .trace("/echo", fn(ctx) { ctx.text(200, ctx.request.path) })
+  let response = app.respond({
+    method: "OPTIONS",
+    path: "*",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 204)
+  assert_eq(response.headers.get("Allow"), Some("TRACE, OPTIONS"))
+}
+
+///|
+test "HEAD falls back to GET for parameter route" {
+  let app = @feather.App::new().get("/users/:id", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "HEAD",
+    path: "/users/42",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "")
+}
+
+///|
+test "method not allowed returns Allow header with HEAD implicit" {
+  let app = @feather.App::new()
+    .get("/items", fn(ctx) { ctx.text(200, "ok") })
+  let response = app.respond({
+    method: "POST",
+    path: "/items",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 405)
+  assert_eq(response.headers.get("Allow"), Some("GET, HEAD"))
+}
+
+///|
+test "static mount with dynamic prefix binds captured params" {
+  let app = @feather.App::new()
+    .static_files("/:tenant/assets", "/srv/public")
+  let file = app.static_file_for("/acme/assets/app.js")
+  assert_eq(file, Some("/srv/public/app.js"))
+}
+
+///|
+test "wildcard route at root with empty path preference" {
+  let app = @feather.App::new()
+    .get("/*path", fn(ctx) { ctx.text(200, "wildcard") })
+    .get("/", fn(ctx) { ctx.text(200, "root") })
+  let response = app.respond({
+    method: "GET",
+    path: "/",
+    headers: Map([]),
+    body: "",
+  })
+  assert_eq(response.status, 200)
+  assert_eq(response.body, "root")
+}
