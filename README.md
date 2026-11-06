@@ -24,6 +24,7 @@ architecture is described below.
 - [Quick start](#quick-start)
 - [Requests and context](#requests-and-context)
 - [Routing](#routing)
+- [Mounting applications](#mounting-applications)
 - [Middleware](#middleware)
 - [Responses and conditional requests](#responses-and-conditional-requests)
 - [Static files](#static-files)
@@ -204,6 +205,11 @@ the root domain, so `a.b.example.com` reports the subdomains `a` and `b`
 (pass `root_domains` for a root domain with a different number of labels).
 `Context::accepted_types()` lists the media ranges of the `Accept` header,
 most preferred first, with the ranges the client rejects (`q=0`) dropped.
+`Context::accepts_language` and `Context::preferred_language` do the same for
+`Accept-Language`, and `Context::accepts_encoding` /
+`Context::preferred_encoding` for `Accept-Encoding`; the `preferred_*`
+helpers keep the server's own order when quality values tie, and return `None`
+when the client rejects every offer.
 
 `Context::set_content_type("text/plain", parameters=[("charset", "utf-8")])`
 sets a response media type and appends parameters in order, quoting values that
@@ -256,6 +262,34 @@ plus WebSocket, SSE, streaming and static registrations, each tagged with an
 (and the other public value types, such as `Request`, `Response`, `Config`,
 `Jwt` and `ByteRange`) implement `Show` and `Debug`, so they can be printed
 directly.
+
+## Mounting applications
+
+`app.mount(prefix, child)` serves another application under a path prefix:
+
+```moonbit
+let child = @feather.App::new()
+  .get("/hello", fn(ctx) { ctx.text(200, "hello") })
+  .route_named("child", "GET", "/items/:id", handler)
+
+let app = @feather.App::new().mount("/sub", child)
+```
+
+The mounted application keeps its routes, middleware, static mounts, named
+routes, WebSocket, server-sent events and streaming handlers; the prefix is
+prepended to every path it registers, so the example above answers
+`/sub/hello` and `/sub/items/7`. The parent's named routes stay reachable
+through the parent, and `url_for` resolves the child's named routes through
+the parent as well (`app.url_for("child", params={ "id": "7" })` answers
+`/sub/items/7`). The parent's middleware wraps the mounted application, so
+authentication or decorating middleware installed on the parent also covers
+it. `app.mount_with(prefix, child, middlewares)` adds middleware that wraps
+everything the child contributes.
+
+The mounted application's fallback handler, application-wide request timeout,
+body limit and compression settings are not carried over: the parent governs
+those. Per-route timeouts and body limits travel with the routes they belong
+to.
 
 ## Middleware
 
@@ -584,6 +618,17 @@ response, so route middleware can cache just an API subset. The
 `middleware_etag()` and `middleware_compress(min_size=0)` wrappers expose the
 same decisions as middleware, which pairs naturally with
 `App::use_prefix` or `route_with` to cache or compress only one route group.
+
+`app.respond(request)` runs a request through the application without a
+server and returns the `Response` the handler produced; the middleware chain,
+the routing and the error handling are the same, but the response is never
+compressed, because that needs the asynchronous gzip encoder. The async
+`app.respond_async(request)` does compress, so it returns the response the
+server would send. Both facades answer a request that asks for a file with
+the file's metadata only (status and headers, but no bytes), because only the
+server can send the file's bytes. Static mounts, WebSocket, server-sent events
+and streaming endpoints need a live connection and are not part of either
+facade.
 
 ## Static files
 
