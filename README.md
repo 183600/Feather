@@ -451,12 +451,14 @@ session store, using a signed double-submit cookie. Safe requests receive a
 random token in a cookie whose value is HMAC-signed with `secret`, and unsafe
 requests must echo the token in `X-CSRF-Token`, a URL-encoded form field, or a
 multipart field. Handlers read the token with
-`Context::csrf_cookie_token()` when rendering a form. Because the cookie is
-signed, a sibling subdomain or another cookie-injection path cannot forge a
-valid token without the secret. The cookie name, field, header, path,
-`same_site`, `secure`, `partitioned`, `max_age`, and `safe_methods` are all
-configurable, and `http_only` defaults to `false` so browser scripts can read
-the cookie for JSON requests (leave it `true` when only forms need the token).
+`Context::csrf_cookie_token()` when rendering a form; a script that reads the
+cookie instead may send the cookie value back unchanged, because that value is
+the one the server checks against. Because the cookie is signed, a sibling
+subdomain or another cookie-injection path cannot forge a valid token without
+the secret. The cookie name, field, header, path, `same_site`, `secure`,
+`partitioned`, `max_age`, and `safe_methods` are all configurable, and
+`http_only` defaults to `false` so browser scripts can read the cookie for JSON
+requests (leave it `true` when only forms need the token).
 
 `middleware_session` also accepts `cookie`, `path`, `domain`, `same_site`,
 `http_only`, `secure`, `partitioned`, and `rolling` options; `domain` scopes a

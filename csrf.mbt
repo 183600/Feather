@@ -216,8 +216,11 @@ pub fn Context::csrf_cookie_token(self : Context) -> String {
 /// `middleware_session`: a random token is stored in a cookie whose value is
 /// HMAC-signed with `secret`, and unsafe requests must echo the token in the
 /// `header` (default `X-CSRF-Token`), an urlencoded `field`, or a multipart
-/// field (default `_csrf`). Safe methods receive or refresh the cookie and can
-/// read the token with `Context::csrf_cookie_token`.
+/// field (default `_csrf`). The echo may be the plain token returned by
+/// `Context::csrf_cookie_token` or the signed cookie value the browser holds,
+/// so a script that reads the cookie can send it back unchanged. Safe methods
+/// receive or refresh the cookie and can read the token with
+/// `Context::csrf_cookie_token`.
 ///
 /// The signature is what makes the double-submit pattern trustworthy: a
 /// sibling subdomain or an attacker-controlled cookie cannot forge a token
@@ -265,6 +268,16 @@ pub fn middleware_csrf_cookie(
         Some(token) => if token == "" { None } else { Some(token) }
         None => None
       }
+      // The browser holds the signed cookie value, so that value is accepted
+      // as an echo of the token as well. A script that reads the cookie (the
+      // `http_only=false` flow) sends exactly that value back, while a
+      // server-rendered form embeds the plain token from
+      // `Context::csrf_cookie_token`. Only a cookie that verified against the
+      // secret qualifies, so a forged value still fails.
+      let signed_value = match existing {
+        Some(_) => ctx.cookie(cookie_name)
+        None => None
+      }
       let token = match existing {
         Some(token) => {
           ctx.state.set(CSRF_COOKIE_TOKEN_STATE_KEY, token)
@@ -304,9 +317,15 @@ pub fn middleware_csrf_cookie(
       if provided == "" {
         provided = trim_ascii_space(ctx.multipart_value(field_name).view())
       }
-      if token != "" &&
+      let matches_token = token != "" &&
         provided != "" &&
-        csrf_constant_time_equal(provided, token.view()) {
+        csrf_constant_time_equal(provided, token.view())
+      let matches_signed_value = match signed_value {
+        Some(value) =>
+          provided != "" && csrf_constant_time_equal(provided, value.view())
+        None => false
+      }
+      if matches_token || matches_signed_value {
         next(ctx)
       } else {
         clear_replaced_headers(ctx.response.headers)
