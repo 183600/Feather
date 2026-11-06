@@ -494,19 +494,23 @@ async fn handle_request(
         } else {
           send_error_and_close(conn, 504, "504 Gateway Timeout", head)
         }
-      PayloadTooLarge =>
+      PayloadTooLarge => {
         if response_started.val {
           conn.close()
         } else {
           send_error_and_close(conn, 413, "413 Payload Too Large", head)
         }
-      MalformedRequestBody =>
+        conn.skip_request_body() catch { _ => () }
+      }
+      MalformedRequestBody => {
         if response_started.val {
           conn.close()
         } else {
           send_simple(conn, 400, "400 Bad Request", head)
         }
-      UnsupportedRequestBodyCoding =>
+        conn.skip_request_body() catch { _ => () }
+      }
+      UnsupportedRequestBodyCoding => {
         if response_started.val {
           conn.close()
         } else {
@@ -514,6 +518,8 @@ async fn handle_request(
             conn, 415, "415 Unsupported Media Type", head,
           )
         }
+        conn.skip_request_body() catch { _ => () }
+      }
       err => {
         ignore(err)
         if response_started.val {
@@ -521,11 +527,9 @@ async fn handle_request(
         } else {
           send_error_and_close(conn, 500, "500 Internal Server Error", head)
         }
-      }
-    }
-    conn.skip_request_body() catch {
-      _ => ()
-    }
+        conn.skip_request_body() catch { _ => () }
+}
+}
 } else {
       let (response, file, auto_etag, compress, compress_min_size) =
         build_response(app, request, body, conn, body_limit) catch {

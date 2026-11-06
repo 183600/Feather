@@ -226,6 +226,56 @@ async test "server rejects oversized bodies" {
 }
 
 ///|
+async test "server skips request body on payload too large error" {
+  let app = @feather.App::new().post("/upload", fn(ctx) {
+    ctx.text(200, ctx.request.body)
+  })
+  with_raw_server(app, conn => {
+    conn.write(
+      @utf8.encode(
+        "POST /upload HTTP/1.1\r\nHost: test\r\nContent-Length: 2000\r\n\r\n",
+      ),
+    )
+    conn.write(@utf8.encode("x".repeat(2000)))
+    let head = read_http_head(conn)
+    assert_true(head.has_prefix("HTTP/1.1 413"), msg=head)
+    let remaining = try {
+      @async.with_timeout(2000, () => {
+        let mut done = false
+        let mut remaining_bytes = 0
+        while !done {
+          match conn.read_some() {
+            Some(chunk) => {
+              remaining_bytes = remaining_bytes + chunk.length()
+            }
+            None => done = true
+          }
+        }
+        remaining_bytes
+      })
+    } catch {
+      _ => 0
+    }
+    assert_eq(remaining, 0, msg="Request body was not skipped after 413 error, remaining=$remaining")
+    let closed = try {
+      @async.with_timeout(2000, () => {
+        let mut done = false
+        while !done {
+          match conn.read_some() {
+            Some(_) => ()
+            None => done = true
+          }
+        }
+        true
+      })
+    } catch {
+      _ => false
+    }
+    assert_true(closed, msg="Connection was not closed after 413 error")
+  })
+}
+
+///|
 async test "server answers expect 100-continue before reading the body" {
   let app = @feather.App::new().post("/upload", fn(ctx) {
     ctx.text(200, ctx.request.body)
