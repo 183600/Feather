@@ -392,6 +392,13 @@ async fn write_file_range(
     remaining = remaining - read.to_int64()
     position = position + read.to_int64()
   }
+  if remaining > 0 {
+    // The file shrank or a read failed after the response already declared
+    // `Content-Length`, so the body cannot be completed. Close the
+    // connection instead of ending the response cleanly: a clean end would
+    // let keep-alive clients treat the truncated body as complete.
+    conn.close()
+  }
 }
 
 ///|

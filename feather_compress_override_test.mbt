@@ -133,3 +133,26 @@ async test "server honors per-response compression overrides" {
     assert_eq(client.read_all().text(), body)
   })
 }
+
+///|
+async test "pre-encoded response with non-compressible type still negotiates" {
+  let app = @feather.App::new().get("/pdf", fn(ctx) {
+    ctx.text(200, "pre-encoded")
+    ctx.set_header("Content-Type", "application/pdf")
+    ctx.set_header("Content-Encoding", "gzip")
+  })
+  let response = app.respond_async({
+    method: "GET",
+    path: "/pdf",
+    headers: Map([("Accept-Encoding", "gzip")]),
+    body: "",
+  })
+  // The handler-supplied `Content-Encoding` must be negotiated even when the
+  // content type is not compressible: the encoded representation is
+  // acceptable here, so it is kept and `Vary` is declared (without which
+  // shared caches could serve the encoded variant to clients that do not
+  // accept it).
+  assert_eq(response.status, 200)
+  assert_eq(response.headers.get("Content-Encoding"), Some("gzip"))
+  assert_eq(response.headers.get("Vary"), Some("Accept-Encoding"))
+}

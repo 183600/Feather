@@ -299,7 +299,15 @@ pub fn middleware_response_time(
 
 ///|
 fn format_elapsed(millis : Int64, precision : Int32) -> String {
-  let p = if precision < 0 { 0 } else { precision }
+  // Clamp both ends: a precision above 18 overflows `10L ^ p`, which would
+  // corrupt the reported elapsed time.
+  let p = if precision < 0 {
+    0
+  } else if precision > 18 {
+    18
+  } else {
+    precision
+  }
   if p == 0 {
     millis.to_string()
   } else {

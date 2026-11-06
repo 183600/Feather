@@ -2,8 +2,11 @@
 # Fail if throwaway agent/probe files or a stub README were committed.
 set -euo pipefail
 
+# Do not mask a failing `git ls-files` (e.g. outside a git repository) with
+# `|| true` inside the same pipeline: the check must fail closed.
+files="$(git ls-files)"
 bad="$(
-  git ls-files |
+  printf '%s\n' "$files" |
     grep -E '(^|/)(zz_|tmp_|_scratch_|dbg_)' || true
 )"
 if [[ -n "$bad" ]]; then

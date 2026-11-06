@@ -509,6 +509,14 @@ async fn compress_response(
     }
     return
   }
+  // Negotiate a handler-supplied `Content-Encoding` before the content-type
+  // check: a pre-encoded response whose type is not compressible still
+  // selects between the encoded and identity representations, so it must
+  // declare `Vary: Accept-Encoding` (and answer 406 when identity is
+  // explicitly refused) instead of returning early here.
+  if negotiate_existing_encoding(accept_encoding, response) {
+    return
+  }
   // Without a compressible `Content-Type` the server can only send identity.
   let content_type = match
     get_header_ignore_case(response.headers, "Content-Type") {
@@ -526,9 +534,6 @@ async fn compress_response(
       add_vary_accept_encoding(response)
       set_not_acceptable(response)
     }
-    return
-  }
-  if negotiate_existing_encoding(accept_encoding, response) {
     return
   }
   match get_header_ignore_case(response.headers, "Cache-Control") {
