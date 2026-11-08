@@ -227,7 +227,7 @@ test "route pattern with method not allowed on different method" {
 }
 
 ///|
-test "url_for generates correct URL with query parameters" {
+test "url_for appends a q query parameter to a named search route" {
   let app = @feather.App::new()
     .route_named("search", "GET", "/search", fn(ctx) { ctx.text(200, "ok") })
   let url = app.url_for("search", query=Map([("q", "test")]))

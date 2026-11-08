@@ -389,13 +389,13 @@ test "OPTIONS on an unmatched path is 404 without Allow" {
   assert_eq(response.headers.get("Allow"), None)
 }
 ///|
-test "url_for returns nil for unknown route name" {
+test "url_for returns nil for an unregistered name on a single-route app" {
   let app = @feather.App::new().get("/", fn(ctx) { ctx.text(200, "ok") })
   assert_eq(app.url_for("unknown"), None)
 }
 
 ///|
-test "url_for with named route and path params" {
+test "url_for substitutes a named :id path param" {
   let app = @feather.App::new()
     .route_named("user", "GET", "/users/:id", fn(ctx) { ctx.text(200, "ok") })
   let url = app.url_for("user", params=Map([("id", "42")]))
