@@ -48,10 +48,11 @@ pub fn middleware_body_limit(max_bytes : Int32) -> Middleware {
 
 ///|
 /// Middleware that truncates request bodies larger than `max_bytes` instead
-/// of rejecting with `413`. The truncated body is capped at `max_bytes` bytes
-/// and replaces the raw body stored in the context state, so later body
-/// accessors see the truncated bytes. This allows handlers to still process
-/// partially-received requests.
+/// of rejecting with `413`. The truncated bytes replace the raw body stored
+/// under the raw-body state key, so `Context::body_bytes` and
+/// `Context::body_text` see at most `max_bytes` bytes. `Request::body` is
+/// left untouched and no `Content-Length` header is updated. This allows
+/// handlers to still process partially-received requests.
 pub fn middleware_body_truncate(max_bytes : Int32) -> Middleware {
   let limit = if max_bytes < 0 { 0 } else { max_bytes }
   fn(next) {
@@ -59,7 +60,7 @@ pub fn middleware_body_truncate(max_bytes : Int32) -> Middleware {
       let body = ctx.body_bytes()
       if body.length() > limit {
         let truncated = body[:limit]
-        ctx.state.set("__feather_raw_body", base64_encode(truncated.to_bytes()))
+        ctx.state.set(RAW_BODY_STATE_KEY, base64_encode(truncated.to_bytes()))
       }
       next(ctx)
     }
