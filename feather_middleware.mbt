@@ -49,8 +49,9 @@ pub fn middleware_body_limit(max_bytes : Int32) -> Middleware {
 ///|
 /// Middleware that truncates request bodies larger than `max_bytes` instead
 /// of rejecting with `413`. The truncated body is capped at `max_bytes` bytes
-/// and `Content-Length` is set accordingly. This allows handlers to still
-/// process partially-received requests.
+/// and replaces the raw body stored in the context state, so later body
+/// accessors see the truncated bytes. This allows handlers to still process
+/// partially-received requests.
 pub fn middleware_body_truncate(max_bytes : Int32) -> Middleware {
   let limit = if max_bytes < 0 { 0 } else { max_bytes }
   fn(next) {
@@ -511,9 +512,18 @@ pub fn Context::vary(self : Context, value : String) -> Unit {
   }
   let additions : Array[String] = []
   for name in names {
-    if !header_list_has_token(existing.view(), name.view()) &&
-      !header_list_has_token(additions.join(", ").view(), name.view()) {
-      additions.push(name)
+    if !header_list_has_token(existing.view(), name.view()) {
+      // Compare against the names already collected instead of re-joining the
+      // whole array on every iteration (avoid repeated string allocations).
+      let mut duplicate = false
+      for added in additions {
+        if added.view().equal_ignore_ascii_case(name.view()) {
+          duplicate = true
+        }
+      }
+      if !duplicate {
+        additions.push(name)
+      }
     }
   }
   if additions.length() == 0 {

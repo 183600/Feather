@@ -636,14 +636,11 @@ fn copy_multipart_parts(parts : Array[MultipartPart]) -> Array[MultipartPart] {
 }
 
 ///|
-/// Deep-copy a parsed multipart result, including each part's header map, so
-/// callers can mutate the result without disturbing the parse cache.
+/// Copy a parsed multipart result for the multipart entry points, including
+/// each part's header map, so callers can mutate the result without disturbing
+/// the parse cache.
 fn clone_multipart_parts(parts : Array[MultipartPart]) -> Array[MultipartPart] {
-  let copy : Array[MultipartPart] = Array(capacity=parts.length())
-  for part in parts {
-    copy.push(copy_multipart_part(part))
-  }
-  copy
+  copy_multipart_parts(parts)
 }
 
 ///|

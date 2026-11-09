@@ -182,16 +182,16 @@ pub fn Context::param_bool(self : Context, name : String) -> Bool? {
 }
 
 ///|
-/// The percent-decoded route parameter `name` parsed as an unsigned 64-bit
+/// The percent-decoded route parameter `name` parsed as an unsigned 32-bit
 /// integer. Returns `None` when the parameter is absent or does not fit in
-/// `UInt64`.
+/// `UInt32`.
 pub fn Context::param_uint32(self : Context, name : String) -> UInt64? {
   parse_uint32_value(self.param_decoded(name).view())
 }
 
 ///|
-/// The route parameter `name` parsed as an unsigned 64-bit integer, or
-/// `default` when the parameter is absent or does not fit in `UInt64`. See
+/// The route parameter `name` parsed as an unsigned 32-bit integer, or
+/// `default` when the parameter is absent or does not fit in `UInt32`. See
 /// `Context::param_uint32`.
 pub fn Context::param_uint32_default(
   self : Context,
@@ -222,8 +222,8 @@ pub fn Context::param_uint64_default(
 }
 
 ///|
-/// The query parameter `name` parsed as an unsigned 64-bit integer, or
-/// `default` when the parameter is absent or does not fit in `UInt64`. See
+/// The query parameter `name` parsed as an unsigned 32-bit integer, or
+/// `default` when the parameter is absent or does not fit in `UInt32`. See
 /// `Context::query_uint32`.
 pub fn Context::query_uint32_default(
   self : Context,
@@ -263,9 +263,8 @@ pub fn Context::query_bool(self : Context, name : String) -> Bool? {
 }
 
 ///|
-///|
-/// The query parameter `name` parsed as an unsigned 64-bit integer. Returns
-/// `None` when the parameter is absent or does not fit in `UInt64`.
+/// The query parameter `name` parsed as an unsigned 32-bit integer. Returns
+/// `None` when the parameter is absent or does not fit in `UInt32`.
 pub fn Context::query_uint32(self : Context, name : String) -> UInt64? {
   parse_uint32_value(self.query(name).view())
 }
@@ -395,16 +394,15 @@ pub fn Context::header_bool(self : Context, name : String) -> Bool? {
 }
 
 ///|
-///|
-/// The request header `name` parsed as an unsigned 64-bit integer. Returns
-/// `None` when the header is absent, malformed, or outside the `UInt64` range.
+/// The request header `name` parsed as an unsigned 32-bit integer. Returns
+/// `None` when the header is absent, malformed, or outside the `UInt32` range.
 pub fn Context::header_uint32(self : Context, name : String) -> UInt64? {
   parse_uint32_value(trim_ascii_space(self.header(name).view()))
 }
 
 ///|
-/// The request header `name` parsed as an unsigned 64-bit integer, or
-/// `default` when the header is absent or does not fit in `UInt64`. See
+/// The request header `name` parsed as an unsigned 32-bit integer, or
+/// `default` when the header is absent or does not fit in `UInt32`. See
 /// `Context::header_uint32`.
 pub fn Context::header_uint32_default(
   self : Context,
@@ -467,11 +465,7 @@ pub fn Context::form_bool(self : Context, name : String) -> Bool? {
 ///|
 /// The form field `name` parsed as an unsigned 32-bit integer. Both urlencoded
 /// and multipart bodies are supported. Returns `None` when the request body is
-/// not a form, the field is absent, or the value is not a valid `UInt32`.
-///|
-/// The form field `name` parsed as an unsigned 64-bit integer. Both urlencoded
-/// and multipart bodies are supported. Returns `None` when the request body is
-/// not a form, the field is absent, or the value does not fit in `UInt64`.
+/// not a form, the field is absent, or the value does not fit in `UInt32`.
 pub fn Context::form_uint32(self : Context, name : String) -> UInt64? {
   parse_uint32_value(self.form(name).view())
 }
@@ -485,8 +479,8 @@ pub fn Context::form_uint64(self : Context, name : String) -> UInt64? {
 }
 
 ///|
-/// The form field `name` parsed as an unsigned 64-bit integer, or
-/// `default` when the field is absent or does not fit in `UInt64`. See
+/// The form field `name` parsed as an unsigned 32-bit integer, or
+/// `default` when the field is absent or does not fit in `UInt32`. See
 /// `Context::form_uint32`.
 pub fn Context::form_uint32_default(
   self : Context,

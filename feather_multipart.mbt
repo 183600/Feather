@@ -1260,9 +1260,8 @@ fn Context::multipart_entries(self : Context) -> Array[MultipartPart]? {
 }
 
 ///|
-/// The parsed multipart body. The result array is a copy, but its parts and
-/// their header maps are shared with the parse cache and must be treated as
-/// read-only.
+/// The parsed multipart body. The result array and each part's header map are
+/// copies, so mutating them does not disturb the parse cache.
 pub fn Context::multipart(self : Context) -> Array[MultipartPart] {
   match self.multipart_entries() {
     Some(parts) => copy_multipart_parts(parts)
