@@ -88,7 +88,6 @@ test "https redirect preserves the request path in the Location URL" {
   let (app, _) = redirect_app([
     @feather.middleware_https_redirect(),
   ])
-  let ctx = redirect_context(redirect_headers(Some("example.com")))
   // Hand-built contexts keep the path as given; the middleware prefixes "/"
   // when it is missing.
   let ctx2 = @feather.Context::new({

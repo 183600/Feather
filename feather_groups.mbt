@@ -251,7 +251,6 @@ pub fn RouteGroup::route_with(
 }
 
 ///|
-///|
 /// Set a timeout for a route previously registered through this group. The
 /// path is joined with the group prefix exactly like `RouteGroup::route`.
 pub fn RouteGroup::route_timeout(

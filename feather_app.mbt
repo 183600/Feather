@@ -244,7 +244,6 @@ pub fn App::route_with(
 }
 
 ///|
-///|
 /// Set a timeout in milliseconds for one registered route, overriding
 /// `App::request_timeout` for that route.
 ///

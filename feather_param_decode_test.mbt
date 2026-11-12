@@ -76,7 +76,6 @@ test "param_default_decoded decodes and falls back" {
   let app = @feather.App::new().get("/items/:id", fn(ctx) {
     let id = ctx.param_default_decoded("id", "none")
     let missing = ctx.param_default_decoded("missing", "fallback")
-    let empty = ctx.param_default_decoded("id", "default")
     ctx.text(200, id + "|" + missing)
   })
   assert_eq(param_decode_response(app, "/items/%41%42").body, "AB|fallback")

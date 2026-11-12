@@ -143,7 +143,6 @@ fn standard_methods() -> Array[String] {
 }
 
 ///|
-///|
 /// Position where the path component ends: the first `?` (query) or `#`
 /// (fragment), whichever comes first. Request targets normally carry no raw
 /// fragment, but accepting one keeps offline requests and hand-built contexts

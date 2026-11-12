@@ -160,7 +160,6 @@ fn parse_bool_value(value : StringView) -> Bool? {
 }
 
 ///|
-///|
 /// The percent-decoded route parameter `name` parsed as a signed 32-bit
 /// integer. Returns `None` when the parameter is absent or out of range.
 pub fn Context::param_int(self : Context, name : String) -> Int32? {
