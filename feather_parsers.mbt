@@ -126,6 +126,17 @@ fn parse_uint64_value(value : StringView) -> UInt64? {
   if length == 0 {
     return None
   }
+  // `UInt64::max` has 20 digits, so a longer literal always exceeds the range.
+  // `length` never changes while scanning, so reject overlong input once, up
+  // front, instead of rechecking the same guard on every character.
+  if length > 20 {
+    return None
+  }
+  // Only a full 20-digit literal can approach `UInt64::max`; shorter values
+  // cannot overflow the accumulator, so the wrap-around guard applies to that
+  // length only. Hoist both the bound and the flag out of the loop.
+  let check_overflow = length == 20
+  let max = 18446744073709551615UL
   let mut result : UInt64 = 0
   for i in 0..<length {
     let code = value.unsafe_get(i).to_int()
@@ -133,14 +144,9 @@ fn parse_uint64_value(value : StringView) -> UInt64? {
       return None
     }
     let digit = code - 48
-    // Quick check: if the string has more than 20 digits, it definitely overflows
-    if length > 20 {
-      return None
-    }
     // Reject a 20-digit value before `result * 10 + digit` would wrap around
     // past `UInt64::max`, instead of returning a silently truncated result.
-    let max = 18446744073709551615UL
-    if length == 20 && result > (max - digit.to_uint64()) / 10UL {
+    if check_overflow && result > (max - digit.to_uint64()) / 10UL {
       return None
     }
     result = result * 10UL + digit.to_uint64()

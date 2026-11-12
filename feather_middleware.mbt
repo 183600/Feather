@@ -520,6 +520,7 @@ pub fn Context::vary(self : Context, value : String) -> Unit {
       for added in additions {
         if added.view().equal_ignore_ascii_case(name.view()) {
           duplicate = true
+          break
         }
       }
       if !duplicate {
