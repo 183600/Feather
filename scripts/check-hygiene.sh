@@ -4,10 +4,12 @@ set -euo pipefail
 
 # Do not mask a failing `git ls-files` (e.g. outside a git repository) with
 # `|| true` inside the same pipeline: the check must fail closed.
+# Only the `probe_` prefix is rejected: `_probe_` occurs inside legitimate
+# regression test names, so matching it here would fail real test files.
 files="$(git ls-files)"
 bad="$(
   printf '%s\n' "$files" |
-    grep -E '(^|/)(zz_|tmp_|_scratch_|dbg_)' || true
+    grep -E '(^|/)(zz_|tmp_|_scratch_|dbg_|probe_)' || true
 )"
 if [[ -n "$bad" ]]; then
   echo "error: scratch/probe files must not be committed:" >&2

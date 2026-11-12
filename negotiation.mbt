@@ -958,20 +958,24 @@ fn language_quality_from(
   }
   let mut best_q = -1
   let mut best_specificity = -1
+  // `language` is fixed for the whole scan; measure it once. `token` changes
+  // per entry, but its length is reused several times within one iteration.
+  let language_length = language.length()
   for entry in entries {
     let token = entry.token
+    let token_length = token.length()
     // Exact matches score above every prefix match of the same tag
-    // (`language.length() + 2` beats `(language.length() - 1) + 1`), and
+    // (`language_length + 2` beats `(language_length - 1) + 1`), and
     // longer prefixes score above shorter ones.
     let specificity = if token == "*" {
       0
     } else if token.equal_ignore_ascii_case(language) {
-      language.length() + 2
-    } else if language.length() > token.length() &&
-      token.length() > 0 &&
-      language.unsafe_get(token.length()) == ('-' : UInt16) &&
+      language_length + 2
+    } else if language_length > token_length &&
+      token_length > 0 &&
+      language.unsafe_get(token_length) == ('-' : UInt16) &&
       starts_with_ignore_ascii_case(language, token) {
-      token.length() + 1
+      token_length + 1
     } else {
       -1
     }
