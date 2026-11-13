@@ -34,6 +34,57 @@ priv struct AcceptEntry {
 }
 
 ///|
+/// Scan the `;parameter` sequence that follows one comma-separated entry
+/// of a negotiation header, starting at `end`. Returns the `q` quality
+/// (1000 when absent) and the position where the entry ends (a comma or
+/// the end of the header). `Accept`, `Accept-Encoding` and
+/// `Accept-Language` share this grammar, so it lives in one place.
+fn scan_entry_quality(header : StringView, end : Int32) -> (Int32, Int32) {
+  let length = header.length()
+  let mut quality = 1000
+  let mut scan = end
+  while scan < length && header.unsafe_get(scan) == (';' : UInt16) {
+    scan = scan + 1
+    let parameter_start = scan
+    let mut quoted_parameter = false
+    while scan < length {
+      let code = header.unsafe_get(scan)
+      if quoted_parameter && code == ('\\' : UInt16) && scan + 1 < length {
+        scan = scan + 2
+        continue
+      }
+      if code == ('"' : UInt16) {
+        quoted_parameter = !quoted_parameter
+      } else if !quoted_parameter &&
+        (code == (';' : UInt16) || code == (',' : UInt16)) {
+        break
+      }
+      scan = scan + 1
+    }
+    let parameter = trim_ascii_space(header[parameter_start:scan])
+    if parameter.length() >= 2 &&
+      (
+        parameter.unsafe_get(0) == ('q' : UInt16) ||
+        parameter.unsafe_get(0) == ('Q' : UInt16)
+      ) {
+      let mut marker = 1
+      while marker < parameter.length() &&
+            (
+              parameter.unsafe_get(marker) == (' ' : UInt16) ||
+              parameter.unsafe_get(marker) == ('\t' : UInt16)
+            ) {
+        marker = marker + 1
+      }
+      if marker < parameter.length() &&
+        parameter.unsafe_get(marker) == ('=' : UInt16) {
+        quality = parse_quality(trim_ascii_space(parameter[marker + 1:]))
+      }
+    }
+  }
+  (quality, scan)
+}
+
+///|
 /// Parsed media ranges of an `Accept` header, for scoring against offers.
 fn parse_accept_entries(header : StringView) -> Array[AcceptEntry] {
   let entries : Array[AcceptEntry] = Array(capacity=8)
@@ -49,46 +100,7 @@ fn parse_accept_entries(header : StringView) -> Array[AcceptEntry] {
       end = end + 1
     }
     let token = trim_ascii_space(header[pos:end])
-    let mut quality = 1000
-    let mut scan = end
-    while scan < length && header.unsafe_get(scan) == (';' : UInt16) {
-      scan = scan + 1
-      let parameter_start = scan
-      let mut quoted_parameter = false
-      while scan < length {
-        let code = header.unsafe_get(scan)
-        if quoted_parameter && code == ('\\' : UInt16) && scan + 1 < length {
-          scan = scan + 2
-          continue
-        }
-        if code == ('"' : UInt16) {
-          quoted_parameter = !quoted_parameter
-        } else if !quoted_parameter &&
-          (code == (';' : UInt16) || code == (',' : UInt16)) {
-          break
-        }
-        scan = scan + 1
-      }
-      let parameter = trim_ascii_space(header[parameter_start:scan])
-      if parameter.length() >= 2 &&
-        (
-          parameter.unsafe_get(0) == ('q' : UInt16) ||
-          parameter.unsafe_get(0) == ('Q' : UInt16)
-        ) {
-        let mut marker = 1
-        while marker < parameter.length() &&
-              (
-                parameter.unsafe_get(marker) == (' ' : UInt16) ||
-                parameter.unsafe_get(marker) == ('\t' : UInt16)
-              ) {
-          marker = marker + 1
-        }
-        if marker < parameter.length() &&
-          parameter.unsafe_get(marker) == ('=' : UInt16) {
-          quality = parse_quality(trim_ascii_space(parameter[marker + 1:]))
-        }
-      }
-    }
+    let (quality, scan) = scan_entry_quality(header, end)
     if !token.is_empty() {
       let parts = if token == "*" {
         Some(("*".view(), "*".view()))
@@ -635,46 +647,7 @@ fn parse_encoding_entries(header : StringView) -> Array[EncodingEntry] {
       end = end + 1
     }
     let token = trim_ascii_space(header[pos:end])
-    let mut quality = 1000
-    let mut scan = end
-    while scan < length && header.unsafe_get(scan) == (';' : UInt16) {
-      scan = scan + 1
-      let parameter_start = scan
-      let mut quoted_parameter = false
-      while scan < length {
-        let code = header.unsafe_get(scan)
-        if quoted_parameter && code == ('\\' : UInt16) && scan + 1 < length {
-          scan = scan + 2
-          continue
-        }
-        if code == ('"' : UInt16) {
-          quoted_parameter = !quoted_parameter
-        } else if !quoted_parameter &&
-          (code == (';' : UInt16) || code == (',' : UInt16)) {
-          break
-        }
-        scan = scan + 1
-      }
-      let parameter = trim_ascii_space(header[parameter_start:scan])
-      if parameter.length() >= 2 &&
-        (
-          parameter.unsafe_get(0) == ('q' : UInt16) ||
-          parameter.unsafe_get(0) == ('Q' : UInt16)
-        ) {
-        let mut marker = 1
-        while marker < parameter.length() &&
-              (
-                parameter.unsafe_get(marker) == (' ' : UInt16) ||
-                parameter.unsafe_get(marker) == ('\t' : UInt16)
-              ) {
-          marker = marker + 1
-        }
-        if marker < parameter.length() &&
-          parameter.unsafe_get(marker) == ('=' : UInt16) {
-          quality = parse_quality(trim_ascii_space(parameter[marker + 1:]))
-        }
-      }
-    }
+    let (quality, scan) = scan_entry_quality(header, end)
     if !token.is_empty() {
       entries.push({ token, quality, })
     }
@@ -844,46 +817,7 @@ fn parse_language_entries(header : StringView) -> Array[LanguageEntry] {
       end = end + 1
     }
     let token = trim_ascii_space(header[pos:end])
-    let mut quality = 1000
-    let mut scan = end
-    while scan < length && header.unsafe_get(scan) == (';' : UInt16) {
-      scan = scan + 1
-      let parameter_start = scan
-      let mut quoted_parameter = false
-      while scan < length {
-        let code = header.unsafe_get(scan)
-        if quoted_parameter && code == ('\\' : UInt16) && scan + 1 < length {
-          scan = scan + 2
-          continue
-        }
-        if code == ('"' : UInt16) {
-          quoted_parameter = !quoted_parameter
-        } else if !quoted_parameter &&
-          (code == (';' : UInt16) || code == (',' : UInt16)) {
-          break
-        }
-        scan = scan + 1
-      }
-      let parameter = trim_ascii_space(header[parameter_start:scan])
-      if parameter.length() >= 2 &&
-        (
-          parameter.unsafe_get(0) == ('q' : UInt16) ||
-          parameter.unsafe_get(0) == ('Q' : UInt16)
-        ) {
-        let mut marker = 1
-        while marker < parameter.length() &&
-              (
-                parameter.unsafe_get(marker) == (' ' : UInt16) ||
-                parameter.unsafe_get(marker) == ('\t' : UInt16)
-              ) {
-          marker = marker + 1
-        }
-        if marker < parameter.length() &&
-          parameter.unsafe_get(marker) == ('=' : UInt16) {
-          quality = parse_quality(trim_ascii_space(parameter[marker + 1:]))
-        }
-      }
-    }
+    let (quality, scan) = scan_entry_quality(header, end)
     if !token.is_empty() {
       entries.push({ token, quality, })
     }
