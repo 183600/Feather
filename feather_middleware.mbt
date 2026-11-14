@@ -1180,6 +1180,7 @@ pub fn middleware_allowed_hosts(
           for pattern in patterns {
             if host_matches_pattern(host, pattern) {
               matched = true
+              break
             }
           }
           matched
@@ -1546,6 +1547,7 @@ pub fn middleware_cors_allowlist(
       for candidate in accepted {
         if candidate == origin {
           found = true
+          break
         }
       }
       found

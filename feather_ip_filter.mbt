@@ -390,6 +390,7 @@ pub fn middleware_ip_filter(
         for rule in denied {
           if ip_rule_matches(rule, client) {
             rejected = true
+            break
           }
         }
       }
@@ -401,6 +402,7 @@ pub fn middleware_ip_filter(
               for rule in rules {
                 if ip_rule_matches(rule, client) {
                   matched = true
+                  break
                 }
               }
             }
