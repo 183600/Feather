@@ -1591,6 +1591,25 @@ fn bearer_auth_challenge(realm : String) -> String {
 }
 
 ///|
+/// Build the shared `401 Unauthorized` answer for authentication middleware.
+/// Any response state left by an earlier stage is reset, the scheme's
+/// `WWW-Authenticate` challenge is attached, and a plain-text body is written,
+/// so Bearer, Basic and JWT refusals are answered in exactly the same shape.
+fn write_auth_challenge_response(ctx : Context, challenge : String) -> Unit {
+  ctx.file = None
+  ctx.response.status = 401
+  clear_replaced_headers(ctx.response.headers)
+  set_header_ignore_case(ctx.response.headers, "WWW-Authenticate", challenge)
+  set_header_ignore_case(
+    ctx.response.headers,
+    "Content-Type",
+    "text/plain; charset=utf-8",
+  )
+  ctx.response.data = None
+  ctx.response.body = "401 Unauthorized"
+}
+
+///|
 fn constant_time_equal(left : String, right : String) -> Bool {
   let left_view = left.view()
   let right_view = right.view()
@@ -1625,21 +1644,7 @@ fn bearer_auth_middleware(
       if authorized {
         next(ctx)
       } else {
-        ctx.file = None
-        ctx.response.status = 401
-        clear_replaced_headers(ctx.response.headers)
-        set_header_ignore_case(
-          ctx.response.headers,
-          "WWW-Authenticate",
-          challenge,
-        )
-        set_header_ignore_case(
-          ctx.response.headers,
-          "Content-Type",
-          "text/plain; charset=utf-8",
-        )
-        ctx.response.data = None
-        ctx.response.body = "401 Unauthorized"
+        write_auth_challenge_response(ctx, challenge)
       }
     }
   }
@@ -1660,21 +1665,7 @@ fn basic_auth_middleware(
       if authorized {
         next(ctx)
       } else {
-        ctx.file = None
-        ctx.response.status = 401
-        clear_replaced_headers(ctx.response.headers)
-        set_header_ignore_case(
-          ctx.response.headers,
-          "WWW-Authenticate",
-          challenge,
-        )
-        set_header_ignore_case(
-          ctx.response.headers,
-          "Content-Type",
-          "text/plain; charset=utf-8",
-        )
-        ctx.response.data = None
-        ctx.response.body = "401 Unauthorized"
+        write_auth_challenge_response(ctx, challenge)
       }
     }
   }

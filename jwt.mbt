@@ -467,21 +467,7 @@ pub fn middleware_jwt_hs256(
         None => {
           ignore(ctx.json_state.remove(JWT_HEADER_STATE_KEY))
           ignore(ctx.json_state.remove(JWT_CLAIMS_STATE_KEY))
-          ctx.file = None
-          ctx.response.status = 401
-          clear_replaced_headers(ctx.response.headers)
-          set_header_ignore_case(
-            ctx.response.headers,
-            "WWW-Authenticate",
-            challenge,
-          )
-          set_header_ignore_case(
-            ctx.response.headers,
-            "Content-Type",
-            "text/plain; charset=utf-8",
-          )
-          ctx.response.data = None
-          ctx.response.body = "401 Unauthorized"
+          write_auth_challenge_response(ctx, challenge)
         }
       }
     }
