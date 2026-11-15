@@ -293,15 +293,15 @@ pub fn Context::flash_take_all(self : Context) -> Map[String, Array[String]] {
         }
       }
       for category in categories {
+        // Reuse one key per category, as the single-category flash_take does.
+        let key = FLASH_PREFIX + category
         let mut taken : Array[String]? = None
         match session.flash_pending {
           Some(pending) =>
             match pending.remove_and_get(category) {
               Some(messages) => {
-                let stored_bytes = session.flash_stored_bytes(
-                  FLASH_PREFIX + category,
-                )
-                ignore(session.data.remove_and_get(FLASH_PREFIX + category))
+                let stored_bytes = session.flash_stored_bytes(key)
+                ignore(session.data.remove_and_get(key))
                 let added = flash_message_bytes(messages) - stored_bytes
                 let remaining = session.flash_pending_bytes - added
                 session.flash_pending_bytes = if remaining < 0 {
@@ -318,7 +318,7 @@ pub fn Context::flash_take_all(self : Context) -> Map[String, Array[String]] {
         let messages = match taken {
           Some(messages) => messages
           None =>
-            match session.data.remove_and_get(FLASH_PREFIX + category) {
+            match session.data.remove_and_get(key) {
               Some(text) => flash_decode(text)
               None => continue
             }
