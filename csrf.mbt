@@ -45,6 +45,61 @@ fn csrf_constant_time_equal(a : StringView, b : StringView) -> Bool {
 }
 
 ///|
+/// Build the optional safe-method table shared by both CSRF middleware
+/// variants. `None` keeps the standard safe verbs exempt.
+fn csrf_safe_method_table(
+  safe_methods? : Array[String],
+) -> Map[String, Bool]? {
+  match safe_methods {
+    Some(methods) => {
+      let table : Map[String, Bool] = Map([], capacity=methods.length())
+      for verb in methods {
+        table.set(normalize_method(verb), true)
+      }
+      Some(table)
+    }
+    None => None
+  }
+}
+
+///|
+/// Whether `meth` is exempt from the CSRF check for the configured table.
+fn csrf_method_is_safe(meth : String, safe : Map[String, Bool]?) -> Bool {
+  match safe {
+    Some(table) => table.contains(meth)
+    None =>
+      meth == "GET" || meth == "HEAD" || meth == "OPTIONS" || meth == "TRACE"
+  }
+}
+
+///|
+/// The token echoed by the request, looked up in the header, the urlencoded
+/// form and multipart fields in that order. Both CSRF variants accept exactly
+/// the same sources, in the same priority order.
+fn csrf_provided_token(
+  ctx : Context,
+  header_name : String,
+  field_name : String,
+) -> StringView {
+  let mut provided = trim_ascii_space(ctx.header(header_name).view())
+  if provided == "" {
+    provided = trim_ascii_space(ctx.form(field_name).view())
+  }
+  if provided == "" {
+    provided = trim_ascii_space(ctx.multipart_value(field_name).view())
+  }
+  provided
+}
+
+///|
+/// Answer a failed CSRF check. Both variants reset staged headers first and
+/// send the same plain-text body.
+fn csrf_forbid(ctx : Context) -> Unit {
+  clear_replaced_headers(ctx.response.headers)
+  ctx.text(403, "403 Forbidden")
+}
+
+///|
 /// Drop the synchronizer token stored under `key`, marking the session as
 /// changed when a token was present.
 fn Session::csrf_clear(self : Session, key : String) -> Bool {
@@ -142,24 +197,11 @@ pub fn middleware_csrf(
   let field_name = field
   let header_name = header
   let token_key = key
-  let safe : Map[String, Bool]? = match safe_methods {
-    Some(methods) => {
-      let table : Map[String, Bool] = Map([], capacity=methods.length())
-      for verb in methods {
-        table.set(normalize_method(verb), true)
-      }
-      Some(table)
-    }
-    None => None
-  }
+  let safe = csrf_safe_method_table(safe_methods?)
   fn(next) {
     fn(ctx) raise {
       let meth = normalize_method(ctx.get_method())
-      let is_safe = match safe {
-        Some(table) => table.contains(meth)
-        None =>
-          meth == "GET" || meth == "HEAD" || meth == "OPTIONS" || meth == "TRACE"
-      }
+      let is_safe = csrf_method_is_safe(meth, safe)
       if is_safe {
         next(ctx)
         return
@@ -172,20 +214,13 @@ pub fn middleware_csrf(
           }
         None => ""
       }
-      let mut provided = trim_ascii_space(ctx.header(header_name).view())
-      if provided == "" {
-        provided = trim_ascii_space(ctx.form(field_name).view())
-      }
-      if provided == "" {
-        provided = trim_ascii_space(ctx.multipart_value(field_name).view())
-      }
+      let provided = csrf_provided_token(ctx, header_name, field_name)
       if expected != "" &&
         provided != "" &&
         csrf_constant_time_equal(provided, expected.view()) {
         next(ctx)
       } else {
-        clear_replaced_headers(ctx.response.headers)
-        ctx.text(403, "403 Forbidden")
+        csrf_forbid(ctx)
       }
     }
   }
@@ -246,24 +281,11 @@ pub fn middleware_csrf_cookie(
   let header_name = header
   let cookie_path = path
   let cookie_same_site = same_site
-  let safe : Map[String, Bool]? = match safe_methods {
-    Some(methods) => {
-      let table : Map[String, Bool] = Map([], capacity=methods.length())
-      for verb in methods {
-        table.set(normalize_method(verb), true)
-      }
-      Some(table)
-    }
-    None => None
-  }
+  let safe = csrf_safe_method_table(safe_methods?)
   fn(next) {
     fn(ctx) raise {
       let meth = normalize_method(ctx.get_method())
-      let is_safe = match safe {
-        Some(table) => table.contains(meth)
-        None =>
-          meth == "GET" || meth == "HEAD" || meth == "OPTIONS" || meth == "TRACE"
-      }
+      let is_safe = csrf_method_is_safe(meth, safe)
       let existing = match ctx.signed_cookie(cookie_name, secret) {
         Some(token) => if token == "" { None } else { Some(token) }
         None => None
@@ -310,13 +332,7 @@ pub fn middleware_csrf_cookie(
         next(ctx)
         return
       }
-      let mut provided = trim_ascii_space(ctx.header(header_name).view())
-      if provided == "" {
-        provided = trim_ascii_space(ctx.form(field_name).view())
-      }
-      if provided == "" {
-        provided = trim_ascii_space(ctx.multipart_value(field_name).view())
-      }
+      let provided = csrf_provided_token(ctx, header_name, field_name)
       let matches_token = token != "" &&
         provided != "" &&
         csrf_constant_time_equal(provided, token.view())
@@ -328,8 +344,7 @@ pub fn middleware_csrf_cookie(
       if matches_token || matches_signed_value {
         next(ctx)
       } else {
-        clear_replaced_headers(ctx.response.headers)
-        ctx.text(403, "403 Forbidden")
+        csrf_forbid(ctx)
       }
     }
   }
