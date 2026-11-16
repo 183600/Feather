@@ -188,7 +188,11 @@ parameters and case, and it understands the same wildcards as
 
 Request headers can be parsed with `Context::header_int`, `header_int64`,
 `header_bool` and `header_float`, which use the same strict parsers as the
-query/param/form helpers and ignore surrounding whitespace.
+query/param/form helpers and ignore surrounding whitespace. Cookie values
+enjoy the same treatment through `Context::cookie_int`, `cookie_int64`,
+`cookie_bool`, `cookie_uint32`, `cookie_uint64`, `cookie_float` and their
+`*_default` variants, all reading the `Cookie` header with the same lookup
+rules as `Context::cookie`.
 
 `Context::send_status(418)` sets the status and answers with the standard
 reason phrase as a plain-text body (bodyless for `204`, `205` and `304`),
@@ -328,6 +332,14 @@ target, so a client cannot create a new series for every id it asks for.
 Requests that did not reach a route (a `404`, a `405`, or a request an earlier
 middleware rejected) are grouped under the `unmatched` route label, and
 requests served by a static file mount under `static`.
+
+An application can expose its own metrics in the same exposition document.
+`Metrics::counter_add("cache_hits")` accumulates a counter (1 per call, or a
+given amount), `Metrics::gauge_set("queue_depth", 3.5)` sets a gauge,
+`Metrics::counter` / `Metrics::gauge` read the current values, and
+`Metrics::set_help` attaches `# HELP` text to a family that already exists.
+Metric names are sanitized so the exposition stays valid, and the custom
+families are rendered after the built-in HTTP families, sorted by name.
 
 `middleware_recover()` converts errors into the framework's default responses.
 Use `middleware_recover_with(handler=...)` instead when the application needs
@@ -675,6 +687,11 @@ let app = @feather.App::new()
 Streaming handlers can set status and headers before the first write, and
 `Stream::add_cookie` / `Stream::clear_cookie` add or expire cookies at the same
 point; calls made after the response header has been sent are ignored.
+
+SSE handlers that give events an `id` support reconnection: when the client
+reconnects, the browser sends the last id it received back in the
+`Last-Event-ID` header, which the handler reads with `Context::last_event_id()`
+(`None` when absent) to replay or resume the stream from that point.
 
 The WebSocket handshake is performed by `moonbitlang/async`; middleware that
 needs to add handshake headers (for example a cookie) cannot do so through the
