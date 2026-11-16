@@ -42,6 +42,31 @@ pub extend MetricsSeries with Show::{output, to_string}
 pub extend MetricsSeries with Debug::{to_repr}
 
 ///|
+/// One application-defined metric family registered on a [`Metrics`]
+/// registry: either a counter accumulated with `Metrics::counter_add` or a
+/// gauge set with `Metrics::gauge_set`, plus the optional `# HELP` text
+/// installed with `Metrics::set_help`.
+pub(all) struct MetricsCustomFamily {
+  /// `0` for a counter, `1` for a gauge.
+  kind : Int32
+  help : String
+  counter : Int64
+  gauge : Double
+} derive(Debug)
+
+///|
+pub impl Show for MetricsCustomFamily with fn to_string(self) {
+  let kind = if self.kind == 0 { "counter" } else { "gauge" }
+  "@feather.MetricsCustomFamily(\{kind}, help=\{self.help}, counter=\{self.counter}, gauge=\{self.gauge})"
+}
+
+///|
+pub extend MetricsCustomFamily with Show::{output, to_string}
+
+///|
+pub extend MetricsCustomFamily with Debug::{to_repr}
+
+///|
 /// Request counters and latency sums, grouped by request method, route pattern
 /// and response status.
 ///
@@ -51,8 +76,13 @@ pub extend MetricsSeries with Debug::{to_repr}
 /// asks for. Requests that did not match a route are grouped under
 /// [`METRICS_UNMATCHED_ROUTE`], and requests served by a static file mount
 /// under [`METRICS_STATIC_ROUTE`].
+///
+/// Besides the built-in HTTP families, an application can expose its own
+/// counters and gauges with `Metrics::counter_add` and `Metrics::gauge_set`,
+/// rendered in the same exposition document.
 pub(all) struct Metrics {
   series : Map[String, MetricsSeries]
+  custom : Map[String, MetricsCustomFamily]
 } derive(Debug)
 
 ///|
@@ -69,7 +99,7 @@ pub extend Metrics with Debug::{to_repr}
 ///|
 /// Create an empty metrics registry.
 pub fn Metrics::new() -> Metrics {
-  { series: Map([], capacity=16) }
+  { series: Map([], capacity=16), custom: Map([], capacity=8) }
 }
 
 ///|
@@ -114,6 +144,191 @@ pub fn Metrics::duration_sum(
   match self.series.get(metrics_series_key(method, route, status)) {
     Some(series) => series.duration_sum
     None => 0L
+  }
+}
+
+///|
+/// Sanitize a metric name so the exposition stays valid: Prometheus metric
+/// names accept `[a-zA-Z_:]` for the first character and `[a-zA-Z0-9_:]`
+/// afterwards; every other character is replaced with `_`.
+fn metrics_sanitize_name(name : String) -> String {
+  let length = name.length()
+  let builder = StringBuilder(size_hint=length + 1)
+  let mut index = 0
+  while index < length {
+    let code = name.unsafe_get(index).to_int()
+    let valid = if index == 0 {
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      code == 95 ||
+      code == 58
+    } else {
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      (code >= 48 && code <= 57) ||
+      code == 95 ||
+      code == 58
+    }
+    if valid {
+      builder.write_char(name.unsafe_get(index).unsafe_to_char())
+    } else {
+      builder.write_char('_')
+    }
+    index = index + 1
+  }
+  let clean = builder.to_string()
+  if clean == "" {
+    // An empty (or all-invalid) name would render an invalid exposition;
+    // fall back to a valid bare-underscore name instead.
+    return "_"
+  }
+  clean
+}
+
+///|
+/// Store one application-defined family, creating it when absent. `make`
+/// builds a fresh family for a name that is not registered yet.
+fn Metrics::custom_family(
+  self : Metrics,
+  name : String,
+  kind : Int32,
+  make : () -> MetricsCustomFamily,
+) -> String {
+  let clean = metrics_sanitize_name(name)
+  match self.custom.get(clean) {
+    Some(_) => ()
+    None => self.custom.set(clean, make())
+  }
+  clean
+}
+
+///|
+/// Add `value` (1 by default) to the application-defined counter `name`,
+/// creating the counter family on first use. The name is sanitized before it
+/// is stored, so `counter_add("cache-hits")` and `Metrics::counter("cache_hits")`
+/// refer to the same family.
+pub fn Metrics::counter_add(
+  self : Metrics,
+  name : String,
+  value? : Int64,
+) -> Unit {
+  let clean = self.custom_family(name, 0, fn() {
+    { kind: 0, help: "", counter: 0L, gauge: 0.0 }
+  })
+  match self.custom.get(clean) {
+    Some(family) =>
+      if family.kind == 0 {
+        self.custom.set(
+          clean,
+          { ..family, counter: family.counter + value.unwrap_or(1L) },
+        )
+      }
+    None => ()
+  }
+}
+
+///|
+/// The current value of the application-defined counter `name`, or `0` when
+/// the counter was never added to.
+pub fn Metrics::counter(self : Metrics, name : String) -> Int64 {
+  match self.custom.get(metrics_sanitize_name(name)) {
+    Some(family) => if family.kind == 0 { family.counter } else { 0L }
+    None => 0L
+  }
+}
+
+///|
+/// Set the application-defined gauge `name` to `value`, creating the gauge
+/// family on first use. A value that is not finite (`nan`/`inf`) is ignored,
+/// because the exposition format cannot represent it.
+pub fn Metrics::gauge_set(self : Metrics, name : String, value : Double) -> Unit {
+  if value.is_nan() || value.is_inf() {
+    return
+  }
+  let clean = self.custom_family(name, 1, fn() {
+    { kind: 1, help: "", counter: 0L, gauge: 0.0 }
+  })
+  match self.custom.get(clean) {
+    Some(family) =>
+      if family.kind == 1 {
+        self.custom.set(clean, { ..family, gauge: value })
+      }
+    None => ()
+  }
+}
+
+///|
+/// The current value of the application-defined gauge `name`, or `0.0` when
+/// the gauge was never set.
+pub fn Metrics::gauge(self : Metrics, name : String) -> Double {
+  match self.custom.get(metrics_sanitize_name(name)) {
+    Some(family) => if family.kind == 1 { family.gauge } else { 0.0 }
+    None => 0.0
+  }
+}
+
+///|
+/// Set the `# HELP` text of the family `name`, which must already exist (be
+/// created by `Metrics::counter_add` or `Metrics::gauge_set` first); a help
+/// text for an unknown name is ignored.
+pub fn Metrics::set_help(self : Metrics, name : String, help : String) -> Unit {
+  let clean = metrics_sanitize_name(name)
+  match self.custom.get(clean) {
+    Some(family) => self.custom.set(clean, { ..family, help })
+    None => ()
+  }
+}
+
+///|
+/// Whether the registry holds any application-defined family.
+fn Metrics::has_custom(self : Metrics) -> Bool {
+  self.custom.length() > 0
+}
+
+///|
+/// The application-defined families, ordered by sanitized name so the
+/// exposition is stable between scrapes.
+fn Metrics::sorted_custom(self : Metrics) -> Array[(String, MetricsCustomFamily)] {
+  let entries : Array[(String, MetricsCustomFamily)] = []
+  for name, family in self.custom {
+    entries.push((name, family))
+  }
+  entries.sort_by(fn(a, b) { a.0.lexical_compare(b.0) })
+  entries
+}
+
+///|
+/// Render the application-defined families in the exposition format, after
+/// the built-in HTTP families.
+fn Metrics::render_custom(
+  self : Metrics,
+  buf : StringBuilder,
+) -> Unit {
+  for entry in self.sorted_custom() {
+    let (name, family) = entry
+    if family.help != "" {
+      buf.write_string("# HELP ")
+      buf.write_string(name)
+      buf.write_char(' ')
+      buf.write_string(family.help)
+      buf.write_char('\n')
+    }
+    buf.write_string("# TYPE ")
+    buf.write_string(name)
+    buf.write_char(' ')
+    if family.kind == 0 {
+      buf.write_string("counter\n")
+      buf.write_string(name)
+      buf.write_char(' ')
+      buf.write_object(family.counter)
+      buf.write_char('\n')
+    } else {
+      buf.write_string("gauge\n")
+      buf.write_string(name)
+      buf.write_char(' ')
+      buf.write_object(family.gauge)
+      buf.write_char('\n')
+    }
   }
 }
 
@@ -172,9 +387,12 @@ fn Metrics::sorted_series(self : Metrics) -> Array[MetricsSeries] {
 ///|
 /// Render the registry in the Prometheus text exposition format.
 ///
-/// The document holds two metric families: a counter of the handled requests
-/// and a summary of the time spent handling them, both labelled with the
-/// request method, the route pattern and the response status.
+/// The document holds two built-in metric families: a counter of the handled
+/// requests and a summary of the time spent handling them, both labelled with
+/// the request method, the route pattern and the response status. Any
+/// application-defined families registered with `Metrics::counter_add`,
+/// `Metrics::gauge_set` and `Metrics::set_help` are rendered after them,
+/// sorted by name.
 pub fn Metrics::render(self : Metrics) -> String {
   let entries = self.sorted_series()
   let buf = StringBuilder(size_hint=256 + entries.length() * 96)
@@ -210,6 +428,9 @@ pub fn Metrics::render(self : Metrics) -> String {
     buf.write_char(' ')
     buf.write_object(series.duration_sum)
     buf.write_char('\n')
+  }
+  if self.has_custom() {
+    self.render_custom(buf)
   }
   buf.to_string()
 }

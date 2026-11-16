@@ -672,19 +672,37 @@ pub impl Show for Jwt
 #derive(@debug.Debug)
 pub(all) struct Metrics {
   series : Map[String, MetricsSeries]
+  custom : Map[String, MetricsCustomFamily]
 }
 pub fn Metrics::count(Self, String, String, Int32) -> Int64
+pub fn Metrics::counter(Self, String) -> Int64
+pub fn Metrics::counter_add(Self, String, value? : Int64) -> Unit
 pub fn Metrics::duration_sum(Self, String, String, Int32) -> Int64
+pub fn Metrics::gauge(Self, String) -> Double
+pub fn Metrics::gauge_set(Self, String, Double) -> Unit
 pub fn Metrics::new() -> Self
 pub fn Metrics::output(Self, &Logger) -> Unit
 pub fn Metrics::record(Self, String, String, Int32, Int64) -> Unit
 pub fn Metrics::render(Self) -> String
 pub fn Metrics::series_count(Self) -> Int32
+pub fn Metrics::set_help(Self, String, String) -> Unit
 pub fn Metrics::to_repr(Self) -> @debug.Repr
 pub fn Metrics::to_string(Self) -> String
 pub fn Metrics::total(Self) -> Int64
 pub fn Metrics::write(Self, Context) -> Unit
 pub impl Show for Metrics
+
+#derive(@debug.Debug)
+pub(all) struct MetricsCustomFamily {
+  kind : Int32
+  help : String
+  counter : Int64
+  gauge : Double
+}
+pub fn MetricsCustomFamily::output(Self, &Logger) -> Unit
+pub fn MetricsCustomFamily::to_repr(Self) -> @debug.Repr
+pub fn MetricsCustomFamily::to_string(Self) -> String
+pub impl Show for MetricsCustomFamily
 
 #derive(@debug.Debug)
 pub(all) struct MetricsSeries {
