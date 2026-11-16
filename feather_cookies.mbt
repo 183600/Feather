@@ -683,3 +683,116 @@ pub fn Context::clear_cookie(
   )
 }
 
+
+///|
+/// The cookie `name` parsed as a signed 32-bit integer. Returns `None` when
+/// the cookie is absent, malformed, or outside the `Int32` range.
+pub fn Context::cookie_int(self : Context, name : String) -> Int32? {
+  parse_int_value(self.cookie(name).unwrap_or("").view())
+}
+
+///|
+/// The cookie `name` parsed as a signed 64-bit integer. Returns `None` when
+/// the cookie is absent, malformed, or does not fit in `Int64`.
+pub fn Context::cookie_int64(self : Context, name : String) -> Int64? {
+  parse_int64_value(self.cookie(name).unwrap_or("").view())
+}
+
+///|
+/// The cookie `name` parsed as a boolean. Accepts the same spellings as
+/// `Context::query_bool` (`true`/`false` and `1`/`0`).
+pub fn Context::cookie_bool(self : Context, name : String) -> Bool? {
+  parse_bool_value(self.cookie(name).unwrap_or("").view())
+}
+
+///|
+/// The cookie `name` parsed as an unsigned 32-bit integer. Returns `None`
+/// when the cookie is absent, malformed, or outside the `UInt32` range.
+pub fn Context::cookie_uint32(self : Context, name : String) -> UInt64? {
+  parse_uint32_value(self.cookie(name).unwrap_or("").view())
+}
+
+///|
+/// The cookie `name` parsed as an unsigned 64-bit integer. Returns `None`
+/// when the cookie is absent, malformed, or does not fit in `UInt64`.
+pub fn Context::cookie_uint64(self : Context, name : String) -> UInt64? {
+  parse_uint64_value(self.cookie(name).unwrap_or("").view())
+}
+
+///|
+/// The cookie `name` parsed as a finite floating-point number. Returns `None`
+/// when the cookie is absent, malformed, or names `nan`/`inf`.
+pub fn Context::cookie_float(self : Context, name : String) -> Double? {
+  parse_float_value(self.cookie(name).unwrap_or("").view())
+}
+
+///|
+/// The cookie `name` parsed as a signed 32-bit integer, or `default` when the
+/// cookie is absent, malformed, or outside the `Int32` range. See
+/// `Context::cookie_int`.
+pub fn Context::cookie_int_default(
+  self : Context,
+  name : String,
+  default : Int32,
+) -> Int32 {
+  self.cookie_int(name).unwrap_or(default)
+}
+
+///|
+/// The cookie `name` parsed as a signed 64-bit integer, or `default` when the
+/// cookie is absent, malformed, or does not fit in `Int64`. See
+/// `Context::cookie_int64`.
+pub fn Context::cookie_int64_default(
+  self : Context,
+  name : String,
+  default : Int64,
+) -> Int64 {
+  self.cookie_int64(name).unwrap_or(default)
+}
+
+///|
+/// The cookie `name` parsed as a boolean, or `default` when the cookie is
+/// absent or not a recognized spelling. See `Context::cookie_bool`.
+pub fn Context::cookie_bool_default(
+  self : Context,
+  name : String,
+  default : Bool,
+) -> Bool {
+  self.cookie_bool(name).unwrap_or(default)
+}
+
+///|
+/// The cookie `name` parsed as an unsigned 32-bit integer, or `default` when
+/// the cookie is absent, malformed, or outside the `UInt32` range. See
+/// `Context::cookie_uint32`.
+pub fn Context::cookie_uint32_default(
+  self : Context,
+  name : String,
+  default : UInt64,
+) -> UInt64 {
+  self.cookie_uint32(name).unwrap_or(default)
+}
+
+///|
+/// The cookie `name` parsed as an unsigned 64-bit integer, or `default` when
+/// the cookie is absent, malformed, or does not fit in `UInt64`. See
+/// `Context::cookie_uint64`.
+pub fn Context::cookie_uint64_default(
+  self : Context,
+  name : String,
+  default : UInt64,
+) -> UInt64 {
+  self.cookie_uint64(name).unwrap_or(default)
+}
+
+///|
+/// The cookie `name` parsed as a finite floating-point number, or `default`
+/// when the cookie is absent, malformed, or names `nan`/`inf`. See
+/// `Context::cookie_float`.
+pub fn Context::cookie_float_default(
+  self : Context,
+  name : String,
+  default : Double,
+) -> Double {
+  self.cookie_float(name).unwrap_or(default)
+}
