@@ -448,6 +448,7 @@ pub fn Context::jwt_error(Self) -> String
 pub fn Context::jwt_header(Self) -> @json.Json?
 pub fn Context::jwt_header_parameter(Self, String) -> @json.Json?
 pub fn Context::jwt_subject(Self) -> String
+pub fn Context::last_event_id(Self) -> String?
 pub fn Context::location(Self, String) -> Unit
 pub fn Context::multipart(Self) -> Array[MultipartPart]
 pub fn Context::multipart_file(Self, String) -> MultipartPart?

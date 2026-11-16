@@ -120,6 +120,38 @@ fn Sse::cleaned_event(self : Sse, name : String) -> String {
 }
 
 ///|
+/// The `Last-Event-ID` request header, with surrounding whitespace removed.
+///
+/// When an SSE client reconnects (for example after a network drop or a
+/// server-initiated close), the browser sends back the last event id it
+/// received on this header. An SSE handler reads it before resuming the
+/// stream, so events produced while the client was away can be replayed from
+/// the id it last saw:
+///
+/// ```moonbit
+/// app.sse("/events", async fn(ctx, sse) {
+///   let since = ctx.last_event_id()
+///   // ... replay events after `since`, then send live events ...
+///   ignore(sse.send(data, id="evt-42"))
+///   sse.close()
+/// })
+/// ```
+///
+/// Returns `None` when the header is absent or empty. The header name is
+/// matched case-insensitively, and a value carrying control characters is
+/// returned as received — a handler that echoes the value into an event id
+/// must clean it (for example with `Sse::send`, which strips line breaks).
+pub fn Context::last_event_id(self : Context) -> String? {
+  let value = self.header("Last-Event-ID")
+  let trimmed = trim_ascii_space(value.view()).to_owned()
+  if trimmed == "" {
+    None
+  } else {
+    Some(trimmed)
+  }
+}
+
+///|
 /// Send one event. `event` names the event type (clients listen with
 /// `addEventListener`), `id` sets the last event id used for reconnection
 /// (`Last-Event-ID`), and `retry` is the reconnection delay in milliseconds.
