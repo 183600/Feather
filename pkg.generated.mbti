@@ -49,7 +49,7 @@ pub fn create_router() -> Router
 
 pub fn error_response(Context, Int32, String) -> Unit
 
-pub fn error_response_with_payload(Context, Int32, String, Json) -> Unit
+pub fn error_response_with_payload(Context, Int32, String, @json.Json) -> Unit
 
 pub fn error_status(Error) -> Int32
 
@@ -59,7 +59,7 @@ pub fn hmac_sha256(Bytes, Bytes) -> Bytes
 
 pub fn internal_error(Context, String) -> Unit
 
-pub fn json_object(Map[String, String]) -> Json
+pub fn json_object(Map[String, String]) -> @json.Json
 
 pub fn method_not_allowed(Context, Array[String]) -> Unit
 
@@ -173,7 +173,7 @@ pub(all) suberror HttpError {
 }
 
 pub(all) suberror HttpErrorPayload {
-  HttpErrorPayload(Int32, String, Json)
+  HttpErrorPayload(Int32, String, @json.Json)
 }
 
 pub(all) suberror HttpProblem {
@@ -196,7 +196,7 @@ pub(all) struct App {
   router : Router
   middlewares : Array[((Context) -> Unit raise) -> (Context) -> Unit raise]
   state : Map[String, String]
-  json_state : Map[String, Json]
+  json_state : Map[String, @json.Json]
   mut max_body_size : Int32
   mut timeout : Int32
   mut chain : ((Context) -> Unit raise)?
@@ -234,7 +234,7 @@ pub fn App::etag(Self) -> Self
 pub fn App::fallback(Self, (Context) -> Unit raise) -> Self
 pub fn App::fallback_with(Self, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn App::get(Self, String, (Context) -> Unit raise) -> Self
-pub fn App::get_json_state(Self, String) -> Json?
+pub fn App::get_json_state(Self, String) -> @json.Json?
 pub fn App::get_state(Self, String) -> String
 pub fn App::group(Self, String) -> RouteGroup
 pub fn App::handle(Self, Context) -> Unit raise
@@ -273,7 +273,7 @@ pub async fn App::serve_until(Self, @socket.Addr, stop~ : async () -> Unit) -> U
 pub async fn App::serve_with(Self, @http.Server, max_connections? : Int32) -> Unit
 pub async fn App::serve_with_graceful_until(Self, @http.Server, stop~ : async () -> Unit, drain_timeout? : Int32, max_connections? : Int32) -> Unit
 pub async fn App::serve_with_until(Self, @http.Server, stop~ : async () -> Unit, max_connections? : Int32) -> Unit
-pub fn App::set_json_state(Self, String, Json) -> Self
+pub fn App::set_json_state(Self, String, @json.Json) -> Self
 pub fn App::set_state(Self, String, String) -> Self
 pub fn App::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn App::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Sse) -> Unit) -> Self
@@ -292,21 +292,23 @@ pub fn App::use_when(Self, (Context) -> Bool, ((Context) -> Unit raise) -> (Cont
 pub fn App::websocket(Self, String, async (Context, @websocket.Conn) -> Unit) -> Self
 pub fn App::websocket_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, @websocket.Conn) -> Unit) -> Self
 
+#derive(@debug.Debug)
 pub(all) enum ByteRange {
   ByteRangeFull
   ByteRangeSpec(Int64, Int64)
   ByteRangeInvalid
-} derive(@debug.Debug)
+}
 pub fn ByteRange::output(Self, &Logger) -> Unit
 pub fn ByteRange::to_repr(Self) -> @debug.Repr
 pub fn ByteRange::to_string(Self) -> String
 pub impl Show for ByteRange
 
+#derive(@debug.Debug)
 pub(all) struct Config {
   host : String
   port : Int32
   timeout : Int32
-} derive(@debug.Debug)
+}
 pub fn Config::output(Self, &Logger) -> Unit
 pub fn Config::to_repr(Self) -> @debug.Repr
 pub fn Config::to_string(Self) -> String
@@ -316,7 +318,7 @@ pub(all) struct Context {
   request : Request
   response : Response
   state : Map[String, String]
-  json_state : Map[String, Json]
+  json_state : Map[String, @json.Json]
   cleanups : Array[() -> Unit raise]
   mut file : FileResponse?
   mut session : Session?
@@ -356,7 +358,7 @@ pub fn Context::defer_cleanup(Self, () -> Unit raise) -> Unit
 pub fn Context::etag(Self) -> Unit
 pub fn Context::fail(Self, Int32, String) -> Unit raise HttpError
 pub fn Context::fail_problem(Self, Int32, String, title? : String, type_name? : String, instance? : String) -> Unit raise HttpProblem
-pub fn Context::fail_with(Self, Int32, String, Json) -> Unit raise HttpErrorPayload
+pub fn Context::fail_with(Self, Int32, String, @json.Json) -> Unit raise HttpErrorPayload
 pub fn Context::file(Self, Int32, String, content_type? : String, download_name? : String) -> Unit
 pub fn Context::file_response(Self) -> FileResponse?
 pub fn Context::file_simple(Self, Int32, String) -> Unit
@@ -389,7 +391,7 @@ pub fn Context::fragment(Self) -> String
 pub fn Context::fresh(Self, String, last_modified? : String) -> Bool
 pub fn Context::full_url(Self) -> String
 pub fn Context::get(Self, String) -> String
-pub fn Context::get_json(Self, String) -> Json?
+pub fn Context::get_json(Self, String) -> @json.Json?
 pub fn Context::get_method(Self) -> String
 pub fn Context::get_path(Self) -> String
 pub fn Context::has_cookie(Self, String) -> Bool
@@ -425,14 +427,14 @@ pub fn Context::is_multipart(Self) -> Bool
 pub fn Context::is_secure(Self) -> Bool
 pub fn Context::json(Self, Int32, Map[String, String]) -> Unit
 pub fn[T : @json.FromJson] Context::json_as(Self) -> T raise HttpError
-pub fn Context::json_body(Self) -> Json raise HttpError
-pub fn[T : ToJson] Context::json_of(Self, Int32, T) -> Unit
-pub fn Context::json_value(Self, Int32, Json) -> Unit
-pub fn Context::jwt_claim(Self, String) -> Json?
-pub fn Context::jwt_claims(Self) -> Json?
+pub fn Context::json_body(Self) -> @json.Json raise HttpError
+pub fn[T : @json.ToJson] Context::json_of(Self, Int32, T) -> Unit
+pub fn Context::json_value(Self, Int32, @json.Json) -> Unit
+pub fn Context::jwt_claim(Self, String) -> @json.Json?
+pub fn Context::jwt_claims(Self) -> @json.Json?
 pub fn Context::jwt_error(Self) -> String
-pub fn Context::jwt_header(Self) -> Json?
-pub fn Context::jwt_header_parameter(Self, String) -> Json?
+pub fn Context::jwt_header(Self) -> @json.Json?
+pub fn Context::jwt_header_parameter(Self, String) -> @json.Json?
 pub fn Context::jwt_subject(Self) -> String
 pub fn Context::location(Self, String) -> Unit
 pub fn Context::multipart(Self) -> Array[MultipartPart]
@@ -511,21 +513,21 @@ pub fn Context::session_clear(Self) -> Bool
 pub fn Context::session_destroy(Self) -> Bool
 pub fn Context::session_get(Self, String) -> String
 pub fn Context::session_get_default(Self, String, String) -> String
-pub fn Context::session_get_json(Self, String) -> Json?
+pub fn Context::session_get_json(Self, String) -> @json.Json?
 pub fn Context::session_has(Self, String) -> Bool
 pub fn Context::session_id(Self) -> String?
 pub fn Context::session_keys(Self) -> Array[String]
 pub fn Context::session_regenerate(Self) -> Bool
 pub fn Context::session_remove(Self, String) -> Bool
 pub fn Context::session_set(Self, String, String) -> Bool
-pub fn Context::session_set_json(Self, String, Json) -> Bool
+pub fn Context::session_set_json(Self, String, @json.Json) -> Bool
 pub fn Context::session_touch(Self) -> Bool
 pub fn Context::set(Self, String, String) -> Unit
 pub fn Context::set_content_type(Self, String, parameters? : Array[(String, String)]) -> Unit
 pub fn Context::set_cookie(Self, String, String, path? : String, max_age? : Int64, expires? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool, partitioned? : Bool) -> Unit
 pub fn Context::set_header(Self, String, String) -> Unit
 pub fn Context::set_header_if_absent(Self, String, String) -> Bool
-pub fn Context::set_json(Self, String, Json) -> Unit
+pub fn Context::set_json(Self, String, @json.Json) -> Unit
 pub fn Context::set_signed_cookie(Self, String, String, String, path? : String, max_age? : Int64, expires? : Int64, domain? : String, same_site? : String, http_only? : Bool, secure? : Bool, partitioned? : Bool) -> Unit
 pub fn Context::signed_cookie(Self, String, String) -> String?
 pub fn Context::status(Self, Int32) -> Unit
@@ -536,23 +538,25 @@ pub fn Context::vary(Self, String) -> Unit
 pub fn Context::wants_json(Self) -> Bool
 pub fn Context::wants_problem_details(Self) -> Bool
 
+#derive(@debug.Debug)
 pub(all) struct Endpoint {
   method : String
   path : String
   kind : EndpointKind
-} derive(@debug.Debug)
+}
 pub fn Endpoint::output(Self, &Logger) -> Unit
 pub fn Endpoint::to_repr(Self) -> @debug.Repr
 pub fn Endpoint::to_string(Self) -> String
 pub impl Show for Endpoint
 
+#derive(@debug.Debug)
 pub(all) enum EndpointKind {
   EndpointRoute
   EndpointWebSocket
   EndpointSse
   EndpointStream
   EndpointStatic
-} derive(@debug.Debug)
+}
 pub fn EndpointKind::output(Self, &Logger) -> Unit
 pub fn EndpointKind::to_repr(Self) -> @debug.Repr
 pub fn EndpointKind::to_string(Self) -> String
@@ -571,7 +575,7 @@ pub fn Feather::etag(Self) -> Self
 pub fn Feather::fallback(Self, (Context) -> Unit raise) -> Self
 pub fn Feather::fallback_with(Self, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], (Context) -> Unit raise) -> Self
 pub fn Feather::get(Self, String, (Context) -> Unit raise) -> Self
-pub fn Feather::get_json_state(Self, String) -> Json?
+pub fn Feather::get_json_state(Self, String) -> @json.Json?
 pub fn Feather::get_state(Self, String) -> String
 pub fn Feather::group(Self, String) -> RouteGroup
 pub fn Feather::handle(Self, Request) -> Response
@@ -611,7 +615,7 @@ pub async fn Feather::serve_until(Self, stop~ : async () -> Unit) -> Unit
 pub async fn Feather::serve_with(Self, @http.Server, max_connections? : Int32) -> Unit
 pub async fn Feather::serve_with_graceful_until(Self, @http.Server, stop~ : async () -> Unit, drain_timeout? : Int32, max_connections? : Int32) -> Unit
 pub async fn Feather::serve_with_until(Self, @http.Server, stop~ : async () -> Unit, max_connections? : Int32) -> Unit
-pub fn Feather::set_json_state(Self, String, Json) -> Self
+pub fn Feather::set_json_state(Self, String, @json.Json) -> Self
 pub fn Feather::set_state(Self, String, String) -> Self
 pub fn Feather::sse(Self, String, async (Context, Sse) -> Unit) -> Self
 pub fn Feather::sse_with(Self, String, Array[((Context) -> Unit raise) -> (Context) -> Unit raise], async (Context, Sse) -> Unit) -> Self
@@ -636,13 +640,14 @@ pub(all) struct FileResponse {
   content_type : String
 }
 
+#derive(@debug.Debug)
 pub(all) struct Jwt {
-  header : Json
-  claims : Json
-} derive(@debug.Debug)
-pub fn Jwt::claim(Self, String) -> Json?
-pub fn Jwt::claims(Self) -> Json
-pub fn Jwt::header(Self) -> Json
+  header : @json.Json
+  claims : @json.Json
+}
+pub fn Jwt::claim(Self, String) -> @json.Json?
+pub fn Jwt::claims(Self) -> @json.Json
+pub fn Jwt::header(Self) -> @json.Json
 pub fn Jwt::number_claim(Self, String) -> Double?
 pub fn Jwt::output(Self, &Logger) -> Unit
 pub fn Jwt::string_claim(Self, String) -> String?
@@ -651,9 +656,10 @@ pub fn Jwt::to_repr(Self) -> @debug.Repr
 pub fn Jwt::to_string(Self) -> String
 pub impl Show for Jwt
 
+#derive(@debug.Debug)
 pub(all) struct Metrics {
   series : Map[String, MetricsSeries]
-} derive(@debug.Debug)
+}
 pub fn Metrics::count(Self, String, String, Int32) -> Int64
 pub fn Metrics::duration_sum(Self, String, String, Int32) -> Int64
 pub fn Metrics::new() -> Self
@@ -667,13 +673,14 @@ pub fn Metrics::total(Self) -> Int64
 pub fn Metrics::write(Self, Context) -> Unit
 pub impl Show for Metrics
 
+#derive(@debug.Debug)
 pub(all) struct MetricsSeries {
   method : String
   route : String
   status : Int32
   count : Int64
   duration_sum : Int64
-} derive(@debug.Debug)
+}
 pub fn MetricsSeries::output(Self, &Logger) -> Unit
 pub fn MetricsSeries::to_repr(Self) -> @debug.Repr
 pub fn MetricsSeries::to_string(Self) -> String
@@ -721,12 +728,13 @@ pub fn RateLimiter::retry_after(Self, String) -> Int64
 pub fn RateLimiter::sweep(Self) -> Unit
 pub fn RateLimiter::window(Self) -> Int64
 
+#derive(@debug.Debug)
 pub(all) struct Request {
   mut method : String
   path : String
   headers : Map[String, String]
   body : String
-} derive(@debug.Debug)
+}
 pub fn Request::output(Self, &Logger) -> Unit
 pub fn Request::to_repr(Self) -> @debug.Repr
 pub fn Request::to_string(Self) -> String
@@ -856,7 +864,7 @@ pub(all) struct Session {
   mut regenerate : Bool
   mut flash_pending : Map[String, Array[String]]?
   mut flash_pending_bytes : Int32
-  mut json_cache : Map[String, (String, Json)]?
+  mut json_cache : Map[String, (String, @json.Json)]?
 }
 
 pub(all) struct SessionStore {
@@ -886,7 +894,7 @@ pub async fn Sse::close(Self) -> Unit
 pub async fn Sse::comment(Self, String) -> Unit
 pub fn Sse::is_closed(Self) -> Bool
 pub async fn Sse::send(Self, String, event? : String, id? : String, retry? : Int32) -> Unit
-pub async fn[T : ToJson] Sse::send_json(Self, T, event? : String, id? : String, retry? : Int32) -> Unit
+pub async fn[T : @json.ToJson] Sse::send_json(Self, T, event? : String, id? : String, retry? : Int32) -> Unit
 
 pub(all) struct StaticMount {
   url_prefix : String
@@ -917,7 +925,7 @@ pub fn Stream::set_header(Self, String, String) -> Unit
 pub fn Stream::set_status(Self, Int32) -> Unit
 pub async fn Stream::write(Self, String) -> Unit
 pub async fn Stream::write_bytes(Self, Bytes) -> Unit
-pub async fn[T : ToJson] Stream::write_json(Self, T) -> Unit
+pub async fn[T : @json.ToJson] Stream::write_json(Self, T) -> Unit
 pub async fn Stream::write_reader(Self, &@io.Reader) -> Unit
 
 // Type aliases
