@@ -35,6 +35,34 @@ async fn drain_read_until(
 suberror DrainStopError
 
 ///|
+async test "abrupt stop finishes serving and closes the listener" {
+  let app = @feather.App::new().get("/hello", fn(ctx) { ctx.text(200, "hi") })
+  @async.with_task_group(group => {
+    let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
+    let port = server.addr.port()
+    let finished : Ref[Bool] = Ref(false)
+    group.spawn_bg(no_wait=true, () => {
+      app.serve_with_until(server, stop=() => @async.sleep(150))
+      finished.val = true
+    })
+    @async.sleep(50)
+    let conn = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{port}"))
+    conn.write(@utf8.encode("GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"))
+    let first = drain_read_until(conn, "hi", 100)
+    conn.close()
+    assert_true(first.contains("200 OK"))
+    assert_true(first.contains("hi"))
+    let mut waited = 0
+    while !finished.val && waited < 300 {
+      @async.sleep(10)
+      waited = waited + 1
+    }
+    assert_true(finished.val)
+    assert_true(drain_port_refuses(port))
+  })
+}
+
+///|
 async test "graceful shutdown drains before propagating a stop error" {
   let app = @feather.App::new().post("/upload", fn(ctx) {
     ctx.text(200, "uploaded:" + ctx.request.body)
