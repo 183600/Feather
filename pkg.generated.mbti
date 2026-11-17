@@ -324,6 +324,7 @@ pub(all) struct Context {
   mut session : Session?
 }
 pub fn Context::accepted_charsets(Self) -> Array[String]
+pub fn Context::accepted_encodings(Self) -> Array[String]
 pub fn Context::accepted_languages(Self) -> Array[String]
 pub fn Context::accepted_types(Self) -> Array[String]
 pub fn Context::accepts(Self, String) -> Bool

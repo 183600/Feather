@@ -211,8 +211,8 @@ the root domain, so `a.b.example.com` reports the subdomains `a` and `b`
 most preferred first, with the ranges the client rejects (`q=0`) dropped.
 `Context::accepted_languages`, `Context::accepts_language` and
 `Context::preferred_language` do the same for `Accept-Language`, and
-`Context::accepts_encoding` / `Context::preferred_encoding` for
-`Accept-Encoding`. The obsolete `Accept-Charset` header is covered by
+`Context::accepted_encodings`, `Context::accepts_encoding` /
+`Context::preferred_encoding` for `Accept-Encoding`. The obsolete `Accept-Charset` header is covered by
 `Context::accepted_charsets`, `Context::accepts_charset` and
 `Context::preferred_charset`, which match charset names exactly (only `*`
 matches any name); the `preferred_*` helpers keep the server's own order when

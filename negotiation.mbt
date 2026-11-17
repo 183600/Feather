@@ -794,6 +794,51 @@ pub fn Context::preferred_encoding(
 }
 
 ///|
+/// Sort parsed encoding entries by descending quality, keeping header order for
+/// ties, and return their lowercased tokens. Entries the client rejects are
+/// omitted.
+fn ranked_encoding_entries(entries : Array[EncodingEntry]) -> Array[String] {
+  let ranked : Array[(Int32, Int32, String)] = []
+  let mut index = 0
+  for entry in entries {
+    if entry.quality > 0 {
+      ranked.push((entry.quality, index, entry.token.to_lower().to_owned()))
+    }
+    index = index + 1
+  }
+  ranked.sort_by(fn(a, b) {
+    if a.0 != b.0 {
+      return b.0.compare(a.0)
+    }
+    a.1.compare(b.1)
+  })
+  let codings : Array[String] = []
+  for item in ranked {
+    codings.push(item.2)
+  }
+  codings
+}
+
+///|
+/// The content codings the client accepts, most preferred first.
+///
+/// A coding with a quality of zero is dropped. The remaining codings are
+/// lowercased and keep the order of the header when their quality values tie.
+/// A missing header accepts every coding and is reported as `["*"]`; an empty
+/// header explicitly accepts no content coding and is reported as `[]`.
+pub fn Context::accepted_encodings(self : Context) -> Array[String] {
+  match get_header_ignore_case(self.request.headers, "Accept-Encoding") {
+    None => ["*"]
+    Some(header) =>
+      if trim_ascii_space(header.view()).is_empty() {
+        []
+      } else {
+        ranked_encoding_entries(encoding_entries_cached(header))
+      }
+  }
+}
+
+///|
 /// One parsed token entry (an `Accept-Language` range or an `Accept-Charset`
 /// name) and its quality value (in thousandths), in header order.
 priv struct TokenEntry {
