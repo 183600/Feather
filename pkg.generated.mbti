@@ -525,6 +525,7 @@ pub fn Context::session(Self) -> Session?
 pub fn Context::session_clear(Self) -> Bool
 pub fn Context::session_destroy(Self) -> Bool
 pub fn Context::session_get(Self, String) -> String
+pub fn[T : @json.FromJson] Context::session_get_as(Self, String) -> T?
 pub fn Context::session_get_default(Self, String, String) -> String
 pub fn Context::session_get_json(Self, String) -> @json.Json?
 pub fn Context::session_has(Self, String) -> Bool
@@ -534,6 +535,7 @@ pub fn Context::session_regenerate(Self) -> Bool
 pub fn Context::session_remove(Self, String) -> Bool
 pub fn Context::session_set(Self, String, String) -> Bool
 pub fn Context::session_set_json(Self, String, @json.Json) -> Bool
+pub fn[T : @json.ToJson] Context::session_set_of(Self, String, T) -> Bool
 pub fn Context::session_touch(Self) -> Bool
 pub fn Context::set(Self, String, String) -> Unit
 pub fn Context::set_content_type(Self, String, parameters? : Array[(String, String)]) -> Unit

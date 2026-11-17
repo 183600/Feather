@@ -473,7 +473,8 @@ to the group prefix and segment-aware, so
 
 Sessions and CSRF are available as middleware plus `Context` helpers
 (`session_get`, `session_set`, `session_has`, `session_keys`, `session_remove`,
-`session_clear`, `session_destroy`, and JSON/flash variants):
+`session_clear`, `session_destroy`, JSON/flash variants, and the typed
+`session_set_of` / `session_get_as` pair for structs, arrays and maps):
 
 ```moonbit
 let store = @feather.SessionStore::new()

@@ -554,6 +554,43 @@ pub fn Context::session_get_json(self : Context, key : String) -> Json? {
 }
 
 ///|
+/// Write any JSON-serializable value into the session.
+///
+/// This is the typed counterpart of `Context::session_set_json`: a struct,
+/// array or map is serialized with `@json.to_json` so handlers do not have to
+/// build a `Json` value by hand. Read it back with `Context::session_get_as`.
+/// Returns `false` when the request has no session, the session was destroyed,
+/// or the write cannot otherwise be saved.
+pub fn[T : @json.ToJson] Context::session_set_of(
+  self : Context,
+  key : String,
+  value : T,
+) -> Bool {
+  self.session_set_json(key, @json.to_json(value))
+}
+
+///|
+/// Read a value previously stored with `Context::session_set_of` (or any JSON
+/// written with `Context::session_set_json`) and decode it as `T`.
+///
+/// Returns `None` when there is no session, the key is absent, the stored text
+/// is not valid JSON, or the JSON value does not fit `T`. A failed typed read
+/// leaves the stored value untouched, so a handler can still inspect it with
+/// `Context::session_get_json`.
+pub fn[T : @json.FromJson] Context::session_get_as(
+  self : Context,
+  key : String,
+) -> T? {
+  match self.session_get_json(key) {
+    Some(value) => {
+      let parsed : T = @json.from_json(value) catch { _ => return None }
+      Some(parsed)
+    }
+    None => None
+  }
+}
+
+///|
 /// Parse `text` and remember the result under `key`.
 fn session_parse_json_into_cache(
   session : Session,
