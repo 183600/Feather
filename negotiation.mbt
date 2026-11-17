@@ -794,17 +794,18 @@ pub fn Context::preferred_encoding(
 }
 
 ///|
-/// One parsed `Accept-Language` entry: the language range and its quality
-/// value (in thousandths), in header order.
-priv struct LanguageEntry {
+/// One parsed token entry (an `Accept-Language` range or an `Accept-Charset`
+/// name) and its quality value (in thousandths), in header order.
+priv struct TokenEntry {
   token : StringView
   quality : Int32
 }
 
 ///|
-/// Parse an `Accept-Language` header into its non-empty language ranges.
-fn parse_language_entries(header : StringView) -> Array[LanguageEntry] {
-  let entries : Array[LanguageEntry] = Array(capacity=4)
+/// Parse a comma-separated token list with optional `;q=` values, such as
+/// `Accept-Language` or `Accept-Charset`, into its non-empty entries.
+fn parse_token_entries(header : StringView) -> Array[TokenEntry] {
+  let entries : Array[TokenEntry] = Array(capacity=4)
   let length = header.length()
   let mut pos = 0
   while pos < length {
@@ -834,18 +835,25 @@ fn parse_language_entries(header : StringView) -> Array[LanguageEntry] {
 let last_language_header : Ref[String?] = Ref(None)
 
 ///|
-let last_language_entries : Ref[Array[LanguageEntry]?] = Ref(None)
+///|
+/// Backwards-compatible name for the shared token parser.
+fn parse_language_entries(header : StringView) -> Array[TokenEntry] {
+  parse_token_entries(header)
+}
+
+///|
+let last_language_entries : Ref[Array[TokenEntry]?] = Ref(None)
 
 ///|
 /// Parsed `Accept-Language` headers keyed by content.
-let language_entries_cache : Map[String, Array[LanguageEntry]] = Map([])
+let language_entries_cache : Map[String, Array[TokenEntry]] = Map([])
 
 ///|
 /// Recency ticks for `language_entries_cache`.
 let language_entries_cache_ages : Map[String, Int32] = Map([])
 
 ///|
-fn language_entries_cached(header : String) -> Array[LanguageEntry] {
+fn language_entries_cached(header : String) -> Array[TokenEntry] {
   match last_language_header.val {
     Some(cached) =>
       if physical_equal(cached, header) {
@@ -865,7 +873,7 @@ fn language_entries_cached(header : String) -> Array[LanguageEntry] {
     }
     None => ()
   }
-  let entries = parse_language_entries(header.view())
+  let entries = parse_token_entries(header.view())
   if header.length() <= PARSE_CACHE_MAX_KEY {
     cache_set(
       language_entries_cache, language_entries_cache_ages, 32, header, entries,
@@ -884,7 +892,7 @@ fn language_entries_cached(header : String) -> Array[LanguageEntry] {
 /// matches `en-US`. The most specific matching range decides the quality. With
 /// no entries (a missing or empty header) every language is accepted.
 fn language_quality_from(
-  entries : Array[LanguageEntry],
+  entries : Array[TokenEntry],
   language : StringView,
 ) -> Int32 {
   if entries.length() == 0 {
@@ -974,4 +982,196 @@ pub fn Context::preferred_language(
     }
   }
   best
+}
+
+///|
+/// The language ranges the client accepts, most preferred first.
+///
+/// A range with a quality of zero is dropped, because the client rejects it.
+/// The remaining ranges are lowercased and keep the order of the header when
+/// their quality values tie. A missing or empty header accepts every language
+/// and is reported as `["*"]`.
+pub fn Context::accepted_languages(self : Context) -> Array[String] {
+  let header = self.header("Accept-Language")
+  if trim_ascii_space(header.view()).is_empty() {
+    return ["*"]
+  }
+  ranked_token_entries(language_entries_cached(header))
+}
+
+///|
+/// Sort parsed token entries by descending quality, keeping header order for
+/// ties, and return their lowercased spellings. Entries the client rejects are
+/// omitted.
+fn ranked_token_entries(entries : Array[TokenEntry]) -> Array[String] {
+  let ranked : Array[(Int32, Int32, String)] = []
+  let mut index = 0
+  for entry in entries {
+    if entry.quality > 0 {
+      ranked.push((entry.quality, index, entry.token.to_lower().to_owned()))
+    }
+    index = index + 1
+  }
+  ranked.sort_by(fn(a, b) {
+    if a.0 != b.0 {
+      return b.0.compare(a.0)
+    }
+    a.1.compare(b.1)
+  })
+  let tokens : Array[String] = []
+  for item in ranked {
+    tokens.push(item.2)
+  }
+  tokens
+}
+
+///|
+/// Most recently parsed `Accept-Charset` header and its entries.
+let last_charset_header : Ref[String?] = Ref(None)
+
+///|
+let last_charset_entries : Ref[Array[TokenEntry]?] = Ref(None)
+
+///|
+/// Parsed `Accept-Charset` headers keyed by content.
+let charset_entries_cache : Map[String, Array[TokenEntry]] = Map([])
+
+///|
+/// Recency ticks for `charset_entries_cache`.
+let charset_entries_cache_ages : Map[String, Int32] = Map([])
+
+///|
+fn charset_entries_cached(header : String) -> Array[TokenEntry] {
+  match last_charset_header.val {
+    Some(cached) =>
+      if physical_equal(cached, header) {
+        match last_charset_entries.val {
+          Some(entries) => return entries
+          None => ()
+        }
+      }
+    None => ()
+  }
+  match charset_entries_cache.get(header) {
+    Some(entries) => {
+      cache_touch(charset_entries_cache_ages, header)
+      last_charset_header.val = Some(header)
+      last_charset_entries.val = Some(entries)
+      return entries
+    }
+    None => ()
+  }
+  let entries = parse_token_entries(header.view())
+  if header.length() <= PARSE_CACHE_MAX_KEY {
+    cache_set(
+      charset_entries_cache, charset_entries_cache_ages, 32, header, entries,
+    )
+  }
+  last_charset_header.val = Some(header)
+  last_charset_entries.val = Some(entries)
+  entries
+}
+
+///|
+/// Quality assigned to `charset` by parsed `Accept-Charset` entries.
+///
+/// Charset names are not hierarchical, so an entry matches only when it is
+/// `*` or equals the name case-insensitively. The most specific matching entry
+/// wins, and a `q=0` entry rejects the charset. With no entries (a missing or
+/// empty header) every charset is accepted.
+fn charset_quality_from(
+  entries : Array[TokenEntry],
+  charset : StringView,
+) -> Int32 {
+  if entries.length() == 0 {
+    return 1000
+  }
+  let mut best_q = -1
+  let mut best_specificity = -1
+  for entry in entries {
+    let specificity = if entry.token == "*" {
+      0
+    } else if entry.token.equal_ignore_ascii_case(charset) {
+      1
+    } else {
+      -1
+    }
+    if specificity >= 0 &&
+      (
+        specificity > best_specificity ||
+        (specificity == best_specificity && entry.quality > best_q)
+      ) {
+      best_specificity = specificity
+      best_q = entry.quality
+    }
+  }
+  if best_specificity < 0 {
+    0
+  } else {
+    best_q
+  }
+}
+
+///|
+/// Check whether the request's `Accept-Charset` header allows `charset`.
+///
+/// Charset matching is case-insensitive and exact (`utf-8` does not match
+/// `utf-16`), and `*` matches any charset. A missing or empty header accepts
+/// every charset; `q=0` entries reject the matched charset, and a charset that
+/// matches no range is not acceptable. Note that `Accept-Charset` is obsolete
+/// in RFC 9110, so content negotiation should usually offer UTF-8 rather than
+/// depend on this header.
+pub fn Context::accepts_charset(self : Context, charset : String) -> Bool {
+  let header = self.header("Accept-Charset")
+  if trim_ascii_space(header.view()).is_empty() {
+    return true
+  }
+  charset_quality_from(charset_entries_cached(header), charset.view()) > 0
+}
+
+///|
+/// Pick the most preferred charset from `offers` according to the request's
+/// `Accept-Charset` header.
+///
+/// Returns `None` when the client rejects every offer. Ties keep the order of
+/// `offers`, so the server can express its own preference.
+pub fn Context::preferred_charset(
+  self : Context,
+  offers : ArrayView[String],
+) -> String? {
+  let header = self.header("Accept-Charset")
+  if trim_ascii_space(header.view()).is_empty() {
+    if offers.length() > 0 {
+      return Some(offers[0])
+    }
+    return None
+  }
+  let entries = charset_entries_cached(header)
+  let mut best : String? = None
+  let mut best_q = 0
+  for offer in offers {
+    let quality = charset_quality_from(entries, offer.view())
+    if quality >= 1000 {
+      return Some(offer)
+    }
+    if quality > best_q {
+      best_q = quality
+      best = Some(offer)
+    }
+  }
+  best
+}
+
+///|
+/// The charsets the client accepts, most preferred first.
+///
+/// A charset with a quality of zero is dropped. The remaining charsets are
+/// lowercased and keep the order of the header when their quality values tie.
+/// A missing or empty header accepts every charset and is reported as `["*"]`.
+pub fn Context::accepted_charsets(self : Context) -> Array[String] {
+  let header = self.header("Accept-Charset")
+  if trim_ascii_space(header.view()).is_empty() {
+    return ["*"]
+  }
+  ranked_token_entries(charset_entries_cached(header))
 }

@@ -209,11 +209,14 @@ the root domain, so `a.b.example.com` reports the subdomains `a` and `b`
 (pass `root_domains` for a root domain with a different number of labels).
 `Context::accepted_types()` lists the media ranges of the `Accept` header,
 most preferred first, with the ranges the client rejects (`q=0`) dropped.
-`Context::accepts_language` and `Context::preferred_language` do the same for
-`Accept-Language`, and `Context::accepts_encoding` /
-`Context::preferred_encoding` for `Accept-Encoding`; the `preferred_*`
-helpers keep the server's own order when quality values tie, and return `None`
-when the client rejects every offer.
+`Context::accepted_languages`, `Context::accepts_language` and
+`Context::preferred_language` do the same for `Accept-Language`, and
+`Context::accepts_encoding` / `Context::preferred_encoding` for
+`Accept-Encoding`. The obsolete `Accept-Charset` header is covered by
+`Context::accepted_charsets`, `Context::accepts_charset` and
+`Context::preferred_charset`, which match charset names exactly (only `*`
+matches any name); the `preferred_*` helpers keep the server's own order when
+quality values tie, and return `None` when the client rejects every offer.
 
 `Context::set_content_type("text/plain", parameters=[("charset", "utf-8")])`
 sets a response media type and appends parameters in order, quoting values that
