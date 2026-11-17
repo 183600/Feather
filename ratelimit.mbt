@@ -166,6 +166,24 @@ pub fn RateLimiter::retry_after(self : RateLimiter, key : String) -> Int64 {
 }
 
 ///|
+/// Milliseconds until `key`'s current window ends; `0L` when the key has no
+/// live window. This is the time until the full allowance returns, even when
+/// requests are still available.
+pub fn RateLimiter::reset_after(self : RateLimiter, key : String) -> Int64 {
+  match self.buckets.get(key) {
+    Some(bucket) => {
+      let elapsed = @async.now() - bucket.start
+      if elapsed >= self.window {
+        0L
+      } else {
+        self.window - elapsed
+      }
+    }
+    None => 0L
+  }
+}
+
+///|
 /// Number of keys with a bucket in the limiter.
 pub fn RateLimiter::count(self : RateLimiter) -> Int32 {
   self.buckets.length()
@@ -229,9 +247,11 @@ fn RateLimiter::maybe_sweep(self : RateLimiter, now : Int64) -> Unit {
 /// Each key may make `RateLimiter::new`'s allowance of requests per window;
 /// requests over the limit are answered with `429 Too Many Requests`, a
 /// `Retry-After` header (whole seconds, rounded up) and the remaining count,
-/// without reaching the handler. Every response carries `X-RateLimit-Limit`
-/// and `X-RateLimit-Remaining` headers. Pass `key` to throttle by something
-/// else, such as a session id or an API token.
+/// without reaching the handler. Every response carries the standard
+/// `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` headers
+/// (whole seconds until the allowance refills) alongside the legacy
+/// `X-RateLimit-Limit` / `X-RateLimit-Remaining` pair. Pass `key` to throttle
+/// by something else, such as a session id or an API token.
 pub fn middleware_rate_limit(
   limiter : RateLimiter,
   key~ : (Context) -> String = fn(ctx) { ctx.ip() },
@@ -241,15 +261,20 @@ pub fn middleware_rate_limit(
     fn(ctx) raise {
       let bucket_key = key(ctx)
       let (allowed, remaining) = limiter.allow_with_remaining(bucket_key)
+      let reset_seconds = rate_limit_seconds(limiter.reset_after(bucket_key))
       if allowed {
+        ctx.set_header("RateLimit-Limit", max_string)
+        ctx.set_header("RateLimit-Remaining", remaining.to_string())
+        ctx.set_header("RateLimit-Reset", reset_seconds.to_string())
         ctx.set_header("X-RateLimit-Limit", max_string)
         ctx.set_header("X-RateLimit-Remaining", remaining.to_string())
         next(ctx)
       } else {
-        let millis = limiter.retry_after(bucket_key)
-        let seconds = millis / 1000L +
-          (if millis % 1000L == 0L { 0L } else { 1L })
-        ctx.set_header("Retry-After", seconds.to_string())
+        let retry_seconds = rate_limit_seconds(limiter.retry_after(bucket_key))
+        ctx.set_header("Retry-After", retry_seconds.to_string())
+        ctx.set_header("RateLimit-Limit", max_string)
+        ctx.set_header("RateLimit-Remaining", "0")
+        ctx.set_header("RateLimit-Reset", reset_seconds.to_string())
         ctx.set_header("X-RateLimit-Limit", max_string)
         ctx.set_header("X-RateLimit-Remaining", "0")
         clear_replaced_headers(ctx.response.headers)
@@ -257,4 +282,10 @@ pub fn middleware_rate_limit(
       }
     }
   }
+}
+
+///|
+/// Round a millisecond duration up to whole seconds for rate-limit headers.
+fn rate_limit_seconds(millis : Int64) -> Int64 {
+  millis / 1000L + (if millis % 1000L == 0L { 0L } else { 1L })
 }

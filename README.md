@@ -360,6 +360,15 @@ with a JSON problem document). The framework keeps supplying `Allow`, the
 handler owns the status and body, application middleware still wraps it, and
 `OPTIONS` requests keep the automatic `Allow` response.
 
+`middleware_rate_limit` throttles each key (by default the client address) with
+a fixed window and answers excess requests with `429`, `Retry-After` and the
+remaining allowance. Responses carry `RateLimit-Limit`,
+`RateLimit-Remaining` and `RateLimit-Reset` (seconds until the allowance
+refills) as well as the legacy `X-RateLimit-Limit` /
+`X-RateLimit-Remaining` pair; `RateLimiter::reset_after` exposes the same
+reset time directly. Pass `key` to throttle by a session id, API token or any
+other per-client value.
+
 CORS can be limited to a fixed set of origins with
 `middleware_cors_allowlist`, or decided per request with
 `middleware_cors_with`. Both echo the accepted `Origin` and add `Vary: Origin`,

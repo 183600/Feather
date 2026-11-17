@@ -761,6 +761,7 @@ pub fn RateLimiter::max(Self) -> Int32
 pub fn RateLimiter::new(max~ : Int32, window? : Int64) -> Self
 pub fn RateLimiter::remaining(Self, String) -> Int32
 pub fn RateLimiter::reset(Self, String) -> Bool
+pub fn RateLimiter::reset_after(Self, String) -> Int64
 pub fn RateLimiter::retry_after(Self, String) -> Int64
 pub fn RateLimiter::sweep(Self) -> Unit
 pub fn RateLimiter::window(Self) -> Int64
